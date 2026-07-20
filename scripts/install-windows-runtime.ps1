@@ -2,7 +2,7 @@
 param()
 
 $ErrorActionPreference = "Stop"
-$RuntimeRoot = Join-Path $env:LOCALAPPDATA "DinoMutantBot"
+$RuntimeRoot = "D:\DinoMutantBot"
 $PythonRoot = Join-Path $RuntimeRoot "python"
 $PythonExecutable = Join-Path $PythonRoot "python.exe"
 $Archive = Join-Path $env:TEMP "python-3.12.10-embed-amd64.zip"

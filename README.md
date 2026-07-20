@@ -14,7 +14,7 @@ WSL /home/louis/github/wildfrontend/t-rex-auto
   └─ scripts/deploy-windows.sh
                │
                ▼
-Windows %LOCALAPPDATA%\DinoMutantBot
+Windows D:\DinoMutantBot
   ├─ python\   可攜式 Python 3.12 runtime
   └─ app\      WSL 原始碼的執行副本
                │
@@ -135,9 +135,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass \
 先將遊戲停在採集畫面，保存一張明確要求的開發截圖：
 
 ```powershell
-C:\Users\Louis\AppData\Local\DinoMutantBot\python\python.exe `
-  C:\Users\Louis\AppData\Local\DinoMutantBot\app\main.py `
-  --config C:\Users\Louis\AppData\Local\DinoMutantBot\app\config.json `
+D:\DinoMutantBot\python\python.exe `
+  D:\DinoMutantBot\app\main.py `
+  --config D:\DinoMutantBot\app\config.json `
   snapshot --output debug\collect-screen.png
 ```
 
@@ -216,9 +216,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
 ## 擷取效能測試
 
 ```powershell
-C:\Users\Louis\AppData\Local\DinoMutantBot\python\python.exe `
-  C:\Users\Louis\AppData\Local\DinoMutantBot\app\main.py `
-  --config C:\Users\Louis\AppData\Local\DinoMutantBot\app\config.json `
+D:\DinoMutantBot\python\python.exe `
+  D:\DinoMutantBot\app\main.py `
+  --config D:\DinoMutantBot\app\config.json `
   benchmark --frames 100
 ```
 
