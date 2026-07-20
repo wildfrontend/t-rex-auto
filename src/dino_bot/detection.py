@@ -319,7 +319,7 @@ class HuntTeamAvailabilityDetector:
 
 
 class HuntCapacityDetector:
-    """Detect the map egg nest's fixed ``0/10`` available-team counter."""
+    """Detect the map egg nest's fixed ``10/10`` dispatched-team counter."""
 
     def __init__(
         self,
@@ -376,13 +376,14 @@ class HuntCapacityDetector:
             ),
             key=lambda item: item[0],
         )
-        # 0/10 has four glyphs. Confirm both wide zeroes and the narrow "1"
-        # so counters such as 1/10 and unrelated map labels are rejected.
+        # 10/10 has five glyphs. Confirm both narrow "1" glyphs and both wide
+        # zeroes so the available state (0/10) is intentionally accepted.
         if (
-            len(glyphs) != 4
-            or glyphs[0][2] < 7
-            or glyphs[2][2] >= 7
-            or glyphs[3][2] < 7
+            len(glyphs) != 5
+            or glyphs[0][2] >= 7
+            or glyphs[1][2] < 7
+            or glyphs[3][2] >= 7
+            or glyphs[4][2] < 7
         ):
             return []
         scale_x = frame.width / width
@@ -402,7 +403,7 @@ class HuntCapacityDetector:
                 bbox=bbox,
                 metadata={
                     "detector": "hunt_nest_counter",
-                    "value": "0/10",
+                    "value": "10/10",
                     "anchor_confidence": float(anchor_confidence),
                 },
             )
