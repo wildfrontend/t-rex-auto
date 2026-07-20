@@ -154,6 +154,9 @@ class AdbActionDriver:
         if action.kind == ActionKind.SLEEP:
             time.sleep(action.duration_ms / 1000)
             return
+        if action.kind == ActionKind.BACK:
+            self.client.run(["shell", "input", "keyevent", "4"])
+            return
         if action.x is None or action.y is None:
             raise ValueError(f"{action.kind} requires x and y")
         x1, y1 = self._map(action.x, action.y, frame)
@@ -199,6 +202,9 @@ class AdbActionDriver:
             ActionCommand(ActionKind.LONG_PRESS, x, y, duration_ms=duration_ms),
             frame,
         )
+
+    def back(self, frame: Frame) -> None:
+        self.execute(ActionCommand.back(), frame)
 
     @staticmethod
     def sleep(duration_ms: int) -> None:

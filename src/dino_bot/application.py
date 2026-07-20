@@ -10,8 +10,9 @@ from .config import AppConfig
 from .detection import OpenCvDetector
 from .engine import BotContext, BotEngine
 from .logging import configure_logging
+from .models import ActionKind
 from .modes import create_mode
-from .planning import TargetPlanner
+from .planning import HuntPlanner
 from .verification import TargetChangedVerifier
 
 
@@ -39,11 +40,22 @@ def create_engine(config: AppConfig, *, verbose: bool = False) -> BotEngine:
     )
     if detector.asset_count == 0:
         logger.warning("Detector has no assets; bot will observe but cannot choose targets")
-    planner = TargetPlanner(config.planner.target_types, config.planner.strategy)
+    planner = HuntPlanner(
+        config.planner.target_types,
+        config.planner.strategy,
+        blocking_types=config.planner.blocking_types,
+        deduplicate_types=config.planner.deduplicate_types,
+        dedup_radius=config.planner.dedup_radius,
+        history_file=config.planner.history_file,
+        history_limit=config.planner.history_limit,
+        recenter_every=config.planner.recenter_every,
+        own_path_radius=config.planner.own_path_radius,
+    )
     action = AdbActionDriver(adb)
     verifier = TargetChangedVerifier(
         config.verify.max_distance,
         config.verify.pixel_change_threshold,
+        config.verify.failure_types,
     )
     observer = create_mode(
         config.mode,
@@ -62,9 +74,16 @@ def create_engine(config: AppConfig, *, verbose: bool = False) -> BotEngine:
         observer=observer,
         logger=logger,
         click_delay_ms=config.click_delay,
+        post_action_delays_ms=config.post_action_delays,
+        target_action_kinds={
+            target_type: ActionKind(action)
+            for target_type, action in config.target_actions.items()
+        },
         idle_delay_ms=config.idle_delay,
         verify_retries=config.verify_retry,
         max_actions=config.max_actions,
+        max_cycles=config.workflow.max_cycles,
+        cycle_complete_targets=config.workflow.complete_on,
     )
     return BotEngine(context)
 

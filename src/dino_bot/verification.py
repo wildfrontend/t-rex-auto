@@ -12,9 +12,15 @@ from .models import Detection, Frame, Target, VerificationResult
 
 
 class TargetChangedVerifier:
-    def __init__(self, max_distance: float = 35.0, pixel_change_threshold: float = 0.08):
+    def __init__(
+        self,
+        max_distance: float = 35.0,
+        pixel_change_threshold: float = 0.08,
+        failure_types: Sequence[str] = (),
+    ):
         self.max_distance = max_distance
         self.pixel_change_threshold = pixel_change_threshold
+        self.failure_types = frozenset(failure_types)
 
     def verify(
         self,
@@ -24,6 +30,15 @@ class TargetChangedVerifier:
         before_detections: Sequence[Detection],
         after_detections: Sequence[Detection],
     ) -> VerificationResult:
+        failures = sorted(
+            {item.type for item in after_detections if item.type in self.failure_types}
+        )
+        if failures:
+            return VerificationResult(
+                success=False,
+                reason=f"failure indicator detected: {', '.join(failures)}",
+                confidence=1.0,
+            )
         nearby = [
             item
             for item in after_detections

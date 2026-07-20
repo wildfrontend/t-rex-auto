@@ -25,6 +25,8 @@ def build_parser() -> argparse.ArgumentParser:
     run = subcommands.add_parser("run", help="start the bot loop")
     run.add_argument("--mode", choices=["runtime", "debug", "training"])
     run.add_argument("--max-actions", type=int)
+    run.add_argument("--max-cycles", type=int)
+    run.add_argument("--batch-size", type=int)
     run.add_argument("--verbose", action="store_true")
 
     subcommands.add_parser("doctor", help="check configuration and runtime dependencies")
@@ -127,6 +129,22 @@ def main(argv: list[str] | None = None) -> int:
             config = replace(config, mode=args.mode)
         if args.max_actions is not None:
             config = replace(config, max_actions=max(0, args.max_actions))
+        if args.max_cycles is not None:
+            config = replace(
+                config,
+                workflow=replace(
+                    config.workflow,
+                    max_cycles=max(0, args.max_cycles),
+                ),
+            )
+        if args.batch_size is not None:
+            config = replace(
+                config,
+                planner=replace(
+                    config.planner,
+                    recenter_every=max(1, args.batch_size),
+                ),
+            )
         engine = create_engine(config, verbose=args.verbose)
         engine.run()
         return 0

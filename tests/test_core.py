@@ -4,6 +4,7 @@ import json
 import logging
 import time
 from pathlib import Path
+from unittest.mock import patch
 
 import cv2
 import numpy as np
@@ -12,9 +13,16 @@ from dino_bot.actions import AdbActionDriver, RecordingActionDriver
 from dino_bot.assets import create_template
 from dino_bot.detection import OpenCvDetector
 from dino_bot.engine import BotContext, BotEngine, BotState
-from dino_bot.models import BoundingBox, Detection, Frame, Target, VerificationResult
+from dino_bot.models import (
+    ActionCommand,
+    BoundingBox,
+    Detection,
+    Frame,
+    Target,
+    VerificationResult,
+)
 from dino_bot.modes import DebugMode, RuntimeMode, TrainingMode
-from dino_bot.planning import TargetPlanner
+from dino_bot.planning import HuntPlanner, TargetPlanner
 from dino_bot.verification import TargetChangedVerifier
 
 
@@ -41,6 +49,123 @@ def test_planner_highest_confidence() -> None:
     target = TargetPlanner(("resource",), "highest_confidence").choose(frame, [low, high])
     assert target is not None
     assert target.confidence == 0.99
+
+
+def test_planner_prioritizes_target_type_order() -> None:
+    frame = make_frame()
+    dinosaur = Detection("dinosaur", 80, 50, 0.99)
+    hunt_button = Detection("hunt_button", 10, 10, 0.8)
+    target = TargetPlanner(("hunt_button", "dinosaur")).choose(
+        frame, [dinosaur, hunt_button]
+    )
+    assert target is not None
+    assert target.type == "hunt_button"
+
+
+def test_planner_blocks_actions_while_failure_alert_is_visible() -> None:
+    planner = TargetPlanner(
+        ("dinosaur",),
+        blocking_types=("duplicate_hunt_alert",),
+    )
+    detections = [
+        make_detection(type="dinosaur"),
+        make_detection(type="duplicate_hunt_alert"),
+    ]
+    assert planner.choose(make_frame(), detections) is None
+
+
+def test_planner_persists_and_excludes_selected_dinosaurs(tmp_path: Path) -> None:
+    history_file = tmp_path / "target-history.json"
+    planner = TargetPlanner(
+        ("dinosaur",),
+        deduplicate_types=("dinosaur",),
+        dedup_radius=20,
+        history_file=history_file,
+    )
+    first = planner.choose(make_frame(), [make_detection(80, 50, "dinosaur")])
+    assert first is not None
+    assert planner.choose(make_frame(), [make_detection(82, 50, "dinosaur")]) is None
+
+    reloaded = TargetPlanner(
+        ("dinosaur",),
+        deduplicate_types=("dinosaur",),
+        dedup_radius=20,
+        history_file=history_file,
+    )
+    assert reloaded.choose(make_frame(), [make_detection(82, 50, "dinosaur")]) is None
+    assert reloaded.choose(make_frame(), [make_detection(130, 50, "dinosaur")]) is not None
+
+
+def test_hunt_planner_uses_egg_anchor_and_recenters_after_batch() -> None:
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    anchor = Detection("map_center_egg", 450, 800, 1.0)
+    exit_button = Detection("map_exit_nest_button", 841, 1295, 1.0)
+    forest_button = Detection("forest_recenter_button", 841, 1295, 1.0)
+    confirm = Detection("hunt_confirm_button", 451, 1412, 1.0)
+    planner = HuntPlanner(
+        (
+            "forest_recenter_button",
+            "map_exit_nest_button",
+            "hunt_confirm_button",
+            "dinosaur",
+        ),
+        deduplicate_types=("dinosaur",),
+        dedup_radius=25,
+        recenter_every=2,
+        safe_margin=80,
+    )
+
+    near = Detection("dinosaur", 500, 820, 0.9)
+    far = Detection("dinosaur", 100, 100, 0.99)
+    first = planner.choose(frame, [anchor, exit_button, near, far])
+    assert first is not None and (first.x, first.y) == (500, 820)
+
+    assert planner.choose(frame, [confirm]).type == "hunt_confirm_button"  # type: ignore[union-attr]
+    second_dinosaur = Detection("dinosaur", 400, 850, 0.9)
+    second = planner.choose(frame, [anchor, exit_button, second_dinosaur])
+    assert second is not None and second.type == "dinosaur"
+    assert planner.choose(frame, [confirm]).type == "hunt_confirm_button"  # type: ignore[union-attr]
+
+    leave_map = planner.choose(frame, [anchor, exit_button])
+    assert leave_map is not None and leave_map.type == "map_exit_nest_button"
+    enter_forest = planner.choose(frame, [forest_button])
+    assert enter_forest is not None and enter_forest.type == "forest_recenter_button"
+
+    next_batch = planner.choose(frame, [anchor, exit_button, near])
+    assert next_batch is not None and next_batch.type == "dinosaur"
+
+
+def test_hunt_planner_excludes_dinosaur_on_own_blue_path() -> None:
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(
+        ("dinosaur",),
+        own_path_radius=90,
+        safe_margin=80,
+    )
+    detections = [
+        Detection("map_center_egg", 450, 800, 1.0),
+        Detection("own_hunt_path", 500, 820, 0.9),
+        Detection("dinosaur", 500, 820, 0.99),
+        Detection("dinosaur", 650, 820, 0.8),
+    ]
+    target = planner.choose(frame, detections)
+    assert target is not None and (target.x, target.y) == (650, 820)
+
+
+def test_hunt_planner_waits_when_all_dinosaurs_are_on_own_blue_path() -> None:
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(
+        ("dinosaur",),
+        own_path_radius=90,
+        safe_margin=80,
+    )
+    detections = [
+        Detection("map_center_egg", 450, 800, 1.0),
+        Detection("own_hunt_path", 500, 820, 0.9),
+        Detection("own_hunt_path", 560, 820, 0.9),
+        Detection("dinosaur", 530, 820, 0.99),
+    ]
+    assert planner.choose(frame, detections) is None
 
 
 def test_template_detector_finds_asset(tmp_path: Path) -> None:
@@ -141,6 +266,17 @@ def test_verifier_accepts_target_ui_change() -> None:
     assert "interaction changed UI" in result.reason
 
 
+def test_verifier_rejects_duplicate_hunt_alert() -> None:
+    detection = make_detection(type="dinosaur")
+    target = Target("dinosaur", detection.x, detection.y, detection.confidence, detection)
+    alert = make_detection(type="duplicate_hunt_alert")
+    result = TargetChangedVerifier(
+        failure_types=("duplicate_hunt_alert",)
+    ).verify(make_frame(), make_frame(255), target, [detection], [alert])
+    assert not result.success
+    assert "duplicate_hunt_alert" in result.reason
+
+
 class SequenceCapture:
     def __init__(self, frames: list[Frame]):
         self.frames = frames
@@ -189,6 +325,37 @@ def test_engine_runs_complete_feedback_loop() -> None:
     assert len(driver.actions) == 1
     assert context.last_result is not None and context.last_result.success
     assert capture.closed
+
+
+def test_engine_uses_target_specific_post_action_delay() -> None:
+    class HuntConfirmDetector:
+        def detect(self, frame: Frame) -> list[Detection]:
+            if int(frame.image[0, 0, 0]) == 0:
+                return [make_detection(type="hunt_confirm_button")]
+            return []
+
+    capture = SequenceCapture([make_frame(0, 1), make_frame(255, 2)])
+    logger = logging.getLogger("test_engine_target_delay")
+    logger.addHandler(logging.NullHandler())
+    context = BotContext(
+        capture_provider=capture,
+        detector=HuntConfirmDetector(),
+        planner=TargetPlanner(("hunt_confirm_button",)),
+        action_driver=RecordingActionDriver(),
+        verifier=TargetChangedVerifier(),
+        observer=RuntimeMode(),
+        logger=logger,
+        click_delay_ms=0,
+        post_action_delays_ms={"hunt_confirm_button": 10_000},
+        idle_delay_ms=0,
+        max_cycles=1,
+        cycle_complete_targets=("hunt_confirm_button",),
+    )
+    with patch("dino_bot.engine.time.sleep") as sleep:
+        BotEngine(context).run()
+    sleep.assert_called_once_with(10.0)
+    assert context.cycle_count == 1
+    assert context.action_count == 1
 
 
 def test_engine_retries_three_times_then_stops() -> None:
@@ -268,3 +435,10 @@ def test_action_driver_swaps_device_size_for_portrait_frame() -> None:
     portrait = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
     driver.tap(450, 800, portrait)
     assert client.commands == [["shell", "input", "tap", "450", "800"]]
+
+
+def test_action_driver_sends_android_back_key() -> None:
+    client = FakeAdbClient()
+    driver = AdbActionDriver(client)  # type: ignore[arg-type]
+    driver.execute(ActionCommand.back(), make_frame())
+    assert client.commands == [["shell", "input", "keyevent", "4"]]
