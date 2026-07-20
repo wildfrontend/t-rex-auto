@@ -153,6 +153,7 @@ class HuntPlanner(TargetPlanner):
         own_path_angle_degrees: float = 7.0,
         stalled_recenter_frames: int = 8,
         safe_margin: int = 80,
+        bottom_exclusion_px: int = 180,
         await_hunt_frames: int = 5,
         **kwargs: Any,
     ) -> None:
@@ -180,6 +181,7 @@ class HuntPlanner(TargetPlanner):
         self.own_path_angle_degrees = max(0.0, own_path_angle_degrees)
         self.stalled_recenter_frames = max(1, stalled_recenter_frames)
         self.safe_margin = max(0, safe_margin)
+        self.bottom_exclusion_px = max(0, bottom_exclusion_px)
         self.await_hunt_frames = max(1, await_hunt_frames)
         self._awaiting_hunt_button = False
         self._waited_frames = 0
@@ -488,6 +490,12 @@ class HuntPlanner(TargetPlanner):
                 item
                 for item in actionable
                 if item.type == self.dinosaur_type
+                # Screen-space guard: the bottom navigation area can resemble
+                # a dinosaur and must never receive a hunting tap.
+                and self.safe_margin <= item.x <= frame.width - self.safe_margin
+                and self.safe_margin
+                <= item.y
+                <= frame.height - self.bottom_exclusion_px
                 and self.safe_margin
                 <= anchor_x + frame.width / 2 - item.x
                 <= frame.width - self.safe_margin

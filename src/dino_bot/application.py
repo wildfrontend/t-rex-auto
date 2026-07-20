@@ -67,6 +67,7 @@ def create_engine(config: AppConfig, *, verbose: bool = False) -> BotEngine:
         ring_width=config.planner.ring_width,
         own_path_angle_degrees=config.planner.own_path_angle_degrees,
         stalled_recenter_frames=config.planner.stalled_recenter_frames,
+        bottom_exclusion_px=config.planner.bottom_exclusion_px,
     )
     action = AdbActionDriver(adb)
     verifier = TargetChangedVerifier(

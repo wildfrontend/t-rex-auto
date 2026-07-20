@@ -64,7 +64,8 @@
     "capacity_wait_seconds": 300,
     "ring_width": 150,
     "own_path_angle_degrees": 7,
-    "stalled_recenter_frames": 8
+    "stalled_recenter_frames": 8,
+    "bottom_exclusion_px": 180
   },
   "verify": {
     "max_distance": 35,

@@ -53,6 +53,7 @@ class PlannerConfig:
     ring_width: float = 150.0
     own_path_angle_degrees: float = 7.0
     stalled_recenter_frames: int = 8
+    bottom_exclusion_px: int = 180
 
 
 @dataclass(frozen=True, slots=True)
@@ -230,6 +231,7 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
             stalled_recenter_frames=int(
                 planner_data.get("stalled_recenter_frames", 8)
             ),
+            bottom_exclusion_px=int(planner_data.get("bottom_exclusion_px", 180)),
         ),
         verify=VerifyConfig(
             max_distance=float(verify_data.get("max_distance", 35)),
@@ -288,6 +290,8 @@ def _validate(config: AppConfig) -> None:
         raise ConfigError("planner.own_path_angle_degrees must be between 0 and 180")
     if config.planner.stalled_recenter_frames <= 0:
         raise ConfigError("planner.stalled_recenter_frames must be greater than zero")
+    if config.planner.bottom_exclusion_px < 0:
+        raise ConfigError("planner.bottom_exclusion_px cannot be negative")
     if not 0 <= config.detector.default_threshold <= 1:
         raise ConfigError("detector.default_threshold must be between zero and one")
     if not 0 <= config.detector.nms_iou <= 1:
