@@ -181,6 +181,8 @@ D:\DinoMutantBot\start-bot.cmd
 
 終端機會逐步顯示 Capture、Detect、Planning、Action、Verify 與 Recover LOG。
 關閉該終端機就會停止 Bot；完整日誌同時保存在 `app\logs\YYYYMMDD.log`。
+Bot 執行期間會阻止 Windows 系統睡眠，但不阻止螢幕依電源設定自動關閉；Bot
+停止後會自動解除保持喚醒要求。
 
 先用 Debug 模式限制一次操作：
 

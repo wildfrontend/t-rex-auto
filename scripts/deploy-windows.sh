@@ -21,6 +21,7 @@ cp -a \
   "${runtime_app}/"
 cp -a \
   "${project_root}/scripts/run-windows.ps1" \
+  "${project_root}/scripts/watch-running-bot.ps1" \
   "${runtime_app}/scripts/"
 cp -a "${project_root}/scripts/start-bot.cmd" "${runtime_root}/start-bot.cmd"
 
