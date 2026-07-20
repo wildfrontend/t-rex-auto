@@ -176,7 +176,7 @@ PYTHONPATH=/tmp/t-rex-auto-deps:src python3 main.py template \
 部署後可直接雙擊此前景啟動器：
 
 ```text
-C:\Users\Louis\AppData\Local\DinoMutantBot\app\scripts\start-bot.cmd
+D:\DinoMutantBot\start-bot.cmd
 ```
 
 終端機會逐步顯示 Capture、Detect、Planning、Action、Verify 與 Recover LOG。
