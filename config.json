@@ -1,0 +1,40 @@
+{
+  "mode": "runtime",
+  "debug": false,
+  "capture_fps": 10,
+  "click_delay": 200,
+  "verify_retry": 3,
+  "save_debug_image": false,
+  "idle_delay": 500,
+  "max_actions": 0,
+  "capture": {
+    "backend": "adb",
+    "window_titles": ["BlueStacks App Player", "BlueStacks"],
+    "process_names": ["HD-Player.exe"],
+    "viewport": "auto",
+    "chrome_insets": [0, 40, 41, 0]
+  },
+  "adb": {
+    "executable": "C:\\Users\\Louis\\AppData\\Local\\Android\\Sdk\\platform-tools\\adb.exe",
+    "serial": "127.0.0.1:5555",
+    "connect_on_start": true,
+    "timeout": 5.0
+  },
+  "detector": {
+    "manifest": "assets/manifest.json",
+    "default_threshold": 0.85,
+    "nms_iou": 0.3
+  },
+  "planner": {
+    "target_types": ["dinosaur"],
+    "strategy": "nearest_center"
+  },
+  "verify": {
+    "max_distance": 35,
+    "pixel_change_threshold": 0.08
+  },
+  "training": {
+    "fps": 2,
+    "max_images": 500
+  }
+}

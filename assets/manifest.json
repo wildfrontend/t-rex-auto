@@ -1,0 +1,15 @@
+{
+  "reference_size": [900, 1600],
+  "templates": [
+    {
+      "type": "dinosaur",
+      "file": "templates/dinosaur-level-label.png",
+      "threshold": 0.6,
+      "click_offset": [
+        22,
+        32
+      ]
+    }
+  ],
+  "hsv_ranges": []
+}
