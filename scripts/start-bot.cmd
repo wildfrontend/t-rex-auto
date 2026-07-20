@@ -7,7 +7,7 @@ echo Close this terminal window to stop the bot.
 echo Logs are also saved under app\logs.
 echo.
 
-set "bot_runner=%LOCALAPPDATA%\DinoMutantBot\app\scripts\run-windows.ps1"
+set "bot_runner=%~dp0app\scripts\run-windows.ps1"
 if not exist "%bot_runner%" (
   echo ERROR: Bot runner not found: %bot_runner%
   pause

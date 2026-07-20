@@ -2,10 +2,10 @@
 set -euo pipefail
 
 project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-runtime_app="/mnt/c/Users/Louis/AppData/Local/DinoMutantBot/app"
-launcher_dir="/mnt/d/DinoMutantBot"
+runtime_root="/mnt/d/DinoMutantBot"
+runtime_app="${runtime_root}/app"
 
-mkdir -p "${runtime_app}" "${runtime_app}/scripts" "${launcher_dir}"
+mkdir -p "${runtime_app}" "${runtime_app}/scripts"
 cp -a \
   "${project_root}/main.py" \
   "${project_root}/capture.py" \
@@ -22,7 +22,6 @@ cp -a \
 cp -a \
   "${project_root}/scripts/run-windows.ps1" \
   "${runtime_app}/scripts/"
-cp -a "${project_root}/scripts/start-bot.cmd" "${launcher_dir}/start-bot.cmd"
-rm -f -- "${runtime_app}/scripts/start-bot.cmd"
+cp -a "${project_root}/scripts/start-bot.cmd" "${runtime_root}/start-bot.cmd"
 
-echo "Deployed to ${runtime_app}"
+echo "Deployed portable app to ${runtime_root}"

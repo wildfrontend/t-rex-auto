@@ -9,7 +9,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$RuntimeRoot = Join-Path $env:LOCALAPPDATA "DinoMutantBot"
+$RuntimeRoot = "D:\DinoMutantBot"
 $PythonExecutable = Join-Path $RuntimeRoot "python\python.exe"
 $AppRoot = Join-Path $RuntimeRoot "app"
 if (-not (Test-Path $PythonExecutable)) {
