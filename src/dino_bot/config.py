@@ -41,12 +41,20 @@ class DetectorConfig:
 class PlannerConfig:
     target_types: tuple[str, ...] = ("resource",)
     strategy: Literal["nearest_center", "highest_confidence"] = "nearest_center"
+    blocking_types: tuple[str, ...] = ()
+    deduplicate_types: tuple[str, ...] = ()
+    dedup_radius: float = 60.0
+    history_file: Path | None = None
+    history_limit: int = 500
+    recenter_every: int = 10
+    own_path_radius: float = 90.0
 
 
 @dataclass(frozen=True, slots=True)
 class VerifyConfig:
     max_distance: float = 35.0
     pixel_change_threshold: float = 0.08
+    failure_types: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,12 +64,20 @@ class TrainingConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class WorkflowConfig:
+    max_cycles: int = 0
+    complete_on: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class AppConfig:
     root: Path
     mode: Literal["runtime", "debug", "training"] = "runtime"
     debug: bool = False
     capture_fps: float = 10.0
     click_delay: int = 200
+    post_action_delays: dict[str, int] = field(default_factory=dict)
+    target_actions: dict[str, str] = field(default_factory=dict)
     verify_retry: int = 3
     save_debug_image: bool = False
     idle_delay: int = 500
@@ -72,6 +88,7 @@ class AppConfig:
     planner: PlannerConfig = field(default_factory=PlannerConfig)
     verify: VerifyConfig = field(default_factory=VerifyConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
+    workflow: WorkflowConfig = field(default_factory=WorkflowConfig)
 
     @property
     def logs_dir(self) -> Path:
@@ -116,6 +133,7 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
     planner_data = _section(data, "planner")
     verify_data = _section(data, "verify")
     training_data = _section(data, "training")
+    workflow_data = _section(data, "workflow")
 
     viewport_raw = capture_data.get("viewport")
     auto_viewport = isinstance(viewport_raw, str) and viewport_raw.lower() == "auto"
@@ -150,6 +168,14 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
         debug=bool(data.get("debug", False)),
         capture_fps=float(data.get("capture_fps", 10)),
         click_delay=int(data.get("click_delay", 200)),
+        post_action_delays={
+            str(target_type): int(delay)
+            for target_type, delay in _section(data, "post_action_delays").items()
+        },
+        target_actions={
+            str(target_type): str(action).lower()
+            for target_type, action in _section(data, "target_actions").items()
+        },
         verify_retry=int(data.get("verify_retry", 3)),
         save_debug_image=bool(data.get("save_debug_image", False)),
         idle_delay=int(data.get("idle_delay", 500)),
@@ -176,14 +202,30 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
         planner=PlannerConfig(
             target_types=tuple(planner_data.get("target_types", ["resource"])),
             strategy=strategy,  # type: ignore[arg-type]
+            blocking_types=tuple(planner_data.get("blocking_types", [])),
+            deduplicate_types=tuple(planner_data.get("deduplicate_types", [])),
+            dedup_radius=float(planner_data.get("dedup_radius", 60)),
+            history_file=(
+                _path_from(root, planner_data["history_file"])
+                if planner_data.get("history_file")
+                else None
+            ),
+            history_limit=int(planner_data.get("history_limit", 500)),
+            recenter_every=int(planner_data.get("recenter_every", 10)),
+            own_path_radius=float(planner_data.get("own_path_radius", 90)),
         ),
         verify=VerifyConfig(
             max_distance=float(verify_data.get("max_distance", 35)),
             pixel_change_threshold=float(verify_data.get("pixel_change_threshold", 0.08)),
+            failure_types=tuple(verify_data.get("failure_types", [])),
         ),
         training=TrainingConfig(
             fps=float(training_data.get("fps", 2)),
             max_images=int(training_data.get("max_images", 500)),
+        ),
+        workflow=WorkflowConfig(
+            max_cycles=int(workflow_data.get("max_cycles", 0)),
+            complete_on=tuple(workflow_data.get("complete_on", [])),
         ),
     )
     _validate(config)
@@ -195,10 +237,22 @@ def _validate(config: AppConfig) -> None:
         raise ConfigError("capture_fps must be greater than zero")
     if config.click_delay < 0 or config.idle_delay < 0:
         raise ConfigError("delays cannot be negative")
+    if any(delay < 0 for delay in config.post_action_delays.values()):
+        raise ConfigError("post_action_delays cannot be negative")
+    if any(action not in {"tap", "back"} for action in config.target_actions.values()):
+        raise ConfigError("target_actions values must be tap or back")
     if config.verify_retry < 0:
         raise ConfigError("verify_retry cannot be negative")
     if config.training.fps <= 0 or config.training.max_images <= 0:
         raise ConfigError("training fps and max_images must be greater than zero")
+    if config.workflow.max_cycles < 0:
+        raise ConfigError("workflow.max_cycles cannot be negative")
+    if config.planner.dedup_radius < 0 or config.planner.history_limit <= 0:
+        raise ConfigError("planner dedup_radius/history_limit are invalid")
+    if config.planner.recenter_every <= 0:
+        raise ConfigError("planner.recenter_every must be greater than zero")
+    if config.planner.own_path_radius < 0:
+        raise ConfigError("planner.own_path_radius cannot be negative")
     if not 0 <= config.detector.default_threshold <= 1:
         raise ConfigError("detector.default_threshold must be between zero and one")
     if not 0 <= config.detector.nms_iou <= 1:

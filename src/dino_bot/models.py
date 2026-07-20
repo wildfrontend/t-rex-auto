@@ -99,6 +99,7 @@ class Target:
 
 class ActionKind(StrEnum):
     TAP = "tap"
+    BACK = "back"
     SWIPE = "swipe"
     LONG_PRESS = "long_press"
     SLEEP = "sleep"
@@ -116,6 +117,10 @@ class ActionCommand:
     @classmethod
     def tap(cls, x: int, y: int) -> ActionCommand:
         return cls(kind=ActionKind.TAP, x=x, y=y)
+
+    @classmethod
+    def back(cls) -> ActionCommand:
+        return cls(kind=ActionKind.BACK)
 
 
 @dataclass(frozen=True, slots=True)

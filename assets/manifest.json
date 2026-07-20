@@ -1,5 +1,8 @@
 {
-  "reference_size": [900, 1600],
+  "reference_size": [
+    900,
+    1600
+  ],
   "templates": [
     {
       "type": "dinosaur",
@@ -9,7 +12,91 @@
         22,
         32
       ]
+    },
+    {
+      "type": "hunt_button",
+      "file": "templates/hunt-button.png",
+      "threshold": 0.8,
+      "click_offset": [
+        71,
+        36
+      ]
+    },
+    {
+      "type": "hunt_confirm_button",
+      "file": "templates/hunt-confirm-button.png",
+      "threshold": 0.8,
+      "click_offset": [
+        83,
+        47
+      ]
+    },
+    {
+      "type": "hunt_max_group_button",
+      "file": "templates/hunt-max-group-button.png",
+      "threshold": 0.93,
+      "click_offset": [
+        86,
+        46
+      ]
+    },
+    {
+      "type": "duplicate_hunt_alert",
+      "file": "templates/duplicate-hunt-alert.png",
+      "threshold": 0.88
+    },
+    {
+      "type": "map_exit_nest_button",
+      "file": "templates/map-exit-nest-button.png",
+      "threshold": 0.88,
+      "click_offset": [
+        41,
+        47
+      ]
+    },
+    {
+      "type": "map_center_egg",
+      "file": "templates/map-center-egg.png",
+      "threshold": 0.65,
+      "click_offset": [
+        26,
+        29
+      ]
+    },
+    {
+      "type": "hunt_team_return_button",
+      "file": "templates/hunt-team-return-button.png",
+      "threshold": 0.9,
+      "click_offset": [
+        68,
+        34
+      ]
+    },
+    {
+      "type": "forest_recenter_button",
+      "file": "templates/forest-recenter-button.png",
+      "threshold": 0.88,
+      "click_offset": [
+        27,
+        20
+      ]
     }
   ],
-  "hsv_ranges": []
+  "hsv_ranges": [
+    {
+      "type": "own_hunt_path",
+      "lower": [
+        87,
+        70,
+        140
+      ],
+      "upper": [
+        102,
+        180,
+        250
+      ],
+      "min_area": 8,
+      "max_area": 500
+    }
+  ]
 }

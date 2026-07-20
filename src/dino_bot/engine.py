@@ -11,6 +11,7 @@ from typing import Protocol
 from .interfaces import ActionDriver, CaptureProvider, Detector, ModeObserver, Planner, Verifier
 from .models import (
     ActionCommand,
+    ActionKind,
     ActionRecord,
     Detection,
     Frame,
@@ -41,9 +42,13 @@ class BotContext:
     observer: ModeObserver
     logger: logging.Logger
     click_delay_ms: int = 200
+    post_action_delays_ms: dict[str, int] = field(default_factory=dict)
+    target_action_kinds: dict[str, ActionKind] = field(default_factory=dict)
     idle_delay_ms: int = 500
     verify_retries: int = 3
     max_actions: int = 0
+    max_cycles: int = 0
+    cycle_complete_targets: tuple[str, ...] = ()
     state: BotState = BotState.IDLE
     stop_requested: bool = False
     frame: Frame | None = None
@@ -57,6 +62,7 @@ class BotContext:
     last_result: VerificationResult | None = None
     attempt: int = 0
     action_count: int = 0
+    cycle_count: int = 0
 
 
 class StateHandler(Protocol):
@@ -69,6 +75,9 @@ class IdleState:
             return BotState.STOPPED
         if context.max_actions and context.action_count >= context.max_actions:
             context.logger.info("Stop | max_actions=%d reached", context.max_actions)
+            return BotState.STOPPED
+        if context.max_cycles and context.cycle_count >= context.max_cycles:
+            context.logger.info("Stop | max_cycles=%d reached", context.max_cycles)
             return BotState.STOPPED
         return BotState.CAPTURE
 
@@ -105,7 +114,15 @@ class PlanningState:
             if context.idle_delay_ms:
                 time.sleep(context.idle_delay_ms / 1000)
             return BotState.IDLE
-        context.action = ActionCommand.tap(context.target.x, context.target.y)
+        action_kind = context.target_action_kinds.get(
+            context.target.type,
+            ActionKind.TAP,
+        )
+        context.action = (
+            ActionCommand.back()
+            if action_kind == ActionKind.BACK
+            else ActionCommand.tap(context.target.x, context.target.y)
+        )
         context.logger.info(
             "Planning | %s at (%d,%d) confidence=%.3f",
             context.target.type,
@@ -123,17 +140,33 @@ class ActionState:
         context.before_frame = context.frame
         context.before_detections = list(context.detections)
         context.attempt += 1
-        context.logger.info(
-            "Action | %s (%d,%d) | attempt=%d",
-            context.action.kind.value,
-            context.action.x,
-            context.action.y,
-            context.attempt,
-        )
+        if context.action.x is None or context.action.y is None:
+            context.logger.info(
+                "Action | %s | attempt=%d",
+                context.action.kind.value,
+                context.attempt,
+            )
+        else:
+            context.logger.info(
+                "Action | %s (%d,%d) | attempt=%d",
+                context.action.kind.value,
+                context.action.x,
+                context.action.y,
+                context.attempt,
+            )
         context.action_driver.execute(context.action, context.frame)
         context.action_count += 1
-        if context.click_delay_ms:
-            time.sleep(context.click_delay_ms / 1000)
+        delay_ms = context.post_action_delays_ms.get(
+            context.target.type,
+            context.click_delay_ms,
+        )
+        if delay_ms:
+            context.logger.debug(
+                "Action | wait %dms before verification | target=%s",
+                delay_ms,
+                context.target.type,
+            )
+            time.sleep(delay_ms / 1000)
         return BotState.VERIFY
 
 
@@ -168,6 +201,13 @@ class VerifyState:
         context.observer.on_action_complete(record, context.before_frame, after)
         if result.success:
             context.logger.info("Verify | Success | %s", result.reason)
+            if context.target.type in context.cycle_complete_targets:
+                context.cycle_count += 1
+                context.logger.info(
+                    "Workflow | completed cycle %d/%s",
+                    context.cycle_count,
+                    context.max_cycles or "unlimited",
+                )
             context.attempt = 0
             context.frame = after
             context.detections = after_detections
@@ -242,4 +282,8 @@ class BotEngine:
     def close(self) -> None:
         self.context.capture_provider.close()
         self.context.observer.close()
-        self.context.logger.info("Bot stopped | actions=%d", self.context.action_count)
+        self.context.logger.info(
+            "Bot stopped | actions=%d | cycles=%d",
+            self.context.action_count,
+            self.context.cycle_count,
+        )

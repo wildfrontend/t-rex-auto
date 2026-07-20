@@ -2,7 +2,10 @@
   "mode": "runtime",
   "debug": false,
   "capture_fps": 10,
-  "click_delay": 200,
+  "click_delay": 1500,
+  "post_action_delays": {
+    "hunt_confirm_button": 3000
+  },
   "verify_retry": 3,
   "save_debug_image": false,
   "idle_delay": 500,
@@ -26,15 +29,34 @@
     "nms_iou": 0.3
   },
   "planner": {
-    "target_types": ["dinosaur"],
-    "strategy": "nearest_center"
+    "target_types": [
+      "hunt_team_return_button",
+      "forest_recenter_button",
+      "map_exit_nest_button",
+      "hunt_max_group_button",
+      "hunt_confirm_button",
+      "hunt_button",
+      "dinosaur"
+    ],
+    "strategy": "nearest_center",
+    "blocking_types": ["duplicate_hunt_alert"],
+    "deduplicate_types": ["dinosaur"],
+    "dedup_radius": 25,
+    "history_limit": 500,
+    "recenter_every": 10,
+    "own_path_radius": 90
   },
   "verify": {
     "max_distance": 35,
-    "pixel_change_threshold": 0.08
+    "pixel_change_threshold": 0.08,
+    "failure_types": ["duplicate_hunt_alert", "hunt_team_return_button"]
   },
   "training": {
     "fps": 2,
     "max_images": 500
+  },
+  "workflow": {
+    "max_cycles": 0,
+    "complete_on": ["forest_recenter_button"]
   }
 }

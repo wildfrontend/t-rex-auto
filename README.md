@@ -3,8 +3,8 @@
 以 BlueStacks 5 為執行環境的可擴充 Python Bot Framework。核心採用
 `Sense → Think → Act → Verify` 回饋循環，不依賴錄製 Macro。
 
-目前完成 Auto Collect MVP 的框架與 OpenCV 恐龍偵測器，後續功能以 Feature 方式加入，
-不需要修改核心狀態機。
+目前完成 Auto Hunt MVP：辨識恐龍、選擇最大隊伍、發動狩獵並驗證結果。後續功能以
+Feature 方式加入，不需要修改核心狀態機。
 
 ## 執行架構
 
@@ -18,8 +18,8 @@ Windows %LOCALAPPDATA%\DinoMutantBot
   ├─ python\   可攜式 Python 3.12 runtime
   └─ app\      WSL 原始碼的執行副本
                │
-               ├─ MSS + pywin32 擷取 BlueStacks 視窗
-               └─ HD-Adb.exe 執行 tap/swipe/long press
+               ├─ ADB framebuffer 背景擷取（預設）
+               └─ Android SDK adb 執行 tap/swipe/long press
 ```
 
 BlueStacks 必須保留在 Windows，不需要也不應安裝到 WSL。
@@ -40,6 +40,10 @@ BlueStacks 必須保留在 Windows，不需要也不應安裝到 WSL。
 - Training 以 1–5 FPS 保存，超過設定上限時刪除最舊圖片。
 - OpenCV template 製作 CLI。
 - Windows 環境診斷及擷取 FPS benchmark。
+- 狩獵時自動選擇最大群組，並依序完成狩獵與確認按鈕。
+- 已點過的目標不會在同一畫面重複選取；重複狩獵警告會中止該次操作。
+- 偵測我方隊伍的藍色虛線，排除路徑及兩側 90 px 安全區內的恐龍。
+- 每 10 次狩獵自動返回主頁，再從森林入口回到以中央蛋置中的採集地圖。
 
 ## 專案結構
 
@@ -89,7 +93,7 @@ BlueStacks 必須保留在 Windows，不需要也不應安裝到 WSL。
 專案預設使用：
 
 ```text
-C:\Program Files\BlueStacks_nxt\HD-Adb.exe
+C:\Users\Louis\AppData\Local\Android\Sdk\platform-tools\adb.exe
 127.0.0.1:5555
 ```
 
@@ -179,6 +183,13 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -File scripts\run-windows.ps1 -Mode runtime
 ```
 
+執行一批 10 次狩獵，完成返回主頁與森林置中後停止：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File scripts\run-windows.ps1 -Mode runtime -BatchSize 10 -MaxCycles 1
+```
+
 Training 模式：
 
 ```powershell
@@ -205,9 +216,12 @@ C:\Users\Louis\AppData\Local\DinoMutantBot\python\python.exe `
 - `capture.viewport`: Android 畫面在 BlueStacks client 內的 `[x,y,width,height]`；
   若含有 BlueStacks 側欄，應設定此值以確保 ADB 座標精準。
 - `click_delay`: 點擊到驗證畫面的等待毫秒數。
+- `post_action_delays`: 可針對確認按鈕等動畫較長的操作設定額外等待時間。
 - `verify_retry`: 初次失敗後最多重試次數。
 - `max_actions`: `0` 代表不限，用於 Debug 時建議先設為 `1`。
-- `planner.target_types`: Auto Collect 預設只選擇 `dinosaur`。
+- `planner.recenter_every`: 完成多少次狩獵後重返主頁並重新置中，預設 `10`。
+- `planner.own_path_radius`: 藍色虛線周圍的禁點半徑，預設 `90` px。
+- `workflow.max_cycles`: 完整批次數；`0` 代表持續執行。
 
 ## 背景執行
 
