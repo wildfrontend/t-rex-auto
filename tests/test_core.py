@@ -504,7 +504,7 @@ def test_hunt_team_availability_detector_only_matches_zero_of_eleven() -> None:
     assert detector.detect(team_screen("11 / 11")) == []
 
 
-def test_hunt_capacity_detector_only_matches_zero_at_egg_nest() -> None:
+def test_hunt_capacity_detector_only_matches_ten_at_egg_nest() -> None:
     detector = HuntCapacityDetector()
     egg = cv2.imread(str(Path("assets/templates/map-center-egg.png")))
     assert egg is not None
@@ -530,12 +530,13 @@ def test_hunt_capacity_detector_only_matches_zero_at_egg_nest() -> None:
         )
         return Frame(image)
 
-    full = detector.detect(capacity_screen("0/10"))
+    full = detector.detect(capacity_screen("10/10"))
     assert len(full) == 1 and full[0].type == "hunt_capacity_full"
     assert full[0].metadata["detector"] == "hunt_nest_counter"
+    assert full[0].metadata["value"] == "10/10"
+    assert detector.detect(capacity_screen("0/10")) == []
     assert detector.detect(capacity_screen("1/10")) == []
-    assert detector.detect(capacity_screen("10/10")) == []
-    assert detector.detect(capacity_screen("0/10", show_nest=False)) == []
+    assert detector.detect(capacity_screen("10/10", show_nest=False)) == []
 
 
 def test_target_too_strong_detector_requires_red_warning_and_close_button() -> None:
