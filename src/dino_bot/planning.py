@@ -274,6 +274,14 @@ class HuntPlanner(TargetPlanner):
         if on_centered_map:
             self._mail_stage = 0
             self._total_hunt_count = 0
+            return None
+        # Planning advances to stage 5 before verification. BlueStacks can
+        # occasionally ignore a tap, so keep choosing the close button while
+        # the mail overlay is still visible. Only a centered map confirms that
+        # the mail workflow has actually completed.
+        close_target = super().choose(frame, by_type[self.mail_close_type])
+        if close_target is not None:
+            return close_target
         return None
 
     def _choose_map_exit(

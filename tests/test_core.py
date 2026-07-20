@@ -339,6 +339,8 @@ def test_hunt_planner_collects_mail_after_hunt_threshold() -> None:
     assert planner.choose(frame, [collect_all, close]).type == "mail_collect_all_button"  # type: ignore[union-attr]
     assert planner.choose(frame, [reward, close]).type == "mail_reward_collect_button"  # type: ignore[union-attr]
     assert planner.choose(frame, [close]).type == "mail_close_button"  # type: ignore[union-attr]
+    # If BlueStacks ignores the first close tap, re-planning must retry it.
+    assert planner.choose(frame, [collect_all, close]).type == "mail_close_button"  # type: ignore[union-attr]
     assert planner.choose(frame, [anchor, exit_button]) is None
 
 
