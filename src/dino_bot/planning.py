@@ -389,6 +389,18 @@ class HuntPlanner(TargetPlanner):
                 if self._total_hunt_count >= self.mail_after_hunts:
                     self._mail_stage = 1
                 return None
+            # Planning the forest tap advances the state before verification.
+            # If BlueStacks ignores that tap, the forest button remains visible
+            # and no egg anchor appears. Retry the same safe transition instead
+            # of waiting forever in the anchor stage.
+            if not anchors:
+                forest = [
+                    item
+                    for item in detections
+                    if item.type == self.forest_recenter_type
+                ]
+                if forest:
+                    return super().choose(frame, forest)
             return super().choose(frame, anchors)
 
         has_hunt_control = any(
