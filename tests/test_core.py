@@ -504,26 +504,38 @@ def test_hunt_team_availability_detector_only_matches_zero_of_eleven() -> None:
     assert detector.detect(team_screen("11 / 11")) == []
 
 
-def test_hunt_capacity_detector_only_matches_ten_of_ten() -> None:
+def test_hunt_capacity_detector_only_matches_zero_at_egg_nest() -> None:
     detector = HuntCapacityDetector()
+    egg = cv2.imread(str(Path("assets/templates/map-center-egg.png")))
+    assert egg is not None
 
-    def capacity_screen(label: str) -> Frame:
+    def capacity_screen(label: str, *, show_nest: bool = True) -> Frame:
         image = np.full((1600, 900, 3), 30, dtype=np.uint8)
+        anchor_x, anchor_y = 500, 700
+        if show_nest:
+            egg_height, egg_width = egg.shape[:2]
+            image[
+                anchor_y : anchor_y + egg_height,
+                anchor_x : anchor_x + egg_width,
+            ] = egg
         cv2.putText(
             image,
             label,
-            (790, 249),
+            (anchor_x + 12, anchor_y + 80),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.7,
+            0.55,
             (255, 255, 255),
             2,
             cv2.LINE_AA,
         )
         return Frame(image)
 
-    full = detector.detect(capacity_screen("10/10"))
+    full = detector.detect(capacity_screen("0/10"))
     assert len(full) == 1 and full[0].type == "hunt_capacity_full"
-    assert detector.detect(capacity_screen("9/10")) == []
+    assert full[0].metadata["detector"] == "hunt_nest_counter"
+    assert detector.detect(capacity_screen("1/10")) == []
+    assert detector.detect(capacity_screen("10/10")) == []
+    assert detector.detect(capacity_screen("0/10", show_nest=False)) == []
 
 
 def test_target_too_strong_detector_requires_red_warning_and_close_button() -> None:

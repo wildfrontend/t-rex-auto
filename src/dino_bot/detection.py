@@ -319,22 +319,52 @@ class HuntTeamAvailabilityDetector:
 
 
 class HuntCapacityDetector:
-    """Detect the top-right ``10/10`` concurrent hunt-team limit."""
+    """Detect the map egg nest's fixed ``0/10`` available-team counter."""
 
     def __init__(
         self,
         target_type: str = "hunt_capacity_full",
         reference_size: tuple[int, int] = (900, 1600),
+        anchor_template: str | Path | None = None,
+        anchor_threshold: float = 0.65,
     ) -> None:
         self.target_type = target_type
         self.reference_size = reference_size
+        template_path = (
+            Path(anchor_template)
+            if anchor_template is not None
+            else Path(__file__).resolve().parents[2]
+            / "assets"
+            / "templates"
+            / "map-center-egg.png"
+        )
+        self.anchor_template = cv2.imread(str(template_path), cv2.IMREAD_COLOR)
+        if self.anchor_template is None:
+            raise DetectorAssetError(f"Unable to read egg nest template: {template_path}")
+        self.anchor_threshold = anchor_threshold
 
     def detect(self, frame: Frame) -> list[Detection]:
         width, height = self.reference_size
         image = frame.image
         if (frame.width, frame.height) != self.reference_size:
             image = cv2.resize(image, (width, height), interpolation=cv2.INTER_LINEAR)
-        x1, y1, x2, y2 = 780, 225, 855, 255
+
+        matches = cv2.matchTemplate(
+            image,
+            self.anchor_template,
+            cv2.TM_CCOEFF_NORMED,
+        )
+        _, anchor_confidence, _, (anchor_x, anchor_y) = cv2.minMaxLoc(matches)
+        if anchor_confidence < self.anchor_threshold:
+            return []
+
+        # The availability label is immediately below/right of the egg nest.
+        # Its position follows the nest as the map pans, unlike the top-right
+        # capacity label which can be obscured by the hunt dialog.
+        x1 = max(0, anchor_x + 5)
+        y1 = max(0, anchor_y + 45)
+        x2 = min(width, anchor_x + 85)
+        y2 = min(height, anchor_y + 95)
         gray = cv2.cvtColor(image[y1:y2, x1:x2], cv2.COLOR_BGR2GRAY)
         mask = np.where(gray > 210, 255, 0).astype(np.uint8)
         _, _, stats, _ = cv2.connectedComponentsWithStats(mask)
@@ -342,13 +372,18 @@ class HuntCapacityDetector:
             (
                 (int(x), int(y), int(glyph_width), int(glyph_height), int(area))
                 for x, y, glyph_width, glyph_height, area in stats[1:]
-                if area >= 20 and glyph_height >= 12
+                if area >= 8 and glyph_height >= 8
             ),
             key=lambda item: item[0],
         )
-        # 10/10 is the only capacity label with five glyphs. Confirm the
-        # leading narrow "1" and wide "0" to reject nearby UI fragments.
-        if len(glyphs) != 5 or glyphs[0][2] >= 10 or glyphs[1][2] < 11:
+        # 0/10 has four glyphs. Confirm both wide zeroes and the narrow "1"
+        # so counters such as 1/10 and unrelated map labels are rejected.
+        if (
+            len(glyphs) != 4
+            or glyphs[0][2] < 7
+            or glyphs[2][2] >= 7
+            or glyphs[3][2] < 7
+        ):
             return []
         scale_x = frame.width / width
         scale_y = frame.height / height
@@ -361,11 +396,15 @@ class HuntCapacityDetector:
         return [
             Detection(
                 type=self.target_type,
-                x=round(815 * scale_x),
-                y=round(240 * scale_y),
-                confidence=0.99,
+                x=round(((x1 + x2) / 2) * scale_x),
+                y=round(((y1 + y2) / 2) * scale_y),
+                confidence=float(anchor_confidence),
                 bbox=bbox,
-                metadata={"detector": "hunt_capacity_counter", "value": "10/10"},
+                metadata={
+                    "detector": "hunt_nest_counter",
+                    "value": "0/10",
+                    "anchor_confidence": float(anchor_confidence),
+                },
             )
         ]
 
