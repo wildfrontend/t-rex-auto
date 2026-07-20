@@ -7,7 +7,13 @@ import logging
 from .actions import AdbActionDriver, AdbClient
 from .capture import AdbScreencapCapture, MssBlueStacksCapture
 from .config import AppConfig
-from .detection import OpenCvDetector
+from .detection import (
+    CompositeDetector,
+    HuntCapacityDetector,
+    HuntTeamAvailabilityDetector,
+    OpenCvDetector,
+    TargetTooStrongDetector,
+)
 from .engine import BotContext, BotEngine
 from .logging import configure_logging
 from .models import ActionKind
@@ -33,13 +39,19 @@ def create_engine(config: AppConfig, *, verbose: bool = False) -> BotEngine:
             chrome_insets=config.capture.chrome_insets,
         )
 
-    detector = OpenCvDetector(
+    open_cv_detector = OpenCvDetector(
         config.detector.manifest,
         default_threshold=config.detector.default_threshold,
         nms_iou=config.detector.nms_iou,
     )
-    if detector.asset_count == 0:
+    if open_cv_detector.asset_count == 0:
         logger.warning("Detector has no assets; bot will observe but cannot choose targets")
+    detector = CompositeDetector(
+        open_cv_detector,
+        HuntTeamAvailabilityDetector(),
+        HuntCapacityDetector(),
+        TargetTooStrongDetector(),
+    )
     planner = HuntPlanner(
         config.planner.target_types,
         config.planner.strategy,
@@ -50,12 +62,18 @@ def create_engine(config: AppConfig, *, verbose: bool = False) -> BotEngine:
         history_limit=config.planner.history_limit,
         recenter_every=config.planner.recenter_every,
         own_path_radius=config.planner.own_path_radius,
+        mail_after_hunts=config.planner.mail_after_hunts,
+        capacity_wait_seconds=config.planner.capacity_wait_seconds,
+        ring_width=config.planner.ring_width,
+        own_path_angle_degrees=config.planner.own_path_angle_degrees,
+        stalled_recenter_frames=config.planner.stalled_recenter_frames,
     )
     action = AdbActionDriver(adb)
     verifier = TargetChangedVerifier(
         config.verify.max_distance,
         config.verify.pixel_change_threshold,
         config.verify.failure_types,
+        config.verify.success_transitions,
     )
     observer = create_mode(
         config.mode,

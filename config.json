@@ -4,7 +4,14 @@
   "capture_fps": 10,
   "click_delay": 1500,
   "post_action_delays": {
-    "hunt_confirm_button": 3000
+    "hunt_confirm_button": 3000,
+    "map_center_egg": 5000,
+    "no_available_dinosaurs": 300000,
+    "target_too_strong": 300000
+  },
+  "target_actions": {
+    "no_available_dinosaurs": "tap",
+    "target_too_strong": "tap"
   },
   "verify_retry": 3,
   "save_debug_image": false,
@@ -31,11 +38,19 @@
   "planner": {
     "target_types": [
       "hunt_team_return_button",
+      "no_available_dinosaurs",
+      "target_too_strong",
+      "hunt_capacity_full",
       "forest_recenter_button",
       "map_exit_nest_button",
+      "map_center_egg",
       "hunt_max_group_button",
       "hunt_confirm_button",
       "hunt_button",
+      "mail_reward_collect_button",
+      "mail_collect_all_button",
+      "mail_close_button",
+      "mailbox_button",
       "dinosaur"
     ],
     "strategy": "nearest_center",
@@ -44,12 +59,28 @@
     "dedup_radius": 25,
     "history_limit": 500,
     "recenter_every": 10,
-    "own_path_radius": 90
+    "own_path_radius": 90,
+    "mail_after_hunts": 30,
+    "capacity_wait_seconds": 300,
+    "ring_width": 150,
+    "own_path_angle_degrees": 7,
+    "stalled_recenter_frames": 8
   },
   "verify": {
     "max_distance": 35,
     "pixel_change_threshold": 0.08,
-    "failure_types": ["duplicate_hunt_alert", "hunt_team_return_button"]
+    "failure_types": ["duplicate_hunt_alert", "hunt_team_return_button"],
+    "success_transitions": {
+      "dinosaur": ["hunt_button"],
+      "hunt_button": ["hunt_confirm_button"],
+      "hunt_confirm_button": ["map_exit_nest_button"],
+      "map_exit_nest_button": ["forest_recenter_button"],
+      "forest_recenter_button": ["map_center_egg"],
+      "mailbox_button": ["mail_collect_all_button"],
+      "mail_collect_all_button": ["mail_reward_collect_button"],
+      "mail_reward_collect_button": ["mail_close_button"],
+      "mail_close_button": ["map_center_egg"]
+    }
   },
   "training": {
     "fps": 2,
@@ -57,6 +88,6 @@
   },
   "workflow": {
     "max_cycles": 0,
-    "complete_on": ["forest_recenter_button"]
+    "complete_on": ["mail_close_button"]
   }
 }

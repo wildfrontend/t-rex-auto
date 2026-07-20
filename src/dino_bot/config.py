@@ -48,6 +48,11 @@ class PlannerConfig:
     history_limit: int = 500
     recenter_every: int = 10
     own_path_radius: float = 90.0
+    mail_after_hunts: int = 30
+    capacity_wait_seconds: float = 300.0
+    ring_width: float = 150.0
+    own_path_angle_degrees: float = 7.0
+    stalled_recenter_frames: int = 8
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +60,7 @@ class VerifyConfig:
     max_distance: float = 35.0
     pixel_change_threshold: float = 0.08
     failure_types: tuple[str, ...] = ()
+    success_transitions: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -213,11 +219,28 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
             history_limit=int(planner_data.get("history_limit", 500)),
             recenter_every=int(planner_data.get("recenter_every", 10)),
             own_path_radius=float(planner_data.get("own_path_radius", 90)),
+            mail_after_hunts=int(planner_data.get("mail_after_hunts", 30)),
+            capacity_wait_seconds=float(
+                planner_data.get("capacity_wait_seconds", 300)
+            ),
+            ring_width=float(planner_data.get("ring_width", 150)),
+            own_path_angle_degrees=float(
+                planner_data.get("own_path_angle_degrees", 7)
+            ),
+            stalled_recenter_frames=int(
+                planner_data.get("stalled_recenter_frames", 8)
+            ),
         ),
         verify=VerifyConfig(
             max_distance=float(verify_data.get("max_distance", 35)),
             pixel_change_threshold=float(verify_data.get("pixel_change_threshold", 0.08)),
             failure_types=tuple(verify_data.get("failure_types", [])),
+            success_transitions={
+                str(target_type): tuple(str(item) for item in successors)
+                for target_type, successors in verify_data.get(
+                    "success_transitions", {}
+                ).items()
+            },
         ),
         training=TrainingConfig(
             fps=float(training_data.get("fps", 2)),
@@ -243,8 +266,10 @@ def _validate(config: AppConfig) -> None:
         raise ConfigError("target_actions values must be tap or back")
     if config.verify_retry < 0:
         raise ConfigError("verify_retry cannot be negative")
-    if config.training.fps <= 0 or config.training.max_images <= 0:
-        raise ConfigError("training fps and max_images must be greater than zero")
+    if not 1 <= config.training.fps <= 5:
+        raise ConfigError("training.fps must be between 1 and 5")
+    if not 1 <= config.training.max_images <= 500:
+        raise ConfigError("training.max_images must be between 1 and 500")
     if config.workflow.max_cycles < 0:
         raise ConfigError("workflow.max_cycles cannot be negative")
     if config.planner.dedup_radius < 0 or config.planner.history_limit <= 0:
@@ -253,6 +278,16 @@ def _validate(config: AppConfig) -> None:
         raise ConfigError("planner.recenter_every must be greater than zero")
     if config.planner.own_path_radius < 0:
         raise ConfigError("planner.own_path_radius cannot be negative")
+    if config.planner.mail_after_hunts <= 0:
+        raise ConfigError("planner.mail_after_hunts must be greater than zero")
+    if config.planner.capacity_wait_seconds < 0:
+        raise ConfigError("planner.capacity_wait_seconds cannot be negative")
+    if config.planner.ring_width <= 0:
+        raise ConfigError("planner.ring_width must be greater than zero")
+    if not 0 <= config.planner.own_path_angle_degrees <= 180:
+        raise ConfigError("planner.own_path_angle_degrees must be between 0 and 180")
+    if config.planner.stalled_recenter_frames <= 0:
+        raise ConfigError("planner.stalled_recenter_frames must be greater than zero")
     if not 0 <= config.detector.default_threshold <= 1:
         raise ConfigError("detector.default_threshold must be between zero and one")
     if not 0 <= config.detector.nms_iou <= 1:

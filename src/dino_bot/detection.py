@@ -251,3 +251,178 @@ class CompositeDetector:
         for detector in self.detectors:
             results.extend(detector.detect(frame))
         return results
+
+
+class HuntTeamAvailabilityDetector:
+    """Detect the fixed-layout ``0 / 11`` hunt-team exhaustion state."""
+
+    def __init__(
+        self,
+        target_type: str = "no_available_dinosaurs",
+        reference_size: tuple[int, int] = (900, 1600),
+    ) -> None:
+        self.target_type = target_type
+        self.reference_size = reference_size
+
+    def detect(self, frame: Frame) -> list[Detection]:
+        width, height = self.reference_size
+        image = frame.image
+        if (frame.width, frame.height) != self.reference_size:
+            image = cv2.resize(image, (width, height), interpolation=cv2.INTER_LINEAR)
+
+        # The team-selection sheet is white and has a red close button at a
+        # fixed location. Requiring both prevents map labels from looking like
+        # the team counter.
+        if float(image[850:990, 150:750].mean()) < 210:
+            return []
+        hsv = cv2.cvtColor(image[1360:1455, 580:675], cv2.COLOR_BGR2HSV)
+        red = cv2.inRange(hsv, np.array([0, 100, 120]), np.array([12, 255, 255]))
+        red |= cv2.inRange(hsv, np.array([170, 100, 120]), np.array([179, 255, 255]))
+        if cv2.countNonZero(red) < 500:
+            return []
+
+        x1, y1, x2, y2 = 380, 920, 530, 980
+        gray = cv2.cvtColor(image[y1:y2, x1:x2], cv2.COLOR_BGR2GRAY)
+        mask = np.where(gray < 100, 255, 0).astype(np.uint8)
+        _, _, stats, _ = cv2.connectedComponentsWithStats(mask)
+        glyphs = sorted(
+            (
+                (int(x), int(y), int(glyph_width), int(glyph_height), int(area))
+                for x, y, glyph_width, glyph_height, area in stats[1:]
+                if area >= 20 and glyph_height >= 15
+            ),
+            key=lambda item: item[0],
+        )
+        # 0 / 11 has four glyphs and its first glyph is wider than a "1".
+        # 11 / 11 has five glyphs, so it is intentionally rejected.
+        if len(glyphs) != 4 or glyphs[0][2] < 10:
+            return []
+
+        scale_x = frame.width / width
+        scale_y = frame.height / height
+        bbox = BoundingBox(
+            x=round(x1 * scale_x),
+            y=round(y1 * scale_y),
+            width=max(1, round((x2 - x1) * scale_x)),
+            height=max(1, round((y2 - y1) * scale_y)),
+        )
+        return [
+            Detection(
+                type=self.target_type,
+                x=round(628 * scale_x),
+                y=round(1409 * scale_y),
+                confidence=0.99,
+                bbox=bbox,
+                metadata={"detector": "hunt_team_counter", "glyphs": len(glyphs)},
+            )
+        ]
+
+
+class HuntCapacityDetector:
+    """Detect the top-right ``10/10`` concurrent hunt-team limit."""
+
+    def __init__(
+        self,
+        target_type: str = "hunt_capacity_full",
+        reference_size: tuple[int, int] = (900, 1600),
+    ) -> None:
+        self.target_type = target_type
+        self.reference_size = reference_size
+
+    def detect(self, frame: Frame) -> list[Detection]:
+        width, height = self.reference_size
+        image = frame.image
+        if (frame.width, frame.height) != self.reference_size:
+            image = cv2.resize(image, (width, height), interpolation=cv2.INTER_LINEAR)
+        x1, y1, x2, y2 = 780, 225, 855, 255
+        gray = cv2.cvtColor(image[y1:y2, x1:x2], cv2.COLOR_BGR2GRAY)
+        mask = np.where(gray > 210, 255, 0).astype(np.uint8)
+        _, _, stats, _ = cv2.connectedComponentsWithStats(mask)
+        glyphs = sorted(
+            (
+                (int(x), int(y), int(glyph_width), int(glyph_height), int(area))
+                for x, y, glyph_width, glyph_height, area in stats[1:]
+                if area >= 20 and glyph_height >= 12
+            ),
+            key=lambda item: item[0],
+        )
+        # 10/10 is the only capacity label with five glyphs. Confirm the
+        # leading narrow "1" and wide "0" to reject nearby UI fragments.
+        if len(glyphs) != 5 or glyphs[0][2] >= 10 or glyphs[1][2] < 11:
+            return []
+        scale_x = frame.width / width
+        scale_y = frame.height / height
+        bbox = BoundingBox(
+            x=round(x1 * scale_x),
+            y=round(y1 * scale_y),
+            width=max(1, round((x2 - x1) * scale_x)),
+            height=max(1, round((y2 - y1) * scale_y)),
+        )
+        return [
+            Detection(
+                type=self.target_type,
+                x=round(815 * scale_x),
+                y=round(240 * scale_y),
+                confidence=0.99,
+                bbox=bbox,
+                metadata={"detector": "hunt_capacity_counter", "value": "10/10"},
+            )
+        ]
+
+
+class TargetTooStrongDetector:
+    """Detect the red hunt warning that says the selected target will win."""
+
+    def __init__(
+        self,
+        target_type: str = "target_too_strong",
+        reference_size: tuple[int, int] = (900, 1600),
+    ) -> None:
+        self.target_type = target_type
+        self.reference_size = reference_size
+
+    def detect(self, frame: Frame) -> list[Detection]:
+        width, height = self.reference_size
+        image = frame.image
+        if (frame.width, frame.height) != self.reference_size:
+            image = cv2.resize(image, (width, height), interpolation=cv2.INTER_LINEAR)
+        # The warning line occupies this fixed band in the hunt-team sheet.
+        x1, y1, x2, y2 = 100, 660, 800, 755
+        hsv = cv2.cvtColor(image[y1:y2, x1:x2], cv2.COLOR_BGR2HSV)
+        red = cv2.inRange(hsv, np.array([0, 140, 150]), np.array([12, 255, 255]))
+        red |= cv2.inRange(hsv, np.array([170, 140, 150]), np.array([179, 255, 255]))
+        red = cv2.morphologyEx(red, cv2.MORPH_OPEN, np.ones((2, 2), dtype=np.uint8))
+        if cv2.countNonZero(red) < 80:
+            return []
+        # Require the team-sheet close button as context so unrelated red map
+        # effects cannot trigger a five-minute cooldown.
+        close_hsv = cv2.cvtColor(image[1360:1455, 580:675], cv2.COLOR_BGR2HSV)
+        close_red = cv2.inRange(
+            close_hsv,
+            np.array([0, 100, 120]),
+            np.array([12, 255, 255]),
+        )
+        close_red |= cv2.inRange(
+            close_hsv,
+            np.array([170, 100, 120]),
+            np.array([179, 255, 255]),
+        )
+        if cv2.countNonZero(close_red) < 500:
+            return []
+        scale_x = frame.width / width
+        scale_y = frame.height / height
+        return [
+            Detection(
+                type=self.target_type,
+                x=round(628 * scale_x),
+                y=round(1409 * scale_y),
+                confidence=0.99,
+                bbox=BoundingBox(
+                    x=round(x1 * scale_x),
+                    y=round(y1 * scale_y),
+                    width=max(1, round((x2 - x1) * scale_x)),
+                    height=max(1, round((y2 - y1) * scale_y)),
+                ),
+                metadata={"detector": "red_hunt_warning"},
+            )
+        ]
