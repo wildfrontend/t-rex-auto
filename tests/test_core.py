@@ -200,6 +200,27 @@ def test_hunt_planner_uses_egg_anchor_and_recenters_after_batch() -> None:
     assert next_batch is not None and next_batch.type == "dinosaur"
 
 
+def test_hunt_planner_retries_forest_when_recenter_tap_is_ignored() -> None:
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(
+        ("forest_recenter_button", "map_center_egg", "dinosaur"),
+        safe_margin=80,
+    )
+    forest_button = Detection("forest_recenter_button", 841, 1295, 1.0)
+    centered_anchor = Detection("map_center_egg", 450, 800, 1.0)
+    dinosaur = Detection("dinosaur", 500, 820, 0.9)
+
+    first_attempt = planner.choose(frame, [forest_button])
+    assert first_attempt is not None and first_attempt.type == "forest_recenter_button"
+
+    retry = planner.choose(frame, [forest_button])
+    assert retry is not None and retry.type == "forest_recenter_button"
+
+    assert planner.choose(frame, [centered_anchor]) is None
+    resumed = planner.choose(frame, [centered_anchor, dinosaur])
+    assert resumed is not None and resumed.type == "dinosaur"
+
+
 def test_hunt_planner_excludes_dinosaur_on_own_blue_path() -> None:
     frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
     planner = HuntPlanner(
