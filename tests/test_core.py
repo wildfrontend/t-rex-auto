@@ -238,6 +238,34 @@ def test_hunt_planner_excludes_dinosaur_on_own_blue_path() -> None:
     assert target is not None and (target.x, target.y) == (650, 820)
 
 
+def test_hunt_planner_never_clicks_dinosaur_in_bottom_ui() -> None:
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(
+        ("dinosaur",),
+        safe_margin=80,
+        bottom_exclusion_px=180,
+    )
+    anchor = Detection("map_center_egg", 450, 800, 1.0)
+    bottom_ui_false_positive = Detection("dinosaur", 225, 1542, 0.99)
+    safe_dinosaur = Detection("dinosaur", 650, 1000, 0.80)
+
+    target = planner.choose(
+        frame,
+        [anchor, bottom_ui_false_positive, safe_dinosaur],
+    )
+    assert target is not None and (target.x, target.y) == (650, 1000)
+
+    bottom_only_planner = HuntPlanner(
+        ("dinosaur",),
+        safe_margin=80,
+        bottom_exclusion_px=180,
+    )
+    assert bottom_only_planner.choose(
+        frame,
+        [anchor, bottom_ui_false_positive],
+    ) is None
+
+
 def test_hunt_planner_waits_when_all_dinosaurs_are_on_own_blue_path() -> None:
     frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
     planner = HuntPlanner(
