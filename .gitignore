@@ -1,0 +1,13 @@
+.venv/
+.venv-win/
+.deps/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+logs/*.log
+debug/*
+capture/*
+!logs/.gitkeep
+!debug/.gitkeep
+!capture/.gitkeep
