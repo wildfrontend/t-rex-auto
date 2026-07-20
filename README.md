@@ -44,6 +44,10 @@ BlueStacks 必須保留在 Windows，不需要也不應安裝到 WSL。
 - 已點過的目標不會在同一畫面重複選取；重複狩獵警告會中止該次操作。
 - 偵測我方隊伍的藍色虛線，排除路徑及兩側 90 px 安全區內的恐龍。
 - 每 10 次狩獵自動返回主頁，再從森林入口回到以中央蛋置中的採集地圖。
+- 連續多幀沒有安全恐龍時，自動重置視野，不會放寬藍線保護或無限等待。
+- 約 30 次狩獵後自動開啟信箱，依序執行「全部獲取、資源獲取、關閉」。
+- 右上角同時派出隊伍為 `10/10` 時不再選目標，等待 5 分鐘後重試。
+- 出現「目標太強了，你會輸」時關閉狩獵視窗並等待 5 分鐘。
 
 ## 專案結構
 
@@ -169,6 +173,15 @@ PYTHONPATH=/tmp/t-rex-auto-deps:src python3 main.py template \
 
 ## 執行
 
+部署後可直接雙擊此前景啟動器：
+
+```text
+C:\Users\Louis\AppData\Local\DinoMutantBot\app\scripts\start-bot.cmd
+```
+
+終端機會逐步顯示 Capture、Detect、Planning、Action、Verify 與 Recover LOG。
+關閉該終端機就會停止 Bot；完整日誌同時保存在 `app\logs\YYYYMMDD.log`。
+
 先用 Debug 模式限制一次操作：
 
 ```powershell
@@ -183,11 +196,12 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -File scripts\run-windows.ps1 -Mode runtime
 ```
 
-執行一批 10 次狩獵，完成返回主頁與森林置中後停止：
+執行完整流程：每 10 次重置地圖，累積 30 次後收取信箱並停止：
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass `
-  -File scripts\run-windows.ps1 -Mode runtime -BatchSize 10 -MaxCycles 1
+  -File scripts\run-windows.ps1 -Mode runtime `
+  -BatchSize 10 -MailAfterHunts 30 -MaxCycles 1
 ```
 
 Training 模式：
@@ -213,6 +227,7 @@ C:\Users\Louis\AppData\Local\DinoMutantBot\python\python.exe `
 ## 設定重點
 
 - `capture.backend`: `adb` 不搶 focus；`mss` 較快但會把 BlueStacks 拉到前景。
+- `planner.stalled_recenter_frames`: 連續多少幀沒有安全目標後重置視野，預設 8。
 - `capture.viewport`: Android 畫面在 BlueStacks client 內的 `[x,y,width,height]`；
   若含有 BlueStacks 側欄，應設定此值以確保 ADB 座標精準。
 - `click_delay`: 點擊到驗證畫面的等待毫秒數。
@@ -221,7 +236,12 @@ C:\Users\Louis\AppData\Local\DinoMutantBot\python\python.exe `
 - `max_actions`: `0` 代表不限，用於 Debug 時建議先設為 `1`。
 - `planner.recenter_every`: 完成多少次狩獵後重返主頁並重新置中，預設 `10`。
 - `planner.own_path_radius`: 藍色虛線周圍的禁點半徑，預設 `90` px。
-- `workflow.max_cycles`: 完整批次數；`0` 代表持續執行。
+- `planner.mail_after_hunts`: 累積多少次狩獵後收取信箱，預設 `30`。
+- `planner.capacity_wait_seconds`: 同時派出隊伍達 `10/10` 時的等待秒數，預設
+  `300` 秒。
+- `post_action_delays.target_too_strong`: 關閉過強目標後的等待時間，預設
+  `300000` ms（5 分鐘）。
+- `workflow.max_cycles`: 完整「狩獵、信箱收取、關閉」流程次數；`0` 代表持續執行。
 
 ## 背景執行
 

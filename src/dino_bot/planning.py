@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Sequence
-from math import hypot
+from math import atan2, degrees, hypot
 from pathlib import Path
 from typing import Any
 
@@ -139,6 +140,18 @@ class HuntPlanner(TargetPlanner):
         own_path_types: Sequence[str] = ("own_hunt_path",),
         own_path_radius: float = 90.0,
         recenter_every: int = 10,
+        mail_after_hunts: int = 30,
+        mailbox_type: str = "mailbox_button",
+        mail_collect_all_type: str = "mail_collect_all_button",
+        mail_reward_collect_type: str = "mail_reward_collect_button",
+        mail_close_type: str = "mail_close_button",
+        no_available_type: str = "no_available_dinosaurs",
+        target_too_strong_type: str = "target_too_strong",
+        capacity_full_type: str = "hunt_capacity_full",
+        capacity_wait_seconds: float = 300.0,
+        ring_width: float = 150.0,
+        own_path_angle_degrees: float = 7.0,
+        stalled_recenter_frames: int = 8,
         safe_margin: int = 80,
         await_hunt_frames: int = 5,
         **kwargs: Any,
@@ -154,6 +167,18 @@ class HuntPlanner(TargetPlanner):
         self.own_path_types = frozenset(own_path_types)
         self.own_path_radius = max(0.0, own_path_radius)
         self.recenter_every = max(1, recenter_every)
+        self.mail_after_hunts = max(1, mail_after_hunts)
+        self.mailbox_type = mailbox_type
+        self.mail_collect_all_type = mail_collect_all_type
+        self.mail_reward_collect_type = mail_reward_collect_type
+        self.mail_close_type = mail_close_type
+        self.no_available_type = no_available_type
+        self.target_too_strong_type = target_too_strong_type
+        self.capacity_full_type = capacity_full_type
+        self.capacity_wait_seconds = max(0.0, capacity_wait_seconds)
+        self.ring_width = max(1.0, ring_width)
+        self.own_path_angle_degrees = max(0.0, own_path_angle_degrees)
+        self.stalled_recenter_frames = max(1, stalled_recenter_frames)
         self.safe_margin = max(0, safe_margin)
         self.await_hunt_frames = max(1, await_hunt_frames)
         self._awaiting_hunt_button = False
@@ -161,7 +186,125 @@ class HuntPlanner(TargetPlanner):
         self._recenter_stage = 0
         self._pending_hunt_return = False
         self._hunt_count = 0
+        self._total_hunt_count = 0
         self._last_anchor: tuple[float, float] | None = None
+        self._mail_stage = 0
+        self._capacity_cooldown_until = 0.0
+        self._map_idle_frames = 0
+
+    @staticmethod
+    def _angle_distance(left: float, right: float) -> float:
+        difference = abs(left - right) % 360.0
+        return min(difference, 360.0 - difference)
+
+    def _established_path_angles(
+        self,
+        anchor_x: float,
+        anchor_y: float,
+        detections: Sequence[Detection],
+    ) -> list[float]:
+        marker_angles = [
+            degrees(atan2(item.y - anchor_y, item.x - anchor_x)) % 360.0
+            for item in detections
+            if item.type in self.own_path_types
+            and 50 <= hypot(item.x - anchor_x, item.y - anchor_y) <= 750
+        ]
+        cluster_tolerance = 4.0
+        return [
+            angle
+            for angle in marker_angles
+            if sum(
+                self._angle_distance(angle, other) <= cluster_tolerance
+                for other in marker_angles
+            )
+            >= 3
+        ]
+
+    def _choose_mail_target(
+        self,
+        frame: Frame,
+        detections: Sequence[Detection],
+    ) -> Target | None:
+        by_type = {
+            target_type: [item for item in detections if item.type == target_type]
+            for target_type in (
+                self.mailbox_type,
+                self.mail_collect_all_type,
+                self.mail_reward_collect_type,
+                self.mail_close_type,
+            )
+        }
+        if self._mail_stage <= 1:
+            candidates = by_type[self.mailbox_type]
+            target = super().choose(frame, candidates)
+            if target is not None:
+                self._mail_stage = 2
+            return target
+        if self._mail_stage == 2:
+            candidates = by_type[self.mail_collect_all_type]
+            if not candidates:
+                candidates = by_type[self.mailbox_type]
+            target = super().choose(frame, candidates)
+            if target is not None and target.type == self.mail_collect_all_type:
+                self._mail_stage = 3
+            return target
+        if self._mail_stage == 3:
+            candidates = by_type[self.mail_reward_collect_type]
+            if not candidates:
+                candidates = by_type[self.mail_collect_all_type]
+            target = super().choose(frame, candidates)
+            if target is not None and target.type == self.mail_reward_collect_type:
+                self._mail_stage = 4
+            return target
+        if self._mail_stage == 4:
+            candidates = by_type[self.mail_close_type]
+            if not candidates:
+                candidates = by_type[self.mail_reward_collect_type]
+            target = super().choose(frame, candidates)
+            if target is not None and target.type == self.mail_close_type:
+                self._mail_stage = 5
+            return target
+        on_centered_map = any(
+            item.type == self.center_anchor_type
+            and hypot(item.x - frame.width / 2, item.y - frame.height / 2) <= 100
+            for item in detections
+        )
+        if on_centered_map:
+            self._mail_stage = 0
+            self._total_hunt_count = 0
+        return None
+
+    def _choose_map_exit(
+        self,
+        frame: Frame,
+        detections: Sequence[Detection],
+    ) -> Target | None:
+        exit_buttons = [
+            item for item in detections if item.type == self.map_exit_type
+        ]
+        target = super().choose(frame, exit_buttons)
+        if target is not None:
+            return target
+
+        # The nest is animated and can briefly miss exact template matching.
+        # A visible mailbox is a stable map-only landmark, so it safely
+        # authorizes the fixed bottom-right nest coordinate as a fallback.
+        if any(item.type == self.mailbox_type for item in detections):
+            fallback = Detection(
+                type=self.map_exit_type,
+                x=round(frame.width * 841 / 900),
+                y=round(frame.height * 1295 / 1600),
+                confidence=0.7,
+                metadata={"detector": "map_landmark_fallback"},
+            )
+            return Target(
+                type=fallback.type,
+                x=fallback.x,
+                y=fallback.y,
+                confidence=fallback.confidence,
+                detection=fallback,
+            )
+        return None
 
     def choose(self, frame: Frame, detections: Sequence[Detection]) -> Target | None:
         if any(item.type in self.blocking_types for item in detections):
@@ -179,6 +322,19 @@ class HuntPlanner(TargetPlanner):
                 ),
             )
             self._last_anchor = (float(anchor.x), float(anchor.y))
+
+        if self._mail_stage:
+            return self._choose_mail_target(frame, detections)
+
+        unavailable = [
+            item
+            for item in detections
+            if item.type in {self.no_available_type, self.target_too_strong_type}
+        ]
+        if unavailable:
+            self._awaiting_hunt_button = False
+            self._waited_frames = 0
+            return super().choose(frame, unavailable)
 
         team_status_buttons = [
             item for item in detections if item.type in self.recovery_button_types
@@ -206,10 +362,7 @@ class HuntPlanner(TargetPlanner):
                 if target is not None:
                     self._recenter_stage = 2
                 return target
-            exit_buttons = [
-                item for item in detections if item.type == self.map_exit_type
-            ]
-            return super().choose(frame, exit_buttons)
+            return self._choose_map_exit(frame, detections)
 
         if self._recenter_stage == 2:
             anchors = [
@@ -219,10 +372,7 @@ class HuntPlanner(TargetPlanner):
                 hypot(item.x - frame.width / 2, item.y - frame.height / 2) <= 100
                 for item in anchors
             )
-            on_collect_map = any(
-                item.type == self.map_exit_type for item in detections
-            )
-            if centered and on_collect_map:
+            if centered:
                 self.clear_history()
                 self._recenter_stage = 0
                 centered_anchor = min(
@@ -236,18 +386,47 @@ class HuntPlanner(TargetPlanner):
                     float(centered_anchor.x),
                     float(centered_anchor.y),
                 )
-            else:
-                forest = [
-                    item
-                    for item in detections
-                    if item.type == self.forest_recenter_type
-                ]
-                return super().choose(frame, forest)
+                if self._total_hunt_count >= self.mail_after_hunts:
+                    self._mail_stage = 1
+                return None
+            return super().choose(frame, anchors)
 
         has_hunt_control = any(
             item.type in self.hunt_button_types for item in detections
         )
+        on_collect_map = any(
+            item.type in {
+                self.map_exit_type,
+                self.center_anchor_type,
+                self.mailbox_type,
+            }
+            for item in detections
+        )
+        # A map landmark can miss for one animated frame. Seeing dinosaurs
+        # without any hunt control is itself sufficient evidence that the
+        # previous confirmed hunt returned to the collection map. This keeps
+        # the batch counter exact instead of carrying the pending flag into
+        # the next confirmation.
+        if not has_hunt_control and any(
+            item.type == self.dinosaur_type for item in detections
+        ):
+            on_collect_map = True
+        if self._pending_hunt_return and on_collect_map and not has_hunt_control:
+            self._pending_hunt_return = False
+            if self._hunt_count >= self.recenter_every:
+                self._hunt_count = 0
+                self._recenter_stage = 1
+                return self._choose_map_exit(frame, detections)
+
+        now = time.monotonic()
+        if now < self._capacity_cooldown_until:
+            return None
+        if any(item.type == self.capacity_full_type for item in detections):
+            self._capacity_cooldown_until = now + self.capacity_wait_seconds
+            return None
+
         if has_hunt_control:
+            self._map_idle_frames = 0
             hunt_controls = [
                 item for item in detections if item.type in self.hunt_button_types
             ]
@@ -258,24 +437,11 @@ class HuntPlanner(TargetPlanner):
                 self.clear_history()
                 if not self._pending_hunt_return:
                     self._hunt_count += 1
+                    self._total_hunt_count += 1
                 self._pending_hunt_return = True
                 self._awaiting_hunt_button = False
                 self._waited_frames = 0
             return target
-
-        on_collect_map = any(
-            item.type in {self.map_exit_type, self.center_anchor_type}
-            for item in detections
-        )
-        if self._pending_hunt_return and on_collect_map:
-            self._pending_hunt_return = False
-            if self._hunt_count >= self.recenter_every:
-                self._hunt_count = 0
-                self._recenter_stage = 1
-                exit_buttons = [
-                    item for item in detections if item.type == self.map_exit_type
-                ]
-                return super().choose(frame, exit_buttons)
 
         if self._awaiting_hunt_button:
             self._waited_frames += 1
@@ -287,12 +453,22 @@ class HuntPlanner(TargetPlanner):
         navigation_types = {
             self.map_exit_type,
             self.forest_recenter_type,
+            self.center_anchor_type,
+            self.mailbox_type,
+            self.mail_collect_all_type,
+            self.mail_reward_collect_type,
+            self.mail_close_type,
             *self.recovery_button_types,
         }
         actionable = [item for item in detections if item.type not in navigation_types]
         anchor_position = self._last_anchor
         if anchor_position is not None:
             anchor_x, anchor_y = anchor_position
+            established_angles = self._established_path_angles(
+                anchor_x,
+                anchor_y,
+                detections,
+            )
             # Treat every visible blue route marker as a buffered no-click zone.
             # If every dinosaur is inside that corridor, wait for another frame
             # instead of falling back to an unsafe dinosaur.
@@ -313,6 +489,15 @@ class HuntPlanner(TargetPlanner):
                     if marker.type in self.own_path_types
                 )
                 and all(
+                    self._angle_distance(
+                        degrees(atan2(item.y - anchor_y, item.x - anchor_x))
+                        % 360.0,
+                        path_angle,
+                    )
+                    > self.own_path_angle_degrees
+                    for path_angle in established_angles
+                )
+                and all(
                     not (
                         status.x - 190 <= item.x <= status.x + 190
                         and status.y - 330 <= item.y <= status.y + 100
@@ -324,21 +509,40 @@ class HuntPlanner(TargetPlanner):
                 item for item in actionable if item.type != self.dinosaur_type
             ]
             if safe_dinosaurs:
+                def radial_key(item: Detection) -> tuple[float, float, float, float]:
+                    distance = hypot(item.x - anchor_x, item.y - anchor_y)
+                    angle = degrees(atan2(item.y - anchor_y, item.x - anchor_x)) % 360.0
+                    clearance = min(
+                        (
+                            self._angle_distance(angle, path_angle)
+                            for path_angle in established_angles
+                        ),
+                        default=180.0,
+                    )
+                    return (
+                        distance // self.ring_width,
+                        -clearance,
+                        distance,
+                        -item.confidence,
+                    )
+
                 nearest = min(
                     safe_dinosaurs,
-                    key=lambda item: (
-                        hypot(item.x - anchor_x, item.y - anchor_y),
-                        -item.confidence,
-                    ),
+                    key=radial_key,
                 )
                 actionable.append(nearest)
         elif on_collect_map:
             self._recenter_stage = 1
-            exit_buttons = [
-                item for item in detections if item.type == self.map_exit_type
-            ]
-            return super().choose(frame, exit_buttons)
+            return self._choose_map_exit(frame, detections)
         target = super().choose(frame, actionable)
+        if target is None and on_collect_map:
+            self._map_idle_frames += 1
+            if self._map_idle_frames >= self.stalled_recenter_frames:
+                self._map_idle_frames = 0
+                self._recenter_stage = 1
+                return self._choose_map_exit(frame, detections)
+        elif target is not None:
+            self._map_idle_frames = 0
         if target is not None and target.type == self.dinosaur_type:
             if anchor_position is not None:
                 self._last_anchor = (

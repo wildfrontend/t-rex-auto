@@ -17,10 +17,15 @@ class TargetChangedVerifier:
         max_distance: float = 35.0,
         pixel_change_threshold: float = 0.08,
         failure_types: Sequence[str] = (),
+        success_transitions: dict[str, Sequence[str]] | None = None,
     ):
         self.max_distance = max_distance
         self.pixel_change_threshold = pixel_change_threshold
         self.failure_types = frozenset(failure_types)
+        self.success_transitions = {
+            target_type: frozenset(successors)
+            for target_type, successors in (success_transitions or {}).items()
+        }
 
     def verify(
         self,
@@ -37,6 +42,16 @@ class TargetChangedVerifier:
             return VerificationResult(
                 success=False,
                 reason=f"failure indicator detected: {', '.join(failures)}",
+                confidence=1.0,
+            )
+        expected_successors = self.success_transitions.get(target.type, frozenset())
+        visible_successors = sorted(
+            {item.type for item in after_detections if item.type in expected_successors}
+        )
+        if visible_successors:
+            return VerificationResult(
+                success=True,
+                reason=f"next UI detected: {', '.join(visible_successors)}",
                 confidence=1.0,
             )
         nearby = [

@@ -27,6 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--max-actions", type=int)
     run.add_argument("--max-cycles", type=int)
     run.add_argument("--batch-size", type=int)
+    run.add_argument("--mail-after-hunts", type=int)
     run.add_argument("--verbose", action="store_true")
 
     subcommands.add_parser("doctor", help="check configuration and runtime dependencies")
@@ -143,6 +144,14 @@ def main(argv: list[str] | None = None) -> int:
                 planner=replace(
                     config.planner,
                     recenter_every=max(1, args.batch_size),
+                ),
+            )
+        if args.mail_after_hunts is not None:
+            config = replace(
+                config,
+                planner=replace(
+                    config.planner,
+                    mail_after_hunts=max(1, args.mail_after_hunts),
                 ),
             )
         engine = create_engine(config, verbose=args.verbose)

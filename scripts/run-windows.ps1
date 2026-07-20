@@ -4,7 +4,8 @@ param(
     [string]$Mode = "runtime",
     [int]$MaxActions = 0,
     [int]$MaxCycles = 0,
-    [int]$BatchSize = 0
+    [int]$BatchSize = 0,
+    [int]$MailAfterHunts = 0
 )
 
 $ErrorActionPreference = "Stop"
@@ -20,10 +21,14 @@ $RunArguments = @(
     "--config", (Join-Path $AppRoot "config.json"),
     "run", "--mode", $Mode,
     "--max-actions", $MaxActions,
-    "--max-cycles", $MaxCycles
+    "--max-cycles", $MaxCycles,
+    "--verbose"
 )
 if ($BatchSize -gt 0) {
     $RunArguments += @("--batch-size", $BatchSize)
+}
+if ($MailAfterHunts -gt 0) {
+    $RunArguments += @("--mail-after-hunts", $MailAfterHunts)
 }
 
 & $PythonExecutable $RunArguments

@@ -80,6 +80,51 @@
         27,
         20
       ]
+    },
+    {
+      "type": "mail_close_button",
+      "file": "templates/mail-close-button.png",
+      "threshold": 0.88,
+      "click_offset": [
+        33,
+        32
+      ]
+    },
+    {
+      "type": "mailbox_button",
+      "file": "templates/mailbox-button.png",
+      "threshold": 0.88,
+      "click_offset": [
+        41,
+        38
+      ]
+    },
+    {
+      "type": "mail_collect_all_button",
+      "file": "templates/mail-collect-all-button.png",
+      "threshold": 0.88,
+      "click_offset": [
+        69,
+        44
+      ]
+    },
+    {
+      "type": "mail_reward_collect_button",
+      "file": "templates/mail-reward-collect-button.png",
+      "threshold": 0.88,
+      "click_offset": [
+        94,
+        51
+      ]
+    },
+    {
+      "type": "hunt_dialog_close_button",
+      "file": "templates/hunt-dialog-close-button.png",
+      "threshold": 0.9,
+      "click_offset": [
+        36,
+        37
+      ]
     }
   ],
   "hsv_ranges": [

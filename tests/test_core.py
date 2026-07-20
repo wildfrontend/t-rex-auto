@@ -8,10 +8,21 @@ from unittest.mock import patch
 
 import cv2
 import numpy as np
+import pytest
 
+import action as action_facade
+import capture as capture_facade
+import detector as detector_facade
+import planner as planner_facade
 from dino_bot.actions import AdbActionDriver, RecordingActionDriver
 from dino_bot.assets import create_template
-from dino_bot.detection import OpenCvDetector
+from dino_bot.config import ConfigError, load_config
+from dino_bot.detection import (
+    HuntCapacityDetector,
+    HuntTeamAvailabilityDetector,
+    OpenCvDetector,
+    TargetTooStrongDetector,
+)
 from dino_bot.engine import BotContext, BotEngine, BotState
 from dino_bot.models import (
     ActionCommand,
@@ -32,6 +43,59 @@ def make_frame(value: int = 0, sequence: int = 1) -> Frame:
 
 def make_detection(x: int = 80, y: int = 50, type: str = "resource") -> Detection:
     return Detection.from_bbox(type, BoundingBox(x - 5, y - 5, 10, 10), 0.95)
+
+
+@pytest.mark.parametrize(
+    ("training", "message"),
+    [
+        ({"fps": 0, "max_images": 500}, "training.fps"),
+        ({"fps": 6, "max_images": 500}, "training.fps"),
+        ({"fps": 2, "max_images": 501}, "training.max_images"),
+    ],
+)
+def test_config_enforces_training_collection_limits(
+    tmp_path: Path,
+    training: dict[str, int],
+    message: str,
+) -> None:
+    config_file = tmp_path / "config.json"
+    config_file.write_text(json.dumps({"training": training}), encoding="utf-8")
+    with pytest.raises(ConfigError, match=message):
+        load_config(config_file)
+
+
+def test_compatibility_facades_are_independently_callable() -> None:
+    class OneFrameCapture:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def capture(self) -> Frame:
+            return make_frame(7)
+
+        def close(self) -> None:
+            self.closed = True
+
+    class OneDetectionDetector:
+        def detect(self, frame: Frame) -> list[Detection]:
+            return [make_detection(type="resource")]
+
+    provider = OneFrameCapture()
+    capture_facade.configure(provider)
+    image = capture_facade.capture()
+    assert isinstance(image, np.ndarray) and int(image[0, 0, 0]) == 7
+
+    detector_facade.configure(OneDetectionDetector())
+    detections = detector_facade.detect(image)
+    planner_facade.configure(TargetPlanner(("resource",)))
+    target = planner_facade.choose(image, detections)
+    assert target is not None and target.type == "resource"
+
+    driver = RecordingActionDriver()
+    action_facade.configure(driver, image)
+    action_facade.tap(target.x, target.y)
+    assert driver.actions == [ActionCommand.tap(target.x, target.y)]
+    capture_facade.close()
+    assert provider.closed
 
 
 def test_planner_nearest_center() -> None:
@@ -131,6 +195,7 @@ def test_hunt_planner_uses_egg_anchor_and_recenters_after_batch() -> None:
     enter_forest = planner.choose(frame, [forest_button])
     assert enter_forest is not None and enter_forest.type == "forest_recenter_button"
 
+    assert planner.choose(frame, [anchor, exit_button, near]) is None
     next_batch = planner.choose(frame, [anchor, exit_button, near])
     assert next_batch is not None and next_batch.type == "dinosaur"
 
@@ -166,6 +231,182 @@ def test_hunt_planner_waits_when_all_dinosaurs_are_on_own_blue_path() -> None:
         Detection("dinosaur", 530, 820, 0.99),
     ]
     assert planner.choose(frame, detections) is None
+
+
+def test_hunt_planner_recenters_after_repeated_frames_without_safe_dinosaur() -> None:
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(
+        ("map_exit_nest_button", "dinosaur"),
+        own_path_radius=90,
+        stalled_recenter_frames=2,
+        safe_margin=80,
+    )
+    detections = [
+        Detection("map_center_egg", 450, 800, 1.0),
+        Detection("mailbox_button", 841, 1210, 0.99),
+        Detection("own_hunt_path", 500, 820, 0.9),
+        Detection("dinosaur", 500, 820, 0.99),
+    ]
+
+    assert planner.choose(frame, detections) is None
+    reset = planner.choose(frame, detections)
+    assert reset is not None and reset.type == "map_exit_nest_button"
+
+
+def test_hunt_planner_collects_mail_after_hunt_threshold() -> None:
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(
+        (
+            "mail_reward_collect_button",
+            "mail_collect_all_button",
+            "mail_close_button",
+            "mailbox_button",
+            "forest_recenter_button",
+            "map_exit_nest_button",
+            "hunt_confirm_button",
+            "dinosaur",
+        ),
+        recenter_every=1,
+        mail_after_hunts=1,
+        safe_margin=80,
+    )
+    anchor = Detection("map_center_egg", 450, 800, 1.0)
+    exit_button = Detection("map_exit_nest_button", 841, 1295, 1.0)
+    dinosaur = Detection("dinosaur", 500, 820, 0.9)
+    confirm = Detection("hunt_confirm_button", 451, 1412, 1.0)
+    forest = Detection("forest_recenter_button", 841, 1295, 1.0)
+    mailbox = Detection("mailbox_button", 841, 1210, 1.0)
+    collect_all = Detection("mail_collect_all_button", 636, 1165, 1.0)
+    reward = Detection("mail_reward_collect_button", 450, 910, 1.0)
+    close = Detection("mail_close_button", 450, 1380, 1.0)
+
+    # A visible mailbox must remain inert until the hunt threshold is reached.
+    assert planner.choose(frame, [anchor, exit_button, mailbox, dinosaur]).type == "dinosaur"  # type: ignore[union-attr]
+    assert planner.choose(frame, [confirm]).type == "hunt_confirm_button"  # type: ignore[union-attr]
+    assert planner.choose(frame, [anchor, exit_button]).type == "map_exit_nest_button"  # type: ignore[union-attr]
+    assert planner.choose(frame, [forest]).type == "forest_recenter_button"  # type: ignore[union-attr]
+    assert planner.choose(frame, [anchor, exit_button, mailbox]) is None
+    assert planner.choose(frame, [anchor, exit_button, mailbox]).type == "mailbox_button"  # type: ignore[union-attr]
+    assert planner.choose(frame, [collect_all, close]).type == "mail_collect_all_button"  # type: ignore[union-attr]
+    assert planner.choose(frame, [reward, close]).type == "mail_reward_collect_button"  # type: ignore[union-attr]
+    assert planner.choose(frame, [close]).type == "mail_close_button"  # type: ignore[union-attr]
+    assert planner.choose(frame, [anchor, exit_button]) is None
+
+
+def test_hunt_planner_taps_egg_until_map_is_centered() -> None:
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(
+        (
+            "forest_recenter_button",
+            "map_exit_nest_button",
+            "map_center_egg",
+            "hunt_confirm_button",
+            "dinosaur",
+        ),
+        recenter_every=1,
+        safe_margin=80,
+    )
+    centered_anchor = Detection("map_center_egg", 450, 800, 1.0)
+    shifted_anchor = Detection("map_center_egg", 253, 696, 0.9)
+    exit_button = Detection("map_exit_nest_button", 841, 1295, 1.0)
+    dinosaur = Detection("dinosaur", 500, 820, 0.9)
+    confirm = Detection("hunt_confirm_button", 451, 1412, 1.0)
+    forest = Detection("forest_recenter_button", 841, 1295, 1.0)
+
+    assert planner.choose(frame, [centered_anchor, exit_button, dinosaur]).type == "dinosaur"  # type: ignore[union-attr]
+    assert planner.choose(frame, [confirm]).type == "hunt_confirm_button"  # type: ignore[union-attr]
+    assert planner.choose(frame, [centered_anchor, exit_button]).type == "map_exit_nest_button"  # type: ignore[union-attr]
+    assert planner.choose(frame, [forest]).type == "forest_recenter_button"  # type: ignore[union-attr]
+    recenter = planner.choose(frame, [shifted_anchor, exit_button])
+    assert recenter is not None and recenter.type == "map_center_egg"
+    assert planner.choose(frame, [centered_anchor, exit_button]) is None
+
+
+def test_hunt_planner_uses_safe_map_exit_fallback_when_nest_template_is_missing() -> None:
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(("map_exit_nest_button", "dinosaur"))
+    mailbox = Detection("mailbox_button", 841, 1210, 0.99)
+
+    target = planner.choose(frame, [mailbox])
+
+    assert target is not None
+    assert target.type == "map_exit_nest_button"
+    assert (target.x, target.y) == (841, 1295)
+    assert target.detection.metadata["detector"] == "map_landmark_fallback"
+
+
+def test_hunt_planner_counts_return_when_animated_map_landmarks_are_missing() -> None:
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(
+        ("map_exit_nest_button", "hunt_confirm_button", "dinosaur"),
+        recenter_every=2,
+        safe_margin=80,
+    )
+    anchor = Detection("map_center_egg", 450, 800, 1.0)
+    first = Detection("dinosaur", 500, 820, 0.9)
+    second = Detection("dinosaur", 600, 820, 0.9)
+    third = Detection("dinosaur", 350, 820, 0.9)
+    confirm = Detection("hunt_confirm_button", 451, 1412, 1.0)
+    mailbox = Detection("mailbox_button", 841, 1210, 0.99)
+
+    assert planner.choose(frame, [anchor, first]).type == "dinosaur"  # type: ignore[union-attr]
+    assert planner.choose(frame, [confirm]).type == "hunt_confirm_button"  # type: ignore[union-attr]
+    # No egg, nest, or mailbox is detected in this animated map frame.
+    assert planner.choose(frame, [second]).type == "dinosaur"  # type: ignore[union-attr]
+    assert planner.choose(frame, [confirm]).type == "hunt_confirm_button"  # type: ignore[union-attr]
+    # The exact second return starts recentering and must not choose a third hunt.
+    assert planner.choose(frame, [third]) is None
+    exit_target = planner.choose(frame, [mailbox, third])
+    assert exit_target is not None and exit_target.type == "map_exit_nest_button"
+
+
+def test_hunt_planner_prioritizes_no_available_dinosaurs_exception() -> None:
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(
+        ("no_available_dinosaurs", "hunt_button", "dinosaur"),
+    )
+    unavailable = Detection("no_available_dinosaurs", 450, 900, 1.0)
+    hunt_button = Detection("hunt_button", 450, 1200, 1.0)
+    target = planner.choose(frame, [unavailable, hunt_button])
+    assert target is not None and target.type == "no_available_dinosaurs"
+
+
+def test_hunt_planner_spreads_targets_away_from_existing_blue_ray() -> None:
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(
+        ("dinosaur",),
+        own_path_radius=50,
+        own_path_angle_degrees=7,
+        ring_width=150,
+        safe_margin=80,
+    )
+    detections = [
+        Detection("map_center_egg", 450, 800, 1.0),
+        Detection("own_hunt_path", 550, 800, 0.9),
+        Detection("own_hunt_path", 650, 800, 0.9),
+        Detection("own_hunt_path", 750, 800, 0.9),
+        Detection("dinosaur", 840, 800, 0.99),
+        Detection("dinosaur", 450, 500, 0.8),
+    ]
+    target = planner.choose(frame, detections)
+    assert target is not None and (target.x, target.y) == (450, 500)
+
+
+def test_hunt_planner_waits_when_concurrent_hunt_capacity_is_full() -> None:
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(
+        ("hunt_capacity_full", "dinosaur"),
+        capacity_wait_seconds=300,
+        safe_margin=80,
+    )
+    anchor = Detection("map_center_egg", 450, 800, 1.0)
+    full = Detection("hunt_capacity_full", 815, 240, 0.99)
+    dinosaur = Detection("dinosaur", 500, 820, 0.9)
+    with patch("dino_bot.planning.time.monotonic", side_effect=[0, 1, 301]):
+        assert planner.choose(frame, [anchor, full, dinosaur]) is None
+        assert planner.choose(frame, [anchor, dinosaur]) is None
+        resumed = planner.choose(frame, [anchor, dinosaur])
+    assert resumed is not None and resumed.type == "dinosaur"
 
 
 def test_template_detector_finds_asset(tmp_path: Path) -> None:
@@ -214,6 +455,76 @@ def test_hsv_detector_finds_blob(tmp_path: Path) -> None:
     found = OpenCvDetector(tmp_path / "manifest.json").detect(Frame(image))
     assert len(found) == 1
     assert found[0].type == "resource"
+
+
+def test_hunt_team_availability_detector_only_matches_zero_of_eleven() -> None:
+    detector = HuntTeamAvailabilityDetector()
+
+    def team_screen(label: str) -> Frame:
+        image = np.full((1600, 900, 3), 30, dtype=np.uint8)
+        image[850:1500] = 255
+        cv2.putText(
+            image,
+            label,
+            (410, 960),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.9,
+            (0, 0, 0),
+            2,
+            cv2.LINE_AA,
+        )
+        cv2.rectangle(image, (592, 1372), (664, 1447), (50, 80, 255), -1)
+        return Frame(image)
+
+    unavailable = detector.detect(team_screen("0 / 11"))
+    assert len(unavailable) == 1
+    assert unavailable[0].type == "no_available_dinosaurs"
+    assert (unavailable[0].x, unavailable[0].y) == (628, 1409)
+    assert detector.detect(team_screen("11 / 11")) == []
+
+
+def test_hunt_capacity_detector_only_matches_ten_of_ten() -> None:
+    detector = HuntCapacityDetector()
+
+    def capacity_screen(label: str) -> Frame:
+        image = np.full((1600, 900, 3), 30, dtype=np.uint8)
+        cv2.putText(
+            image,
+            label,
+            (790, 249),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            (255, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
+        return Frame(image)
+
+    full = detector.detect(capacity_screen("10/10"))
+    assert len(full) == 1 and full[0].type == "hunt_capacity_full"
+    assert detector.detect(capacity_screen("9/10")) == []
+
+
+def test_target_too_strong_detector_requires_red_warning_and_close_button() -> None:
+    detector = TargetTooStrongDetector()
+    image = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    cv2.putText(
+        image,
+        "TARGET TOO STRONG",
+        (200, 720),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.8,
+        (0, 0, 255),
+        2,
+        cv2.LINE_AA,
+    )
+    cv2.rectangle(image, (592, 1372), (664, 1447), (50, 80, 255), -1)
+    found = detector.detect(Frame(image))
+    assert len(found) == 1 and found[0].type == "target_too_strong"
+
+    safe = image.copy()
+    safe[660:755] = 255
+    assert detector.detect(Frame(safe)) == []
 
 
 def test_template_asset_tool_crops_and_updates_manifest(tmp_path: Path) -> None:
@@ -275,6 +586,17 @@ def test_verifier_rejects_duplicate_hunt_alert() -> None:
     ).verify(make_frame(), make_frame(255), target, [detection], [alert])
     assert not result.success
     assert "duplicate_hunt_alert" in result.reason
+
+
+def test_verifier_accepts_expected_next_ui() -> None:
+    detection = make_detection(type="dinosaur")
+    target = Target("dinosaur", detection.x, detection.y, detection.confidence, detection)
+    hunt_button = make_detection(type="hunt_button")
+    result = TargetChangedVerifier(
+        success_transitions={"dinosaur": ("hunt_button",)}
+    ).verify(make_frame(), make_frame(), target, [detection], [detection, hunt_button])
+    assert result.success
+    assert "hunt_button" in result.reason
 
 
 class SequenceCapture:
