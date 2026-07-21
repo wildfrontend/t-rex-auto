@@ -137,6 +137,10 @@ class HuntPlanner(TargetPlanner):
         forest_recenter_type: str = "forest_recenter_button",
         center_anchor_type: str = "map_center_egg",
         recovery_button_types: Sequence[str] = ("hunt_team_return_button",),
+        interrupt_button_types: Sequence[str] = (
+            "device_history_confirm_button",
+            "startup_offer_dismiss",
+        ),
         own_path_types: Sequence[str] = ("own_hunt_path",),
         own_path_radius: float = 90.0,
         recenter_every: int = 10,
@@ -165,6 +169,7 @@ class HuntPlanner(TargetPlanner):
         self.forest_recenter_type = forest_recenter_type
         self.center_anchor_type = center_anchor_type
         self.recovery_button_types = frozenset(recovery_button_types)
+        self.interrupt_button_types = frozenset(interrupt_button_types)
         self.own_path_types = frozenset(own_path_types)
         self.own_path_radius = max(0.0, own_path_radius)
         self.recenter_every = max(1, recenter_every)
@@ -317,6 +322,14 @@ class HuntPlanner(TargetPlanner):
         return None
 
     def choose(self, frame: Frame, detections: Sequence[Detection]) -> Target | None:
+        # Login/device-switch prompts and startup offers can interrupt any
+        # workflow stage. Always clear them before resuming mail or hunting.
+        interruptions = [
+            item for item in detections if item.type in self.interrupt_button_types
+        ]
+        if interruptions:
+            return super().choose(frame, interruptions)
+
         if any(item.type in self.blocking_types for item in detections):
             return None
 

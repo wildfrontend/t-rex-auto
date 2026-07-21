@@ -306,6 +306,8 @@ def test_hunt_planner_collects_mail_after_hunt_threshold() -> None:
     frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
     planner = HuntPlanner(
         (
+            "device_history_confirm_button",
+            "startup_offer_dismiss",
             "mail_reward_collect_button",
             "mail_collect_all_button",
             "mail_close_button",
@@ -328,6 +330,8 @@ def test_hunt_planner_collects_mail_after_hunt_threshold() -> None:
     collect_all = Detection("mail_collect_all_button", 636, 1165, 1.0)
     reward = Detection("mail_reward_collect_button", 450, 910, 1.0)
     close = Detection("mail_close_button", 450, 1380, 1.0)
+    device_confirm = Detection("device_history_confirm_button", 333, 900, 1.0)
+    offer_dismiss = Detection("startup_offer_dismiss", 800, 800, 1.0)
 
     # A visible mailbox must remain inert until the hunt threshold is reached.
     assert planner.choose(frame, [anchor, exit_button, mailbox, dinosaur]).type == "dinosaur"  # type: ignore[union-attr]
@@ -336,6 +340,9 @@ def test_hunt_planner_collects_mail_after_hunt_threshold() -> None:
     assert planner.choose(frame, [forest]).type == "forest_recenter_button"  # type: ignore[union-attr]
     assert planner.choose(frame, [anchor, exit_button, mailbox]) is None
     assert planner.choose(frame, [anchor, exit_button, mailbox]).type == "mailbox_button"  # type: ignore[union-attr]
+    # Login and startup overlays preempt mail without advancing its stage.
+    assert planner.choose(frame, [collect_all, device_confirm]).type == "device_history_confirm_button"  # type: ignore[union-attr]
+    assert planner.choose(frame, [collect_all, offer_dismiss]).type == "startup_offer_dismiss"  # type: ignore[union-attr]
     assert planner.choose(frame, [collect_all, close]).type == "mail_collect_all_button"  # type: ignore[union-attr]
     assert planner.choose(frame, [reward, close]).type == "mail_reward_collect_button"  # type: ignore[union-attr]
     assert planner.choose(frame, [close]).type == "mail_close_button"  # type: ignore[union-attr]
