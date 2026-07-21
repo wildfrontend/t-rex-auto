@@ -200,6 +200,18 @@ class HuntPlanner(TargetPlanner):
         self._capacity_cooldown_until = 0.0
         self._map_idle_frames = 0
 
+    def reset_workflow(self) -> None:
+        """Discard screen-dependent state after the Android app is restarted."""
+        self.clear_history()
+        self._awaiting_hunt_button = False
+        self._waited_frames = 0
+        self._recenter_stage = 0
+        self._pending_hunt_return = False
+        self._last_anchor = None
+        self._mail_stage = 0
+        self._capacity_cooldown_until = 0.0
+        self._map_idle_frames = 0
+
     @staticmethod
     def _angle_distance(left: float, right: float) -> float:
         difference = abs(left - right) % 360.0
