@@ -4,6 +4,8 @@
   "capture_fps": 10,
   "click_delay": 1500,
   "post_action_delays": {
+    "device_history_confirm_button": 5000,
+    "startup_offer_dismiss": 1500,
     "hunt_confirm_button": 3000,
     "map_center_egg": 5000,
     "no_available_dinosaurs": 300000,
@@ -37,6 +39,8 @@
   },
   "planner": {
     "target_types": [
+      "device_history_confirm_button",
+      "startup_offer_dismiss",
       "hunt_team_return_button",
       "no_available_dinosaurs",
       "target_too_strong",

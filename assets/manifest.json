@@ -5,6 +5,24 @@
   ],
   "templates": [
     {
+      "type": "device_history_confirm_button",
+      "file": "templates/device-history-confirm-button.png",
+      "threshold": 0.82,
+      "click_offset": [
+        86,
+        41
+      ]
+    },
+    {
+      "type": "startup_offer_dismiss",
+      "file": "templates/startup-offer-popup.png",
+      "threshold": 0.9,
+      "click_offset": [
+        515,
+        415
+      ]
+    },
+    {
       "type": "dinosaur",
       "file": "templates/dinosaur-level-label.png",
       "threshold": 0.6,
