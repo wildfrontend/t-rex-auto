@@ -21,8 +21,10 @@ cp -a \
   "${runtime_app}/"
 cp -a \
   "${project_root}/scripts/run-windows.ps1" \
+  "${project_root}/scripts/doctor-windows.ps1" \
   "${project_root}/scripts/watch-running-bot.ps1" \
   "${runtime_app}/scripts/"
 cp -a "${project_root}/scripts/start-bot.cmd" "${runtime_root}/start-bot.cmd"
+cp -a "${project_root}/使用教學.md" "${runtime_root}/使用教學.md"
 
 echo "Deployed portable app to ${runtime_root}"
