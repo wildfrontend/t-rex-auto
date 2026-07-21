@@ -19,6 +19,7 @@ from .logging import configure_logging
 from .models import ActionKind
 from .modes import create_mode
 from .planning import HuntPlanner
+from .recovery import AdbAppRestarter, BlackScreenRecovery
 from .verification import TargetChangedVerifier
 
 
@@ -84,6 +85,20 @@ def create_engine(config: AppConfig, *, verbose: bool = False) -> BotEngine:
         training_fps=config.training.fps,
         training_max_images=config.training.max_images,
     )
+    runtime_recovery = None
+    if config.recovery.enabled:
+        runtime_recovery = BlackScreenRecovery(
+            AdbAppRestarter(
+                adb,
+                config.recovery.package,
+                config.recovery.activity,
+            ),
+            logger,
+            timeout_seconds=config.recovery.black_screen_timeout_seconds,
+            mean_threshold=config.recovery.black_mean_threshold,
+            cooldown_seconds=config.recovery.restart_cooldown_seconds,
+            launch_wait_seconds=config.recovery.launch_wait_seconds,
+        )
     context = BotContext(
         capture_provider=capture,
         detector=detector,
@@ -103,6 +118,7 @@ def create_engine(config: AppConfig, *, verbose: bool = False) -> BotEngine:
         max_actions=config.max_actions,
         max_cycles=config.workflow.max_cycles,
         cycle_complete_targets=config.workflow.complete_on,
+        runtime_recovery=runtime_recovery,
     )
     return BotEngine(context)
 

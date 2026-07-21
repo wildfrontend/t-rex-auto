@@ -77,6 +77,17 @@ class WorkflowConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class RecoveryConfig:
+    enabled: bool = True
+    black_screen_timeout_seconds: float = 45.0
+    black_mean_threshold: float = 2.0
+    restart_cooldown_seconds: float = 300.0
+    launch_wait_seconds: float = 15.0
+    package: str = "com.mondayoff.dinomutant"
+    activity: str = "com.unity3d.player.UnityPlayerActivity"
+
+
+@dataclass(frozen=True, slots=True)
 class AppConfig:
     root: Path
     mode: Literal["runtime", "debug", "training"] = "runtime"
@@ -96,6 +107,7 @@ class AppConfig:
     verify: VerifyConfig = field(default_factory=VerifyConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
     workflow: WorkflowConfig = field(default_factory=WorkflowConfig)
+    recovery: RecoveryConfig = field(default_factory=RecoveryConfig)
 
     @property
     def logs_dir(self) -> Path:
@@ -141,6 +153,7 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
     verify_data = _section(data, "verify")
     training_data = _section(data, "training")
     workflow_data = _section(data, "workflow")
+    recovery_data = _section(data, "recovery")
 
     viewport_raw = capture_data.get("viewport")
     auto_viewport = isinstance(viewport_raw, str) and viewport_raw.lower() == "auto"
@@ -252,6 +265,29 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
             max_cycles=int(workflow_data.get("max_cycles", 0)),
             complete_on=tuple(workflow_data.get("complete_on", [])),
         ),
+        recovery=RecoveryConfig(
+            enabled=bool(recovery_data.get("enabled", True)),
+            black_screen_timeout_seconds=float(
+                recovery_data.get("black_screen_timeout_seconds", 45)
+            ),
+            black_mean_threshold=float(
+                recovery_data.get("black_mean_threshold", 2)
+            ),
+            restart_cooldown_seconds=float(
+                recovery_data.get("restart_cooldown_seconds", 300)
+            ),
+            launch_wait_seconds=float(
+                recovery_data.get("launch_wait_seconds", 15)
+            ),
+            package=str(
+                recovery_data.get("package", "com.mondayoff.dinomutant")
+            ),
+            activity=str(
+                recovery_data.get(
+                    "activity", "com.unity3d.player.UnityPlayerActivity"
+                )
+            ),
+        ),
     )
     _validate(config)
     return config
@@ -278,6 +314,16 @@ def _validate(config: AppConfig) -> None:
         raise ConfigError("planner dedup_radius/history_limit are invalid")
     if config.planner.recenter_every <= 0:
         raise ConfigError("planner.recenter_every must be greater than zero")
+    if config.recovery.black_screen_timeout_seconds <= 0:
+        raise ConfigError("recovery.black_screen_timeout_seconds must be greater than zero")
+    if not 0 <= config.recovery.black_mean_threshold <= 255:
+        raise ConfigError("recovery.black_mean_threshold must be between 0 and 255")
+    if config.recovery.restart_cooldown_seconds < 0:
+        raise ConfigError("recovery.restart_cooldown_seconds cannot be negative")
+    if config.recovery.launch_wait_seconds < 0:
+        raise ConfigError("recovery.launch_wait_seconds cannot be negative")
+    if not config.recovery.package or not config.recovery.activity:
+        raise ConfigError("recovery package/activity cannot be empty")
     if config.planner.own_path_radius < 0:
         raise ConfigError("planner.own_path_radius cannot be negative")
     if config.planner.mail_after_hunts <= 0:

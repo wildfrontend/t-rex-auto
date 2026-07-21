@@ -8,7 +8,15 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Protocol
 
-from .interfaces import ActionDriver, CaptureProvider, Detector, ModeObserver, Planner, Verifier
+from .interfaces import (
+    ActionDriver,
+    CaptureProvider,
+    Detector,
+    ModeObserver,
+    Planner,
+    RuntimeRecovery,
+    Verifier,
+)
 from .models import (
     ActionCommand,
     ActionKind,
@@ -49,6 +57,7 @@ class BotContext:
     max_actions: int = 0
     max_cycles: int = 0
     cycle_complete_targets: tuple[str, ...] = ()
+    runtime_recovery: RuntimeRecovery | None = None
     state: BotState = BotState.IDLE
     stop_requested: bool = False
     frame: Frame | None = None
@@ -88,6 +97,9 @@ class CaptureState:
         context.observer.on_frame(frame)
         context.frame = frame
         context.logger.debug("Capture | %dx%d | #%d", frame.width, frame.height, frame.sequence)
+        if context.runtime_recovery is not None and context.runtime_recovery.observe(frame):
+            _reset_after_runtime_recovery(context)
+            return BotState.IDLE
         return BotState.DETECT
 
 
@@ -180,6 +192,11 @@ class VerifyState:
             raise RuntimeError("Verify state entered without a pending action")
         after = context.capture_provider.capture()
         context.observer.on_frame(after)
+        if context.runtime_recovery is not None and context.runtime_recovery.observe(after):
+            context.after_frame = after
+            context.after_detections = []
+            _reset_after_runtime_recovery(context)
+            return BotState.IDLE
         after_detections = context.detector.detect(after)
         context.after_frame = after
         context.after_detections = after_detections
@@ -237,6 +254,23 @@ class RecoverState:
 class StoppedState:
     def execute(self, context: BotContext) -> BotState:
         return BotState.STOPPED
+
+
+def _reset_after_runtime_recovery(context: BotContext) -> None:
+    context.logger.info("Recovery | clearing transient workflow state")
+    reset_workflow = getattr(context.planner, "reset_workflow", None)
+    if callable(reset_workflow):
+        reset_workflow()
+    context.frame = None
+    context.detections = []
+    context.target = None
+    context.action = None
+    context.before_frame = None
+    context.before_detections = []
+    context.after_frame = None
+    context.after_detections = []
+    context.last_result = None
+    context.attempt = 0
 
 
 DEFAULT_STATES: dict[BotState, StateHandler] = {

@@ -34,6 +34,7 @@ from dino_bot.models import (
 )
 from dino_bot.modes import DebugMode, RuntimeMode, TrainingMode
 from dino_bot.planning import HuntPlanner, TargetPlanner
+from dino_bot.recovery import AdbAppRestarter, BlackScreenRecovery
 from dino_bot.verification import TargetChangedVerifier
 
 
@@ -843,3 +844,101 @@ def test_action_driver_sends_android_back_key() -> None:
     driver = AdbActionDriver(client)  # type: ignore[arg-type]
     driver.execute(ActionCommand.back(), make_frame())
     assert client.commands == [["shell", "input", "keyevent", "4"]]
+
+
+class RecordingRestarter:
+    def __init__(self) -> None:
+        self.restart_count = 0
+
+    def restart(self) -> None:
+        self.restart_count += 1
+
+
+def test_black_screen_recovery_ignores_brief_transition() -> None:
+    now = [100.0]
+    restarter = RecordingRestarter()
+    logger = logging.getLogger("test_black_screen_brief")
+    recovery = BlackScreenRecovery(
+        restarter,
+        logger,
+        timeout_seconds=45,
+        clock=lambda: now[0],
+        sleeper=lambda _: None,
+    )
+
+    assert not recovery.observe(make_frame(0))
+    now[0] += 44
+    assert not recovery.observe(make_frame(0))
+    assert not recovery.observe(make_frame(20))
+    assert restarter.restart_count == 0
+
+
+def test_black_screen_recovery_restarts_after_timeout_and_honors_cooldown() -> None:
+    now = [100.0]
+    restarter = RecordingRestarter()
+    logger = logging.getLogger("test_black_screen_timeout")
+    waits: list[float] = []
+    recovery = BlackScreenRecovery(
+        restarter,
+        logger,
+        timeout_seconds=45,
+        cooldown_seconds=300,
+        launch_wait_seconds=15,
+        clock=lambda: now[0],
+        sleeper=waits.append,
+    )
+
+    assert not recovery.observe(make_frame(0))
+    now[0] += 45
+    assert recovery.observe(make_frame(0))
+    assert restarter.restart_count == 1
+    assert waits == [15]
+
+    now[0] += 1
+    assert not recovery.observe(make_frame(0))
+    now[0] += 46
+    assert not recovery.observe(make_frame(0))
+    assert restarter.restart_count == 1
+
+    now[0] = 446
+    assert recovery.observe(make_frame(0))
+    assert restarter.restart_count == 2
+
+
+def test_adb_app_restarter_only_restarts_configured_game() -> None:
+    client = FakeAdbClient()
+    restarter = AdbAppRestarter(client, "game.package", "GameActivity")  # type: ignore[arg-type]
+    restarter.restart()
+    assert client.commands == [
+        ["shell", "am", "force-stop", "game.package"],
+        ["shell", "am", "start", "-n", "game.package/GameActivity"],
+    ]
+
+
+def test_engine_clears_transient_state_after_black_screen_recovery() -> None:
+    class ImmediateRecovery:
+        def observe(self, frame: Frame) -> bool:
+            return True
+
+    capture = SequenceCapture([make_frame(0)])
+    planner = HuntPlanner(("dinosaur",))
+    planner._awaiting_hunt_button = True
+    logger = logging.getLogger("test_engine_runtime_recovery")
+    context = BotContext(
+        capture_provider=capture,
+        detector=PixelDetector(),
+        planner=planner,
+        action_driver=RecordingActionDriver(),
+        verifier=TargetChangedVerifier(),
+        observer=RuntimeMode(),
+        logger=logger,
+        runtime_recovery=ImmediateRecovery(),
+        state=BotState.CAPTURE,
+        target=Target("resource", 80, 50, 0.9, make_detection()),
+        attempt=2,
+    )
+
+    assert BotEngine(context).step() == BotState.IDLE
+    assert context.target is None
+    assert context.attempt == 0
+    assert not planner._awaiting_hunt_button

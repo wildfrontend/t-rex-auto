@@ -48,6 +48,7 @@ BlueStacks 必須保留在 Windows，不需要也不應安裝到 WSL。
 - 約 30 次狩獵後自動開啟信箱，依序執行「全部獲取、資源獲取、關閉」。
 - 右上角同時派出隊伍為 `10/10` 時不再選目標，等待 5 分鐘後重試。
 - 出現「目標太強了，你會輸」時關閉狩獵視窗並等待 5 分鐘。
+- Unity 畫面持續全黑 45 秒時只重啟遊戲 App；短暫轉場不處理，且有 5 分鐘重啟冷卻。
 
 ## 專案結構
 
@@ -70,6 +71,7 @@ BlueStacks 必須保留在 Windows，不需要也不應安裝到 WSL。
 │   ├── models.py
 │   ├── modes.py
 │   ├── planning.py
+│   ├── recovery.py
 │   └── verification.py
 ├── assets/
 │   ├── manifest.json

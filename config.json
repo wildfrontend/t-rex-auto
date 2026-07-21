@@ -96,5 +96,14 @@
   "workflow": {
     "max_cycles": 0,
     "complete_on": ["mail_close_button"]
+  },
+  "recovery": {
+    "enabled": true,
+    "black_screen_timeout_seconds": 45,
+    "black_mean_threshold": 2,
+    "restart_cooldown_seconds": 300,
+    "launch_wait_seconds": 15,
+    "package": "com.mondayoff.dinomutant",
+    "activity": "com.unity3d.player.UnityPlayerActivity"
   }
 }
