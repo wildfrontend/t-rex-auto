@@ -138,6 +138,7 @@ class HuntPlanner(TargetPlanner):
         center_anchor_type: str = "map_center_egg",
         recovery_button_types: Sequence[str] = ("hunt_team_return_button",),
         interrupt_button_types: Sequence[str] = (
+            "duplicate_login_close_button",
             "device_history_confirm_button",
             "startup_offer_dismiss",
         ),

@@ -4,6 +4,7 @@
   "capture_fps": 10,
   "click_delay": 1500,
   "post_action_delays": {
+    "duplicate_login_close_button": 5000,
     "device_history_confirm_button": 5000,
     "startup_offer_dismiss": 1500,
     "hunt_confirm_button": 3000,
@@ -39,6 +40,7 @@
   },
   "planner": {
     "target_types": [
+      "duplicate_login_close_button",
       "device_history_confirm_button",
       "startup_offer_dismiss",
       "hunt_team_return_button",
