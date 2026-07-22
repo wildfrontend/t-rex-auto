@@ -22,14 +22,7 @@ $AppRoot = Split-Path -Parent $PSScriptRoot
 $RuntimeRoot = Split-Path -Parent $AppRoot
 $PythonExecutable = Join-Path $RuntimeRoot "python\python.exe"
 if (-not (Test-Path $PythonExecutable)) {
-    $SharedPython = "D:\DinoMutantBot\python\python.exe"
-    if (Test-Path $SharedPython) {
-        $PythonExecutable = $SharedPython
-        Write-Host "Using shared Python runtime: $SharedPython"
-    }
-}
-if (-not (Test-Path $PythonExecutable)) {
-    throw "Windows runtime is not installed. Run setup-windows.ps1 first."
+    throw "Windows runtime is not installed. Run start-bot.cmd for guided setup."
 }
 
 $RunArguments = @(
@@ -63,7 +56,7 @@ foreach ($Entry in $TimingOverrides.GetEnumerator()) {
 
 Write-Host "Bot speed profile: $Speed"
 if ($StatusPort -gt 0) {
-    Write-Host "Read-only AI/status API: http://127.0.0.1:$StatusPort/status"
+    Write-Host "Local AI/status API: http://127.0.0.1:$StatusPort/status"
 }
 
 Add-Type -TypeDefinition @"

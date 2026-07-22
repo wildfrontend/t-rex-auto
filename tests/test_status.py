@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from urllib.request import urlopen
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
+
+import pytest
 
 from dino_bot.status import build_runtime_status
 from dino_bot.status_server import LocalStatusServer
@@ -85,3 +88,38 @@ def test_local_status_server_exposes_read_only_json(tmp_path: Path) -> None:
     assert status["successful_hunts"] == 1
     assert len(actions["actions"]) == 3
     assert settings["timing"]["idle_delay_ms"] == 250
+
+
+def test_local_status_server_accepts_only_allowlisted_stop(tmp_path: Path) -> None:
+    requested: list[str] = []
+    with LocalStatusServer(
+        tmp_path,
+        port=0,
+        control_handlers={"stop": lambda: requested.append("stop")},
+    ) as server:
+        request = Request(f"{server.url}/control/stop", method="POST")
+        with urlopen(request, timeout=2) as response:  # noqa: S310
+            payload = json.load(response)
+
+    assert payload == {"accepted": True, "action": "stop"}
+    assert requested == ["stop"]
+
+
+def test_local_status_server_rejects_unknown_control_and_remote_origin(
+    tmp_path: Path,
+) -> None:
+    with LocalStatusServer(tmp_path, port=0, control_handlers={"stop": lambda: None}) as server:
+        unknown = Request(f"{server.url}/control/restart", method="POST")
+        with pytest.raises(HTTPError) as unknown_error:
+            urlopen(unknown, timeout=2)  # noqa: S310
+
+        remote = Request(
+            f"{server.url}/control/stop",
+            method="POST",
+            headers={"Origin": "https://example.com"},
+        )
+        with pytest.raises(HTTPError) as origin_error:
+            urlopen(remote, timeout=2)  # noqa: S310
+
+    assert unknown_error.value.code == 404
+    assert origin_error.value.code == 403

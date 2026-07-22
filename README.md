@@ -11,7 +11,8 @@ Feature 方式加入，不需要修改核心狀態機。
 
 - 使用者只需雙擊 `start-bot.cmd`；啟動器會先檢查 Python、ADB、素材及畫面擷取。
 - 一個視窗顯示原始即時 LOG，另一個繁體中文互動視窗提供統計、調速、重啟與診斷工具。
-- `127.0.0.1:8765` 提供唯讀 JSON，讓同一台電腦上的 AI 直接讀取狀態。
+- `127.0.0.1:8765` 提供結構化狀態與白名單停止接口，讓同一台電腦上的 AI 安全操作。
+- Repository 內附 `.agents/skills/control-dino-bot`，限制 AI 使用固定接口與控制命令。
 - Windows 啟動器預設使用 `fast` 模式，也可互動切換 `safe` 或自訂毫秒數。
 - CLI 可個別覆寫選恐龍、狩獵、確認及空轉掃描延遲。
 - 黑畫面期間暫停 Detect/Verify，畫面恢復後才繼續原操作。
@@ -70,6 +71,9 @@ BlueStacks 必須保留在 Windows，不需要也不應安裝到 WSL。
 
 ```text
 .
+├── .agents/skills/control-dino-bot/
+│   ├── SKILL.md
+│   └── agents/openai.yaml
 ├── main.py
 ├── config.json
 ├── src/dino_bot/
@@ -132,10 +136,12 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
 
 ### 3. 從 WSL 部署
 
-每次修改程式碼或 detector assets 後執行：
+每次修改程式碼或 detector assets 後執行。第二個參數可把既有 Python runtime 一併
+封裝成可直接分享的完整資料夾：
 
 ```bash
 bash scripts/deploy-windows.sh
+bash scripts/deploy-windows.sh /mnt/d/DinoMutantBot-release /mnt/d/DinoMutantBot/python
 ```
 
 ### 4. 環境檢查
@@ -222,6 +228,7 @@ D:\DinoMutantBot\start-bot.cmd
 ```text
 S  查詢成功狩獵、操作、失敗、黑屏、重啟及最近動作
 T  改用 fast、safe 或自訂時間，並以新參數重啟 Bot
+P  切換本機接口 Port；Port 被占用時也會自動提示
 D  環境檢查、ADB 截圖、完整 JSON、原始日誌、開啟日誌資料夾
 A  顯示本機 AI API 端點
 R  使用目前參數重啟
@@ -233,6 +240,7 @@ Q  停止 Bot 並關閉控制流程
 ```bat
 D:\DinoMutantBot\start-bot.cmd fast
 D:\DinoMutantBot\start-bot.cmd safe
+D:\DinoMutantBot\start-bot.cmd fast 8877
 ```
 
 `fast` 使用 500/1500/2000 ms 的選恐龍、狩獵、確認延遲；`safe` 則使用
@@ -242,20 +250,33 @@ D:\DinoMutantBot\start-bot.cmd safe
 Bot 執行期間會阻止 Windows 系統睡眠，但不阻止螢幕依電源設定自動關閉；Bot
 停止後會自動解除保持喚醒要求。
 
-### 本機 AI 狀態接口
+### 本機 AI 狀態與安全控制接口
 
-Bot 執行時提供以下唯讀 JSON 端點，只監聽 `127.0.0.1`，不接受遠端連線或控制指令：
+Bot 執行時只監聽 `127.0.0.1`。查詢端點為唯讀，控制端只接受固定的安全停止動作：
 
 ```text
 http://127.0.0.1:8765/health
 http://127.0.0.1:8765/status
 http://127.0.0.1:8765/actions
 http://127.0.0.1:8765/settings
+POST http://127.0.0.1:8765/control/stop
 ```
 
 AI 或本機工具可直接讀取 `/status`，取得本次工作階段的成功狩獵數、信箱循環、
-操作數、驗證失敗、黑屏、遊戲重啟、目前階段及最近操作。若要停用接口，可直接執行
-`run-windows.ps1 -StatusPort 0`；互動啟動器固定使用有效的本機連接埠。
+操作數、驗證失敗、黑屏、遊戲重啟、目前階段及最近操作。控制視窗按 `P` 可切換
+Port；啟動時若 Port 被占用也會要求改用其他數字。
+
+使用 Codex 開啟 repository 或部署資料夾後，可直接說：
+
+```text
+$control-dino-bot 幫我查狩獵進度
+$control-dino-bot 用 8877 Port 查詢目前狀態
+$control-dino-bot 請停止 Bot
+```
+
+Skill 只允許 `status/start/stop/restart/doctor/snapshot`。啟動、停止及重啟必須由使用者
+當次明確要求，控制腳本也會強制檢查 `-Confirm`；不允許 AI 自行執行 ADB 點擊、
+掃描 Port 或探索遊戲。
 
 不啟動 HTTP 服務也能從 CLI 查詢同一份結構化資料：
 
@@ -324,7 +345,7 @@ D:\DinoMutantBot\python\python.exe `
 - `click_delay`: 點擊到驗證畫面的等待毫秒數。
 - `post_action_delays`: 可針對確認按鈕等動畫較長的操作設定額外等待時間。
 - `--speed safe|fast`: 從終端切換保守或快速延遲預設。
-- `--status-port`: 本機唯讀狀態 API 連接埠；`0` 代表停用。
+- `--status-port`: 本機狀態與白名單控制 API 連接埠；`0` 代表停用。
 - `--dinosaur-delay-ms`、`--hunt-button-delay-ms`、`--hunt-confirm-delay-ms`、
   `--idle-delay-ms`: 以毫秒個別覆寫狩獵流程速度。
 - `assets/manifest.json` 的 template `scales`: 同一辨識素材要嘗試的縮放倍率。

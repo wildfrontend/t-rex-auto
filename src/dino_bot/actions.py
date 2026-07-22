@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -38,6 +39,15 @@ class AdbClient:
         discovered = shutil.which("adb")
         if discovered:
             candidates.append(discovered)
+        for variable in ("ANDROID_SDK_ROOT", "ANDROID_HOME"):
+            sdk_root = os.environ.get(variable)
+            if sdk_root:
+                candidates.append(str(Path(sdk_root) / "platform-tools" / "adb.exe"))
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        if local_app_data:
+            candidates.append(
+                str(Path(local_app_data) / "Android" / "Sdk" / "platform-tools" / "adb.exe")
+            )
         candidates.extend(
             [
                 r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
@@ -48,7 +58,7 @@ class AdbClient:
             if Path(candidate).is_file():
                 return str(Path(candidate))
         raise AdbError(
-            "ADB executable not found. Set adb.executable in config.json to HD-Adb.exe or adb.exe."
+            "ADB executable not found. Install Android Platform Tools or enable BlueStacks ADB."
         )
 
     def _command(self, args: Sequence[str], use_serial: bool = True) -> list[str]:

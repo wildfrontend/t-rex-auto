@@ -276,11 +276,15 @@ def main(argv: list[str] | None = None) -> int:
         engine = create_engine(config, verbose=args.verbose)
         status_server = None
         if args.status_port > 0:
-            status_server = LocalStatusServer(config.logs_dir, args.status_port)
+            status_server = LocalStatusServer(
+                config.logs_dir,
+                args.status_port,
+                control_handlers={"stop": engine.stop},
+            )
             try:
                 status_server.start()
                 engine.context.logger.info(
-                    "Status API | %s/status | localhost read-only",
+                    "Status API | %s/status | localhost with allowlisted control",
                     status_server.url,
                 )
             except OSError as exc:
