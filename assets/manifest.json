@@ -17,6 +17,7 @@
       "type": "device_history_confirm_button",
       "file": "templates/device-history-confirm-button.png",
       "threshold": 0.82,
+      "scales": [0.88, 0.9, 1.0],
       "click_offset": [
         86,
         41

@@ -24,6 +24,7 @@ class TemplateAsset:
     image: np.ndarray
     threshold: float
     click_offset: tuple[int, int] | None = None
+    scales: tuple[float, ...] = (1.0,)
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,6 +97,11 @@ class OpenCvDetector:
             image = cv2.imread(str(path), cv2.IMREAD_COLOR)
             if image is None:
                 raise DetectorAssetError(f"Cannot read template image: {path}")
+            scales = tuple(
+                dict.fromkeys(float(value) for value in raw.get("scales", [1.0]))
+            )
+            if not scales or any(value <= 0 for value in scales):
+                raise DetectorAssetError(f"Template scales must be positive: {path}")
             templates.append(
                 TemplateAsset(
                     type=str(raw["type"]),
@@ -107,6 +113,7 @@ class OpenCvDetector:
                         if "click_offset" in raw
                         else None
                     ),
+                    scales=scales,
                 )
             )
 
@@ -171,46 +178,62 @@ class OpenCvDetector:
     def _detect_templates(self, image: np.ndarray) -> list[Detection]:
         results: list[Detection] = []
         for asset in self.templates:
-            height, width = asset.image.shape[:2]
-            if image.shape[0] < height or image.shape[1] < width:
-                continue
-            matches = cv2.matchTemplate(image, asset.image, cv2.TM_CCOEFF_NORMED)
-            ys, xs = np.where(matches >= asset.threshold)
-            if len(xs) > 2000:
-                scores = matches[ys, xs]
-                top = np.argpartition(scores, -2000)[-2000:]
-                xs, ys = xs[top], ys[top]
-            for x, y in zip(xs.tolist(), ys.tolist(), strict=True):
-                bbox = BoundingBox(x=x, y=y, width=width, height=height)
-                metadata = {"detector": "template", "asset": asset.path.name}
-                if asset.click_offset is None:
-                    results.append(
-                        Detection.from_bbox(
-                            asset.type,
-                            bbox,
-                            float(matches[y, x]),
-                            **metadata,
-                        )
+            for scale in asset.scales:
+                template = asset.image
+                if scale != 1.0:
+                    source_height, source_width = asset.image.shape[:2]
+                    width = max(1, round(source_width * scale))
+                    height = max(1, round(source_height * scale))
+                    interpolation = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
+                    template = cv2.resize(
+                        asset.image,
+                        (width, height),
+                        interpolation=interpolation,
                     )
-                else:
-                    click_x = x + asset.click_offset[0]
-                    click_y = y + asset.click_offset[1]
-                    metadata["anchor_bbox"] = {
-                        "x": x,
-                        "y": y,
-                        "width": width,
-                        "height": height,
+                height, width = template.shape[:2]
+                if image.shape[0] < height or image.shape[1] < width:
+                    continue
+                matches = cv2.matchTemplate(image, template, cv2.TM_CCOEFF_NORMED)
+                ys, xs = np.where(matches >= asset.threshold)
+                if len(xs) > 2000:
+                    scores = matches[ys, xs]
+                    top = np.argpartition(scores, -2000)[-2000:]
+                    xs, ys = xs[top], ys[top]
+                for x, y in zip(xs.tolist(), ys.tolist(), strict=True):
+                    bbox = BoundingBox(x=x, y=y, width=width, height=height)
+                    metadata = {
+                        "detector": "template",
+                        "asset": asset.path.name,
+                        "template_scale": scale,
                     }
-                    results.append(
-                        Detection(
-                            type=asset.type,
-                            x=click_x,
-                            y=click_y,
-                            confidence=float(matches[y, x]),
-                            bbox=bbox,
-                            metadata=metadata,
+                    if asset.click_offset is None:
+                        results.append(
+                            Detection.from_bbox(
+                                asset.type,
+                                bbox,
+                                float(matches[y, x]),
+                                **metadata,
+                            )
                         )
-                    )
+                    else:
+                        click_x = x + round(asset.click_offset[0] * scale)
+                        click_y = y + round(asset.click_offset[1] * scale)
+                        metadata["anchor_bbox"] = {
+                            "x": x,
+                            "y": y,
+                            "width": width,
+                            "height": height,
+                        }
+                        results.append(
+                            Detection(
+                                type=asset.type,
+                                x=click_x,
+                                y=click_y,
+                                confidence=float(matches[y, x]),
+                                bbox=bbox,
+                                metadata=metadata,
+                            )
+                        )
         return results
 
     def _detect_hsv(self, image: np.ndarray) -> list[Detection]:
@@ -464,5 +487,138 @@ class TargetTooStrongDetector:
                     height=max(1, round((y2 - y1) * scale_y)),
                 ),
                 metadata={"detector": "red_hunt_warning"},
+            )
+        ]
+
+
+class StartupGrowthResultDetector:
+    """Detect the fixed offline-growth result modal shown after app launch."""
+
+    def __init__(
+        self,
+        target_type: str = "startup_growth_result_back",
+        reference_size: tuple[int, int] = (900, 1600),
+    ) -> None:
+        self.target_type = target_type
+        self.reference_size = reference_size
+
+    def detect(self, frame: Frame) -> list[Detection]:
+        width, height = self.reference_size
+        image = frame.image
+        if (frame.width, frame.height) != self.reference_size:
+            image = cv2.resize(image, (width, height), interpolation=cv2.INTER_LINEAR)
+
+        # This modal is the only launch screen with a tall white card and two
+        # large cyan/green shortcut buttons along its bottom edge. Requiring
+        # all three features avoids sending a tap on ordinary map screens.
+        white_regions = np.concatenate(
+            [
+                image[190:275, 200:685].reshape(-1, 3),
+                image[300:1120, 135:180].reshape(-1, 3),
+                image[300:1120, 720:765].reshape(-1, 3),
+            ]
+        )
+        white_ratio = float(np.mean(np.all(white_regions >= 200, axis=1)))
+        if white_ratio < 0.7:
+            return []
+
+        cyan = image[1190:1340, 190:425].astype(np.int16)
+        cyan_mask = (
+            (cyan[:, :, 0] >= 150)
+            & (cyan[:, :, 1] >= 120)
+            & (cyan[:, :, 0] >= cyan[:, :, 2] + 35)
+        )
+        green = image[1190:1340, 475:710].astype(np.int16)
+        green_mask = (
+            (green[:, :, 1] >= 130)
+            & (green[:, :, 1] >= green[:, :, 0] + 15)
+            & (green[:, :, 1] >= green[:, :, 2] + 15)
+        )
+        cyan_ratio = float(np.mean(cyan_mask))
+        green_ratio = float(np.mean(green_mask))
+        if cyan_ratio < 0.2 or green_ratio < 0.2:
+            return []
+
+        scale_x = frame.width / width
+        scale_y = frame.height / height
+        return [
+            Detection(
+                type=self.target_type,
+                x=round(307 * scale_x),
+                y=round(1265 * scale_y),
+                confidence=min(0.99, 0.7 + min(cyan_ratio, green_ratio) * 0.29),
+                bbox=BoundingBox(
+                    x=round(125 * scale_x),
+                    y=round(180 * scale_y),
+                    width=round(650 * scale_x),
+                    height=round(1170 * scale_y),
+                ),
+                metadata={
+                    "detector": "startup_growth_result_layout",
+                    "white_ratio": white_ratio,
+                    "cyan_ratio": cyan_ratio,
+                    "green_ratio": green_ratio,
+                },
+            )
+        ]
+
+
+class StartupAutoBattleDialogDetector:
+    """Detect the auto-battle shortcut modal opened from growth results."""
+
+    def __init__(
+        self,
+        target_type: str = "startup_auto_battle_close",
+        reference_size: tuple[int, int] = (900, 1600),
+    ) -> None:
+        self.target_type = target_type
+        self.reference_size = reference_size
+
+    def detect(self, frame: Frame) -> list[Detection]:
+        width, height = self.reference_size
+        image = frame.image
+        if (frame.width, frame.height) != self.reference_size:
+            image = cv2.resize(image, (width, height), interpolation=cv2.INTER_LINEAR)
+
+        white_regions = np.concatenate(
+            [
+                image[380:470, 220:680].reshape(-1, 3),
+                image[470:1150, 185:235].reshape(-1, 3),
+                image[470:1150, 665:715].reshape(-1, 3),
+            ]
+        )
+        white_ratio = float(np.mean(np.all(white_regions >= 200, axis=1)))
+        if white_ratio < 0.7:
+            return []
+
+        cyan = image[850:980, 345:550].astype(np.int16)
+        cyan_mask = (
+            (cyan[:, :, 0] >= 150)
+            & (cyan[:, :, 1] >= 120)
+            & (cyan[:, :, 0] >= cyan[:, :, 2] + 35)
+        )
+        cyan_ratio = float(np.mean(cyan_mask))
+        if cyan_ratio < 0.2:
+            return []
+
+        scale_x = frame.width / width
+        scale_y = frame.height / height
+        return [
+            Detection(
+                type=self.target_type,
+                x=round(50 * scale_x),
+                y=round(800 * scale_y),
+                confidence=min(0.99, 0.7 + cyan_ratio * 0.29),
+                bbox=BoundingBox(
+                    x=round(175 * scale_x),
+                    y=round(355 * scale_y),
+                    width=round(550 * scale_x),
+                    height=round(875 * scale_y),
+                ),
+                metadata={
+                    "detector": "startup_auto_battle_layout",
+                    "white_ratio": white_ratio,
+                    "cyan_ratio": cyan_ratio,
+                },
             )
         ]
