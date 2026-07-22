@@ -202,6 +202,19 @@ class HuntPlanner(TargetPlanner):
         self._capacity_cooldown_until = 0.0
         self._map_idle_frames = 0
 
+    def on_action_success(self, target_type: str) -> None:
+        """Commit hunt counters only after the confirmation tap is verified."""
+
+        if target_type != self.completion_type:
+            return
+        self.clear_history()
+        if not self._pending_hunt_return:
+            self._hunt_count += 1
+            self._total_hunt_count += 1
+        self._pending_hunt_return = True
+        self._awaiting_hunt_button = False
+        self._waited_frames = 0
+
     def reset_workflow(self) -> None:
         """Discard screen-dependent state after the Android app is restarted."""
         self.clear_history()
@@ -319,7 +332,12 @@ class HuntPlanner(TargetPlanner):
         # The nest is animated and can briefly miss exact template matching.
         # A visible mailbox is a stable map-only landmark, so it safely
         # authorizes the fixed bottom-right nest coordinate as a fallback.
-        if any(item.type == self.mailbox_type for item in detections):
+        own_path_map_evidence = (
+            self._last_anchor is not None
+            and frame.height > frame.width
+            and any(item.type in self.own_path_types for item in detections)
+        )
+        if any(item.type == self.mailbox_type for item in detections) or own_path_map_evidence:
             fallback = Detection(
                 type=self.map_exit_type,
                 x=round(frame.width * 841 / 900),
@@ -461,6 +479,12 @@ class HuntPlanner(TargetPlanner):
             item.type == self.dinosaur_type for item in detections
         ):
             on_collect_map = True
+        if (
+            self._last_anchor is not None
+            and frame.height > frame.width
+            and any(item.type in self.own_path_types for item in detections)
+        ):
+            on_collect_map = True
         if self._pending_hunt_return and on_collect_map and not has_hunt_control:
             self._pending_hunt_return = False
             if self._hunt_count >= self.recenter_every:
@@ -481,16 +505,6 @@ class HuntPlanner(TargetPlanner):
                 item for item in detections if item.type in self.hunt_button_types
             ]
             target = super().choose(frame, hunt_controls)
-            if target is not None and target.type == self.completion_type:
-                # A successful dinosaur interaction recenters the map. Coordinate
-                # exclusions are only valid for the current attempt/viewport.
-                self.clear_history()
-                if not self._pending_hunt_return:
-                    self._hunt_count += 1
-                    self._total_hunt_count += 1
-                self._pending_hunt_return = True
-                self._awaiting_hunt_button = False
-                self._waited_frames = 0
             return target
 
         if self._awaiting_hunt_button:

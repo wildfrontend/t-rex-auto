@@ -18,6 +18,7 @@ class TargetChangedVerifier:
         pixel_change_threshold: float = 0.08,
         failure_types: Sequence[str] = (),
         success_transitions: dict[str, Sequence[str]] | None = None,
+        black_mean_threshold: float = 2.0,
     ):
         self.max_distance = max_distance
         self.pixel_change_threshold = pixel_change_threshold
@@ -26,6 +27,7 @@ class TargetChangedVerifier:
             target_type: frozenset(successors)
             for target_type, successors in (success_transitions or {}).items()
         }
+        self.black_mean_threshold = black_mean_threshold
 
     def verify(
         self,
@@ -35,6 +37,13 @@ class TargetChangedVerifier:
         before_detections: Sequence[Detection],
         after_detections: Sequence[Detection],
     ) -> VerificationResult:
+        sample = after.image[::8, ::8]
+        if float(np.mean(sample)) <= self.black_mean_threshold:
+            return VerificationResult(
+                success=False,
+                reason="verification frame is black",
+                confidence=1.0,
+            )
         failures = sorted(
             {item.type for item in after_detections if item.type in self.failure_types}
         )
@@ -53,6 +62,15 @@ class TargetChangedVerifier:
                 success=True,
                 reason=f"next UI detected: {', '.join(visible_successors)}",
                 confidence=1.0,
+            )
+        if expected_successors:
+            return VerificationResult(
+                success=False,
+                reason=(
+                    "expected next UI not detected: "
+                    f"{', '.join(sorted(expected_successors))}"
+                ),
+                confidence=0.9,
             )
         nearby = [
             item

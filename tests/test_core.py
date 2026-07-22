@@ -186,10 +186,12 @@ def test_hunt_planner_uses_egg_anchor_and_recenters_after_batch() -> None:
     assert first is not None and (first.x, first.y) == (500, 820)
 
     assert planner.choose(frame, [confirm]).type == "hunt_confirm_button"  # type: ignore[union-attr]
+    planner.on_action_success("hunt_confirm_button")
     second_dinosaur = Detection("dinosaur", 400, 850, 0.9)
     second = planner.choose(frame, [anchor, exit_button, second_dinosaur])
     assert second is not None and second.type == "dinosaur"
     assert planner.choose(frame, [confirm]).type == "hunt_confirm_button"  # type: ignore[union-attr]
+    planner.on_action_success("hunt_confirm_button")
 
     leave_map = planner.choose(frame, [anchor, exit_button])
     assert leave_map is not None and leave_map.type == "map_exit_nest_button"
@@ -303,6 +305,35 @@ def test_hunt_planner_recenters_after_repeated_frames_without_safe_dinosaur() ->
     assert reset is not None and reset.type == "map_exit_nest_button"
 
 
+def test_hunt_planner_recenters_when_only_own_paths_remain() -> None:
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(
+        ("map_exit_nest_button", "dinosaur"),
+        stalled_recenter_frames=2,
+    )
+    anchor = Detection("map_center_egg", 450, 800, 1.0)
+    own_path = Detection("own_hunt_path", 500, 820, 0.9)
+
+    assert planner.choose(frame, [anchor, own_path]) is None
+    reset = planner.choose(frame, [own_path])
+
+    assert reset is not None and reset.type == "map_exit_nest_button"
+    assert reset.detection.metadata["detector"] == "map_landmark_fallback"
+
+
+def test_hunt_planner_counts_only_verified_confirmation() -> None:
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(("hunt_confirm_button",))
+    confirm = Detection("hunt_confirm_button", 451, 1412, 1.0)
+
+    assert planner.choose(frame, [confirm]) is not None
+    assert planner._total_hunt_count == 0
+
+    planner.on_action_success("hunt_confirm_button")
+
+    assert planner._total_hunt_count == 1
+
+
 def test_hunt_planner_collects_mail_after_hunt_threshold() -> None:
     frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
     planner = HuntPlanner(
@@ -344,13 +375,16 @@ def test_hunt_planner_collects_mail_after_hunt_threshold() -> None:
     # A visible mailbox must remain inert until the hunt threshold is reached.
     assert planner.choose(frame, [anchor, exit_button, mailbox, dinosaur]).type == "dinosaur"  # type: ignore[union-attr]
     assert planner.choose(frame, [confirm]).type == "hunt_confirm_button"  # type: ignore[union-attr]
+    planner.on_action_success("hunt_confirm_button")
     assert planner.choose(frame, [anchor, exit_button]).type == "map_exit_nest_button"  # type: ignore[union-attr]
     assert planner.choose(frame, [forest]).type == "forest_recenter_button"  # type: ignore[union-attr]
     assert planner.choose(frame, [anchor, exit_button, mailbox]) is None
     assert planner.choose(frame, [anchor, exit_button, mailbox]).type == "mailbox_button"  # type: ignore[union-attr]
     # Login and startup overlays preempt mail without advancing its stage.
-    assert planner.choose(frame, [collect_all, duplicate_login_close]).type == "duplicate_login_close_button"  # type: ignore[union-attr]
-    assert planner.choose(frame, [collect_all, device_confirm]).type == "device_history_confirm_button"  # type: ignore[union-attr]
+    interruption = planner.choose(frame, [collect_all, duplicate_login_close])
+    assert interruption is not None and interruption.type == "duplicate_login_close_button"
+    interruption = planner.choose(frame, [collect_all, device_confirm])
+    assert interruption is not None and interruption.type == "device_history_confirm_button"
     assert planner.choose(frame, [collect_all, offer_dismiss]).type == "startup_offer_dismiss"  # type: ignore[union-attr]
     assert planner.choose(frame, [collect_all, close]).type == "mail_collect_all_button"  # type: ignore[union-attr]
     assert planner.choose(frame, [reward, close]).type == "mail_reward_collect_button"  # type: ignore[union-attr]
@@ -382,6 +416,7 @@ def test_hunt_planner_taps_egg_until_map_is_centered() -> None:
 
     assert planner.choose(frame, [centered_anchor, exit_button, dinosaur]).type == "dinosaur"  # type: ignore[union-attr]
     assert planner.choose(frame, [confirm]).type == "hunt_confirm_button"  # type: ignore[union-attr]
+    planner.on_action_success("hunt_confirm_button")
     assert planner.choose(frame, [centered_anchor, exit_button]).type == "map_exit_nest_button"  # type: ignore[union-attr]
     assert planner.choose(frame, [forest]).type == "forest_recenter_button"  # type: ignore[union-attr]
     recenter = planner.choose(frame, [shifted_anchor, exit_button])
@@ -418,9 +453,11 @@ def test_hunt_planner_counts_return_when_animated_map_landmarks_are_missing() ->
 
     assert planner.choose(frame, [anchor, first]).type == "dinosaur"  # type: ignore[union-attr]
     assert planner.choose(frame, [confirm]).type == "hunt_confirm_button"  # type: ignore[union-attr]
+    planner.on_action_success("hunt_confirm_button")
     # No egg, nest, or mailbox is detected in this animated map frame.
     assert planner.choose(frame, [second]).type == "dinosaur"  # type: ignore[union-attr]
     assert planner.choose(frame, [confirm]).type == "hunt_confirm_button"  # type: ignore[union-attr]
+    planner.on_action_success("hunt_confirm_button")
     # The exact second return starts recentering and must not choose a third hunt.
     assert planner.choose(frame, [third]) is None
     exit_target = planner.choose(frame, [mailbox, third])
@@ -641,7 +678,7 @@ def test_verifier_rejects_target_still_present() -> None:
     detection = make_detection()
     target = Target("resource", detection.x, detection.y, detection.confidence, detection)
     result = TargetChangedVerifier().verify(
-        make_frame(), make_frame(), target, [detection], [detection]
+        make_frame(10), make_frame(10), target, [detection], [detection]
     )
     assert not result.success
     assert "still detected" in result.reason
@@ -674,9 +711,31 @@ def test_verifier_accepts_expected_next_ui() -> None:
     hunt_button = make_detection(type="hunt_button")
     result = TargetChangedVerifier(
         success_transitions={"dinosaur": ("hunt_button",)}
-    ).verify(make_frame(), make_frame(), target, [detection], [detection, hunt_button])
+    ).verify(make_frame(10), make_frame(10), target, [detection], [detection, hunt_button])
     assert result.success
     assert "hunt_button" in result.reason
+
+
+def test_verifier_requires_expected_next_ui() -> None:
+    detection = make_detection(type="hunt_button")
+    target = Target("hunt_button", detection.x, detection.y, detection.confidence, detection)
+    result = TargetChangedVerifier(
+        success_transitions={"hunt_button": ("hunt_confirm_button",)}
+    ).verify(make_frame(10), make_frame(255), target, [detection], [])
+
+    assert not result.success
+    assert "expected next UI" in result.reason
+
+
+def test_verifier_never_accepts_black_frame() -> None:
+    detection = make_detection()
+    target = Target("resource", detection.x, detection.y, detection.confidence, detection)
+    result = TargetChangedVerifier().verify(
+        make_frame(255), make_frame(0), target, [detection], []
+    )
+
+    assert not result.success
+    assert "black" in result.reason
 
 
 class SequenceCapture:
@@ -852,6 +911,38 @@ class RecordingRestarter:
 
     def restart(self) -> None:
         self.restart_count += 1
+
+
+def test_engine_holds_pending_verification_while_frame_is_black() -> None:
+    detection = make_detection()
+    target = Target("resource", detection.x, detection.y, detection.confidence, detection)
+    recovery = BlackScreenRecovery(
+        RecordingRestarter(),
+        logging.getLogger("test_verify_black_hold"),
+        sleeper=lambda _: None,
+    )
+    context = BotContext(
+        capture_provider=SequenceCapture([make_frame(0), make_frame(255)]),
+        detector=PixelDetector(),
+        planner=TargetPlanner(("resource",)),
+        action_driver=RecordingActionDriver(),
+        verifier=TargetChangedVerifier(),
+        observer=RuntimeMode(),
+        logger=logging.getLogger("test_verify_black_hold"),
+        idle_delay_ms=0,
+        runtime_recovery=recovery,
+        state=BotState.VERIFY,
+        target=target,
+        action=ActionCommand.tap(target.x, target.y),
+        before_frame=make_frame(10),
+        before_detections=[detection],
+    )
+    engine = BotEngine(context)
+
+    assert engine.step() == BotState.VERIFY
+    assert context.last_result is None
+    assert engine.step() == BotState.IDLE
+    assert context.last_result is not None and context.last_result.success
 
 
 def test_black_screen_recovery_ignores_brief_transition() -> None:

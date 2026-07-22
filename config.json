@@ -9,6 +9,7 @@
     "startup_offer_dismiss": 1500,
     "startup_growth_result_back": 3000,
     "startup_auto_battle_close": 3000,
+    "hunt_button": 5000,
     "hunt_confirm_button": 3000,
     "map_center_egg": 5000,
     "no_available_dinosaurs": 300000,
@@ -105,7 +106,7 @@
     "enabled": true,
     "black_screen_timeout_seconds": 45,
     "black_mean_threshold": 2,
-    "restart_cooldown_seconds": 300,
+    "restart_cooldown_seconds": 90,
     "launch_wait_seconds": 15,
     "package": "com.mondayoff.dinomutant",
     "activity": "com.unity3d.player.UnityPlayerActivity"
