@@ -1,23 +1,22 @@
 @echo off
 setlocal
-title Dino Mutant Bot - close this window to stop
+title Dino Mutant Bot - Control
 
-echo Dino Mutant Bot
-echo Close this terminal window to stop the bot.
-echo Logs are also saved under app\logs.
-echo.
-
-set "bot_runner=%~dp0app\scripts\run-windows.ps1"
-if not exist "%bot_runner%" (
-  echo ERROR: Bot runner not found: %bot_runner%
+set "bot_launcher=%~dp0app\scripts\launcher-windows.ps1"
+if not exist "%bot_launcher%" (
+  echo ERROR: Interactive launcher not found: %bot_launcher%
   pause
   exit /b 1
 )
 
-powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%bot_runner%" -Mode runtime -MaxCycles 0 -BatchSize 10 -MailAfterHunts 30
-set "bot_exit_code=%ERRORLEVEL%"
+if "%~1"=="" (
+  powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%bot_launcher%"
+) else (
+  powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%bot_launcher%" -Speed "%~1"
+)
+set "launcher_exit_code=%ERRORLEVEL%"
 
 echo.
-echo Bot stopped with exit code %bot_exit_code%.
+echo Launcher closed with exit code %launcher_exit_code%.
 pause
-exit /b %bot_exit_code%
+exit /b %launcher_exit_code%
