@@ -90,7 +90,9 @@ Do not try other routes, methods, parameters, hosts, or payloads.
 - Do not expose, tunnel, or bind the API beyond `127.0.0.1`.
 - Do not guess ports, runtime folders, credentials, or device identifiers.
 - Stop on `confirmation_required`, `status_api_unavailable`, or an unknown response; report it
-  instead of finding another route.
+  instead of finding another route. Treat `status_api_identity_mismatch`,
+  `status_api_process_identity_missing`, and `status_api_process_identity_mismatch` the same way:
+  do not send a control request and tell the user that the configured port is not a verified Bot.
 
 ## Report results
 

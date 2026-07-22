@@ -59,7 +59,50 @@ function Get-ApiStatus {
     return Invoke-RestMethod -Uri "$ApiRoot/status" -TimeoutSec 3
 }
 
+function Get-ApiHealth {
+    return Invoke-RestMethod -Uri "$ApiRoot/health" -TimeoutSec 3
+}
+
+function Assert-DinoBotApiIdentity {
+    param([switch]$RequireProcessIdentity)
+    $Health = Get-ApiHealth
+    if ($Health.ok -ne $true -or $Health.service -ne "dino-mutant-bot-status") {
+        throw "status_api_identity_mismatch"
+    }
+    if (-not $RequireProcessIdentity) {
+        return $Health
+    }
+    if ($null -eq $Health.process_id) {
+        throw "status_api_process_identity_missing"
+    }
+    $ApiProcessId = [int]$Health.process_id
+    $Connection = Get-NetTCPConnection `
+        -LocalPort $StatusPort `
+        -State Listen `
+        -ErrorAction Stop |
+        Where-Object { $_.OwningProcess -eq $ApiProcessId } |
+        Select-Object -First 1
+    if ($null -eq $Connection) {
+        throw "status_api_process_identity_mismatch"
+    }
+    $Process = Get-CimInstance `
+        Win32_Process `
+        -Filter "ProcessId=$ApiProcessId" `
+        -ErrorAction Stop
+    $PortPattern = "--status-port\s+" + [regex]::Escape([string]$StatusPort) + "(?:\s|$)"
+    if (
+        $Process.Name -ine "python.exe" -or
+        $Process.CommandLine -notmatch "main\.py" -or
+        $Process.CommandLine -notmatch " run " -or
+        $Process.CommandLine -notmatch $PortPattern
+    ) {
+        throw "status_api_process_identity_mismatch"
+    }
+    return $Health
+}
+
 function Request-GracefulStop {
+    [void](Assert-DinoBotApiIdentity -RequireProcessIdentity)
     return Invoke-RestMethod `
         -Method Post `
         -Uri "$ApiRoot/control/stop" `
@@ -95,12 +138,19 @@ function Start-BotLauncher {
 try {
     if ($Action -eq "status") {
         try {
+            [void](Assert-DinoBotApiIdentity)
             Get-ApiStatus | ConvertTo-Json -Depth 8
         } catch {
+            $ErrorCode = if ($_.Exception.Message -like "status_api_*") {
+                $_.Exception.Message
+            } else {
+                "status_api_unavailable"
+            }
             Write-JsonResult @{
                 ok = $false
                 running = $false
-                error = "status_api_unavailable"
+                error = $ErrorCode
+                message = $_.Exception.Message
                 url = "$ApiRoot/status"
             }
             exit 1

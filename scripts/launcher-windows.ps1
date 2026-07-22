@@ -58,6 +58,7 @@ function Get-StatusPortOwner {
         return [pscustomobject]@{
             ProcessId = $OwnerProcessId
             Name = $Process.Name
+            ExecutablePath = $Process.ExecutablePath
             CommandLine = $Process.CommandLine
         }
     } catch {
@@ -79,12 +80,49 @@ function Test-DinoBotPortOwner {
         $Owner.CommandLine -match $PortPattern
 }
 
+function Test-DinoBotStatusApi {
+    param(
+        [pscustomobject]$Owner,
+        [int]$Port
+    )
+    if ($null -eq $Owner) {
+        return $false
+    }
+    try {
+        $Health = Invoke-RestMethod `
+            -Method Get `
+            -Uri "http://127.0.0.1:$Port/health" `
+            -TimeoutSec 2
+        if ($Health.ok -ne $true -or $Health.service -ne "dino-mutant-bot-status") {
+            return $false
+        }
+        if (
+            $null -ne $Health.process_id -and
+            [int]$Health.process_id -ne $Owner.ProcessId
+        ) {
+            return $false
+        }
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+function Test-DinoBotPortIdentity {
+    param(
+        [pscustomobject]$Owner,
+        [int]$Port
+    )
+    return (Test-DinoBotPortOwner $Owner $Port) -and
+        (Test-DinoBotStatusApi $Owner $Port)
+}
+
 function Clear-DinoBotStatusPort {
     param(
         [int]$Port,
         [pscustomobject]$Owner
     )
-    if (-not (Test-DinoBotPortOwner $Owner $Port)) {
+    if (-not (Test-DinoBotPortIdentity $Owner $Port)) {
         Write-Host "安全保護：占用者不是可確認的 Dino Bot，禁止清理。" -ForegroundColor Red
         return $false
     }
@@ -95,17 +133,37 @@ function Clear-DinoBotStatusPort {
         return $false
     }
 
-    try {
-        Invoke-RestMethod `
-            -Method Post `
-            -Uri "http://127.0.0.1:$Port/control/stop" `
-            -TimeoutSec 3 | Out-Null
-        Write-Host "已要求 Dino Bot 安全停止，正在等待釋放 Port……" -ForegroundColor Yellow
-    } catch {
-        Write-Host "安全停止接口沒有回應。" -ForegroundColor Yellow
+    $CurrentOwner = Get-StatusPortOwner $Port
+    if (
+        $null -eq $CurrentOwner -or
+        $CurrentOwner.ProcessId -ne $Owner.ProcessId -or
+        -not (Test-DinoBotPortIdentity $CurrentOwner $Port)
+    ) {
+        Write-Host "Port 占用者或 API 身分已改變，已取消清理。" -ForegroundColor Red
+        return $false
     }
 
-    for ($Attempt = 0; $Attempt -lt 40; $Attempt++) {
+    $GracefulStopAccepted = $false
+    try {
+        $StopResponse = Invoke-RestMethod `
+            -Method Post `
+            -Uri "http://127.0.0.1:$Port/control/stop" `
+            -TimeoutSec 3
+        $GracefulStopAccepted = (
+            $StopResponse.accepted -eq $true -and
+            $StopResponse.action -eq "stop"
+        )
+        if ($GracefulStopAccepted) {
+            Write-Host "Bot 已接受安全停止，正在等待釋放 Port……" -ForegroundColor Yellow
+        } else {
+            Write-Host "安全停止接口回傳非預期結果。" -ForegroundColor Yellow
+        }
+    } catch {
+        Write-Host "安全停止接口沒有回應：$($_.Exception.Message)" -ForegroundColor Yellow
+    }
+
+    $WaitAttempts = if ($GracefulStopAccepted) { 40 } else { 6 }
+    for ($Attempt = 0; $Attempt -lt $WaitAttempts; $Attempt++) {
         if (Test-StatusPortAvailable $Port) {
             Write-Host "Port $Port 已清理完成。" -ForegroundColor Green
             return $true
@@ -117,7 +175,7 @@ function Clear-DinoBotStatusPort {
     if (
         $null -eq $CurrentOwner -or
         $CurrentOwner.ProcessId -ne $Owner.ProcessId -or
-        -not (Test-DinoBotPortOwner $CurrentOwner $Port)
+        -not (Test-DinoBotPortIdentity $CurrentOwner $Port)
     ) {
         Write-Host "Port 占用者已改變，為避免誤關程式而停止清理。" -ForegroundColor Red
         return $false
@@ -128,13 +186,21 @@ function Clear-DinoBotStatusPort {
         Write-Host "未強制結束程序，請改用其他 Port。" -ForegroundColor Yellow
         return $false
     }
-    Stop-Process -Id $Owner.ProcessId -Force -ErrorAction Stop
-    Start-Sleep -Seconds 1
-    $Cleared = Test-StatusPortAvailable $Port
-    if ($Cleared) {
-        Write-Host "Port $Port 已強制清理完成。" -ForegroundColor Green
+    try {
+        Stop-Process -Id $Owner.ProcessId -Force -ErrorAction Stop
+    } catch {
+        Write-Host "無法結束 PID $($Owner.ProcessId)：$($_.Exception.Message)" -ForegroundColor Red
+        return $false
     }
-    return $Cleared
+    for ($Attempt = 0; $Attempt -lt 10; $Attempt++) {
+        if (Test-StatusPortAvailable $Port) {
+            Write-Host "Port $Port 已強制清理完成。" -ForegroundColor Green
+            return $true
+        }
+        Start-Sleep -Milliseconds 500
+    }
+    Write-Host "程序已結束，但 Port $Port 尚未釋放；請改用其他 Port。" -ForegroundColor Red
+    return $false
 }
 
 function Read-AvailableStatusPort {
@@ -143,15 +209,19 @@ function Read-AvailableStatusPort {
     while (-not (Test-StatusPortAvailable $Candidate)) {
         Write-Host "Port $Candidate 已被其他程式占用。" -ForegroundColor Yellow
         $Owner = Get-StatusPortOwner $Candidate
-        $IsDinoBot = Test-DinoBotPortOwner $Owner $Candidate
+        $IsDinoBot = Test-DinoBotPortIdentity $Owner $Candidate
         if ($null -ne $Owner) {
             Write-Host "占用程式：$($Owner.Name)｜PID：$($Owner.ProcessId)"
+            if (-not [string]::IsNullOrWhiteSpace($Owner.ExecutablePath)) {
+                Write-Host "執行檔：$($Owner.ExecutablePath)"
+            }
             Write-Host "命令列：$($Owner.CommandLine)"
         } else {
             Write-Host "無法安全辨識占用程式。" -ForegroundColor Yellow
         }
         $SuggestedPort = if ($Candidate -lt 65535) { $Candidate + 1 } else { 8765 }
         if ($IsDinoBot) {
+            Write-Host "API 身分：Dino Mutant Bot（已驗證）" -ForegroundColor Green
             Write-Host "選項：[N]改用 $SuggestedPort  [K]清理 Dino Bot 占用  [Q]取消，或直接輸入 Port"
         } else {
             Write-Host "選項：[N]改用 $SuggestedPort  [Q]取消，或直接輸入 Port"

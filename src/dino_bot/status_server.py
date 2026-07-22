@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -42,7 +43,15 @@ class _StatusHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         path = urlparse(self.path).path.rstrip("/") or "/"
         if path == "/health":
-            self._send_json(200, {"ok": True, "service": "dino-mutant-bot-status"})
+            self._send_json(
+                200,
+                {
+                    "ok": True,
+                    "service": "dino-mutant-bot-status",
+                    "api_version": 1,
+                    "process_id": os.getpid(),
+                },
+            )
             return
         status = build_runtime_status(self.server.logs_dir)
         if path == "/status":
