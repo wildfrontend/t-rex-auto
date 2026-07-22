@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -78,6 +79,8 @@ def test_local_status_server_exposes_read_only_json(tmp_path: Path) -> None:
     write_log(tmp_path, sample_log())
 
     with LocalStatusServer(tmp_path, port=0) as server:
+        with urlopen(f"{server.url}/health", timeout=2) as response:  # noqa: S310
+            health = json.load(response)
         with urlopen(f"{server.url}/status", timeout=2) as response:  # noqa: S310
             status = json.load(response)
         with urlopen(f"{server.url}/actions", timeout=2) as response:  # noqa: S310
@@ -85,6 +88,10 @@ def test_local_status_server_exposes_read_only_json(tmp_path: Path) -> None:
         with urlopen(f"{server.url}/settings", timeout=2) as response:  # noqa: S310
             settings = json.load(response)
 
+    assert health["ok"] is True
+    assert health["service"] == "dino-mutant-bot-status"
+    assert health["api_version"] == 1
+    assert health["process_id"] == os.getpid()
     assert status["successful_hunts"] == 1
     assert len(actions["actions"]) == 3
     assert settings["timing"]["idle_delay_ms"] == 250
