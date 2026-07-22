@@ -29,7 +29,7 @@ BlueStacks 必須保留在 Windows，不需要也不應安裝到 WSL。
 - BlueStacks 視窗自動尋找：支援視窗標題及 `HD-Player.exe` 程序辨識。
 - MSS 指定客戶區域擷取：畫面以 BGR `numpy.ndarray` 留在 RAM。
 - ADB framebuffer 擷取備援。
-- OpenCV Template Matching、HSV 輪廓偵測與 NMS。
+- OpenCV Template Matching（支援單一素材多尺寸比對）、HSV 輪廓偵測與 NMS。
 - 最近畫面中心、最高信心值兩種 Planner 策略。
 - ADB tap、swipe、long press、sleep 與畫面/裝置座標映射。
 - 操作後重新 Capture、Detect、Verify；失敗會重新感知與規劃，最多重試三次。
@@ -49,6 +49,8 @@ BlueStacks 必須保留在 Windows，不需要也不應安裝到 WSL。
 - 右上角同時派出隊伍為 `10/10` 時不再選目標，等待 5 分鐘後重試。
 - 出現「目標太強了，你會輸」時關閉狩獵視窗並等待 5 分鐘。
 - Unity 畫面持續全黑 45 秒時只重啟遊戲 App；短暫轉場不處理，且有 5 分鐘重啟冷卻。
+- 遊戲重啟後可優先處理重複登入、不同設備歷史記錄與啟動優惠提示。
+- 自動關閉「自動成長結果」及其後續「自動戰鬥」快捷視窗，再回到採集地圖。
 
 ## 專案結構
 
@@ -155,8 +157,21 @@ PYTHONPATH=/tmp/t-rex-auto-deps:src python3 main.py template \
   --click-offset 22 32
 ```
 
-工具會裁切圖片並自動更新 `assets/manifest.json`。同一物件若有多種動畫或縮放，
-應加入多張 template。也可以在 manifest 使用 HSV 偵測：
+工具會裁切圖片並自動更新 `assets/manifest.json`。同一物件若只有 UI 縮放差異，
+可以在單一 template 設定 `scales`；若圖案或動畫本身不同，則應加入多張 template：
+
+```json
+{
+  "type": "device_history_confirm_button",
+  "file": "templates/device-history-confirm-button.png",
+  "threshold": 0.82,
+  "scales": [0.88, 0.9, 1.0],
+  "click_offset": [86, 41]
+}
+```
+
+`click_offset` 會依命中的 template 尺寸同步縮放。`scales` 必須是大於零的數值；未設定
+時維持原本的 `1.0`。也可以在 manifest 使用 HSV 偵測：
 
 ```json
 {
@@ -236,6 +251,7 @@ D:\DinoMutantBot\python\python.exe `
   若含有 BlueStacks 側欄，應設定此值以確保 ADB 座標精準。
 - `click_delay`: 點擊到驗證畫面的等待毫秒數。
 - `post_action_delays`: 可針對確認按鈕等動畫較長的操作設定額外等待時間。
+- `assets/manifest.json` 的 template `scales`: 同一辨識素材要嘗試的縮放倍率。
 - `verify_retry`: 初次失敗後最多重試次數。
 - `max_actions`: `0` 代表不限，用於 Debug 時建議先設為 `1`。
 - `planner.recenter_every`: 完成多少次狩獵後重返主頁並重新置中，預設 `10`。

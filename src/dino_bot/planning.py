@@ -141,6 +141,8 @@ class HuntPlanner(TargetPlanner):
             "duplicate_login_close_button",
             "device_history_confirm_button",
             "startup_offer_dismiss",
+            "startup_growth_result_back",
+            "startup_auto_battle_close",
         ),
         own_path_types: Sequence[str] = ("own_hunt_path",),
         own_path_radius: float = 90.0,

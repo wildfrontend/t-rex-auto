@@ -12,6 +12,8 @@ from .detection import (
     HuntCapacityDetector,
     HuntTeamAvailabilityDetector,
     OpenCvDetector,
+    StartupAutoBattleDialogDetector,
+    StartupGrowthResultDetector,
     TargetTooStrongDetector,
 )
 from .engine import BotContext, BotEngine
@@ -52,6 +54,8 @@ def create_engine(config: AppConfig, *, verbose: bool = False) -> BotEngine:
         HuntTeamAvailabilityDetector(),
         HuntCapacityDetector(),
         TargetTooStrongDetector(),
+        StartupGrowthResultDetector(),
+        StartupAutoBattleDialogDetector(),
     )
     planner = HuntPlanner(
         config.planner.target_types,
