@@ -228,7 +228,7 @@ D:\DinoMutantBot\start-bot.cmd
 ```text
 S  查詢成功狩獵、操作、失敗、黑屏、重啟及最近動作
 T  改用 fast、safe 或自訂時間，並以新參數重啟 Bot
-P  切換本機接口 Port；Port 被占用時也會自動提示
+P  切換本機接口 Port；Port 被占用時會顯示程式與 PID
 D  環境檢查、ADB 截圖、完整 JSON、原始日誌、開啟日誌資料夾
 A  顯示本機 AI API 端點
 R  使用目前參數重啟
@@ -264,7 +264,10 @@ POST http://127.0.0.1:8765/control/stop
 
 AI 或本機工具可直接讀取 `/status`，取得本次工作階段的成功狩獵數、信箱循環、
 操作數、驗證失敗、黑屏、遊戲重啟、目前階段及最近操作。控制視窗按 `P` 可切換
-Port；啟動時若 Port 被占用也會要求改用其他數字。
+Port。啟動或切換時若 Port 被占用，控制視窗會顯示占用程式與 PID，預設選項是改用
+下一個 Port。只有占用者可確認為 Dino Bot 時才會顯示 `[K]` 清理選項，且必須手動
+輸入畫面上的 `CLEAN-<Port>` 確認碼；若正常停止失敗，強制結束前還會要求第二次
+`FORCE-<PID>` 確認。無法辨識或不是 Dino Bot 的程序不會被關閉。
 
 使用 Codex 開啟 repository 或部署資料夾後，可直接說：
 

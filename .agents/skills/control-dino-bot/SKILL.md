@@ -66,7 +66,9 @@ to 20 seconds. After a start or restart, query status once and report the result
 
 For custom millisecond timings or changing the port interactively, direct the user to the Chinese
 control window: `[T]` changes timings and `[P]` changes the local API port. Do not edit
-`config.json` or source code as a substitute for a runtime control request.
+`config.json` or source code as a substitute for a runtime control request. Port cleanup is also a
+human-only launcher action: tell the user to use `[K]` when it is offered and enter the displayed
+confirmation token themselves; never reproduce that action with process commands.
 
 ## Allowed HTTP surface
 
