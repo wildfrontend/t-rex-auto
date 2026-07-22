@@ -80,6 +80,7 @@ def create_engine(config: AppConfig, *, verbose: bool = False) -> BotEngine:
         config.verify.pixel_change_threshold,
         config.verify.failure_types,
         config.verify.success_transitions,
+        config.recovery.black_mean_threshold,
     )
     observer = create_mode(
         config.mode,

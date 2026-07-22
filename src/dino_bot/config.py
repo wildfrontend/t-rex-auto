@@ -81,7 +81,7 @@ class RecoveryConfig:
     enabled: bool = True
     black_screen_timeout_seconds: float = 45.0
     black_mean_threshold: float = 2.0
-    restart_cooldown_seconds: float = 300.0
+    restart_cooldown_seconds: float = 90.0
     launch_wait_seconds: float = 15.0
     package: str = "com.mondayoff.dinomutant"
     activity: str = "com.unity3d.player.UnityPlayerActivity"
@@ -274,7 +274,7 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
                 recovery_data.get("black_mean_threshold", 2)
             ),
             restart_cooldown_seconds=float(
-                recovery_data.get("restart_cooldown_seconds", 300)
+                recovery_data.get("restart_cooldown_seconds", 90)
             ),
             launch_wait_seconds=float(
                 recovery_data.get("launch_wait_seconds", 15)

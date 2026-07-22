@@ -97,9 +97,14 @@ class CaptureState:
         context.observer.on_frame(frame)
         context.frame = frame
         context.logger.debug("Capture | %dx%d | #%d", frame.width, frame.height, frame.sequence)
-        if context.runtime_recovery is not None and context.runtime_recovery.observe(frame):
-            _reset_after_runtime_recovery(context)
-            return BotState.IDLE
+        if context.runtime_recovery is not None:
+            if context.runtime_recovery.observe(frame):
+                _reset_after_runtime_recovery(context)
+                return BotState.IDLE
+            if _runtime_recovery_is_blocking(context.runtime_recovery):
+                if context.idle_delay_ms:
+                    time.sleep(context.idle_delay_ms / 1000)
+                return BotState.IDLE
         return BotState.DETECT
 
 
@@ -192,11 +197,18 @@ class VerifyState:
             raise RuntimeError("Verify state entered without a pending action")
         after = context.capture_provider.capture()
         context.observer.on_frame(after)
-        if context.runtime_recovery is not None and context.runtime_recovery.observe(after):
-            context.after_frame = after
-            context.after_detections = []
-            _reset_after_runtime_recovery(context)
-            return BotState.IDLE
+        if context.runtime_recovery is not None:
+            if context.runtime_recovery.observe(after):
+                context.after_frame = after
+                context.after_detections = []
+                _reset_after_runtime_recovery(context)
+                return BotState.IDLE
+            if _runtime_recovery_is_blocking(context.runtime_recovery):
+                context.after_frame = after
+                context.after_detections = []
+                if context.idle_delay_ms:
+                    time.sleep(context.idle_delay_ms / 1000)
+                return BotState.VERIFY
         after_detections = context.detector.detect(after)
         context.after_frame = after
         context.after_detections = after_detections
@@ -217,6 +229,9 @@ class VerifyState:
         )
         context.observer.on_action_complete(record, context.before_frame, after)
         if result.success:
+            on_action_success = getattr(context.planner, "on_action_success", None)
+            if callable(on_action_success):
+                on_action_success(context.target.type)
             context.logger.info("Verify | Success | %s", result.reason)
             if context.target.type in context.cycle_complete_targets:
                 context.cycle_count += 1
@@ -271,6 +286,12 @@ def _reset_after_runtime_recovery(context: BotContext) -> None:
     context.after_detections = []
     context.last_result = None
     context.attempt = 0
+
+
+def _runtime_recovery_is_blocking(runtime_recovery: RuntimeRecovery) -> bool:
+    """Return True while recovery is intentionally holding a black frame."""
+
+    return bool(getattr(runtime_recovery, "is_black", False))
 
 
 DEFAULT_STATES: dict[BotState, StateHandler] = {

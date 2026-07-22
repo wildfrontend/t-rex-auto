@@ -40,7 +40,7 @@ class BlackScreenRecovery:
         *,
         timeout_seconds: float = 45.0,
         mean_threshold: float = 2.0,
-        cooldown_seconds: float = 300.0,
+        cooldown_seconds: float = 90.0,
         launch_wait_seconds: float = 15.0,
         clock: Callable[[], float] = time.monotonic,
         sleeper: Callable[[float], None] = time.sleep,
@@ -55,6 +55,14 @@ class BlackScreenRecovery:
         self.sleeper = sleeper
         self._black_since: float | None = None
         self._last_restart_at: float | None = None
+        self._is_black = False
+        self._cooldown_notice_logged = False
+
+    @property
+    def is_black(self) -> bool:
+        """Whether the latest captured frame is still near-black."""
+
+        return self._is_black
 
     def observe(self, frame: Frame) -> bool:
         # Sampling keeps this guard cheap on a 900x1600 frame while still
@@ -63,16 +71,20 @@ class BlackScreenRecovery:
         mean = float(np.mean(sample))
         now = self.clock()
         if mean > self.mean_threshold:
+            self._is_black = False
             if self._black_since is not None:
                 self.logger.info(
                     "Recovery | picture returned before timeout | mean=%.2f",
                     mean,
                 )
             self._black_since = None
+            self._cooldown_notice_logged = False
             return False
 
+        self._is_black = True
         if self._black_since is None:
             self._black_since = now
+            self._cooldown_notice_logged = False
             self.logger.warning(
                 "Recovery | black screen detected | mean=%.2f | waiting %.0fs",
                 mean,
@@ -88,6 +100,15 @@ class BlackScreenRecovery:
             self._last_restart_at is not None
             and now - self._last_restart_at < self.cooldown_seconds
         ):
+            if not self._cooldown_notice_logged:
+                remaining = self.cooldown_seconds - (now - self._last_restart_at)
+                self.logger.warning(
+                    "Recovery | restart deferred by cooldown | "
+                    "black=%.0fs | remaining=%.0fs",
+                    black_duration,
+                    remaining,
+                )
+                self._cooldown_notice_logged = True
             return False
 
         self.logger.error(
@@ -95,6 +116,7 @@ class BlackScreenRecovery:
             black_duration,
         )
         self._black_since = None
+        self._cooldown_notice_logged = False
         try:
             self.restarter.restart()
         except AdbError as exc:
