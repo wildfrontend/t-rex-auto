@@ -23,6 +23,43 @@ $RunnerScript = Join-Path $PSScriptRoot "run-windows.ps1"
 $LogRoot = Join-Path $AppRoot "logs"
 $Host.UI.RawUI.WindowTitle = "Dino Mutant Bot - 互動控制台"
 
+function Test-StatusPortAvailable {
+    param([int]$Port)
+    $Listener = [System.Net.Sockets.TcpListener]::new(
+        [System.Net.IPAddress]::Loopback,
+        $Port
+    )
+    try {
+        $Listener.Start()
+        return $true
+    } catch {
+        return $false
+    } finally {
+        $Listener.Stop()
+    }
+}
+
+function Read-AvailableStatusPort {
+    param([int]$DefaultPort)
+    $Candidate = $DefaultPort
+    while (-not (Test-StatusPortAvailable $Candidate)) {
+        Write-Host "Port $Candidate 已被其他程式占用。" -ForegroundColor Yellow
+        $SuggestedPort = if ($Candidate -lt 65535) { $Candidate + 1 } else { 8765 }
+        $RawPort = Read-Host "請輸入新的本機接口 Port [$SuggestedPort]"
+        if ([string]::IsNullOrWhiteSpace($RawPort)) {
+            $Candidate = $SuggestedPort
+            continue
+        }
+        $ParsedPort = 0
+        if ([int]::TryParse($RawPort, [ref]$ParsedPort) -and $ParsedPort -ge 1 -and $ParsedPort -le 65535) {
+            $Candidate = $ParsedPort
+        } else {
+            Write-Host "Port 必須是 1 到 65535 的整數。" -ForegroundColor Yellow
+        }
+    }
+    return $Candidate
+}
+
 function Read-PositiveTiming {
     param(
         [string]$Label,
@@ -281,12 +318,13 @@ function Show-BotStatus {
 }
 
 function Show-AiInterface {
-    Write-Host "本機唯讀 AI 接口（只有這台電腦可以存取）：" -ForegroundColor Cyan
+    Write-Host "本機 AI 接口（只有這台電腦可以存取）：" -ForegroundColor Cyan
     Write-Host "  完整狀態：http://127.0.0.1:$StatusPort/status"
     Write-Host "  最近操作：http://127.0.0.1:$StatusPort/actions"
     Write-Host "  目前設定：http://127.0.0.1:$StatusPort/settings"
     Write-Host "  健康檢查：http://127.0.0.1:$StatusPort/health"
-    Write-Host "AI 工具可直接讀取以上 JSON，不需要解析原始 LOG。"
+    Write-Host "  安全停止：POST http://127.0.0.1:$StatusPort/control/stop"
+    Write-Host "AI 工具可讀取 JSON；控制行為只開放固定白名單。"
 }
 
 function Resolve-PythonExecutable {
@@ -294,11 +332,20 @@ function Resolve-PythonExecutable {
     if (Test-Path $LocalPython) {
         return $LocalPython
     }
-    $SharedPython = "D:\DinoMutantBot\python\python.exe"
-    if (Test-Path $SharedPython) {
-        return $SharedPython
+    $Installer = Join-Path $PSScriptRoot "install-windows-runtime.ps1"
+    if (-not (Test-Path $Installer)) {
+        throw "找不到 Python 執行環境，也找不到自動安裝工具。"
     }
-    throw "找不到 Python 執行環境。"
+    Write-Host "此資料夾尚未包含 Python 執行環境。" -ForegroundColor Yellow
+    $Choice = Read-Host "是否立即下載並安裝可攜式 Python？需要網路連線 [Y/n]"
+    if (-not [string]::IsNullOrWhiteSpace($Choice) -and $Choice.ToUpperInvariant() -ne "Y") {
+        throw "使用者取消安裝 Python 執行環境。"
+    }
+    & $Installer -RuntimeRoot $RuntimeRoot
+    if (-not (Test-Path $LocalPython)) {
+        throw "Python 執行環境安裝後仍無法找到：$LocalPython"
+    }
+    return $LocalPython
 }
 
 function Invoke-Diagnostics {
@@ -355,7 +402,7 @@ Write-Host "========================================" -ForegroundColor Cyan
 Write-Host " Dino Mutant Bot - 中文互動控制台 " -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "執行位置：$RuntimeRoot"
-Write-Host "AI 狀態接口：http://127.0.0.1:$StatusPort/status（僅限本機、唯讀）"
+Write-Host "AI 狀態接口：http://127.0.0.1:$StatusPort/status（僅限本機）"
 
 try {
     if (-not $SkipDoctor) {
@@ -367,6 +414,7 @@ try {
         throw "已有另一個 Bot 正在執行（PID：$ProcessIds）。請先停止它再啟動新版。"
     }
 
+    $StatusPort = Read-AvailableStatusPort -DefaultPort $StatusPort
     $Settings = Resolve-SpeedSettings -RequestedSpeed $Speed
     $SelectedSpeedName = if ($Settings.DisplaySpeed -eq "safe") { "安全" } elseif ($Settings.DisplaySpeed -eq "custom") { "自訂" } else { "快速" }
     Write-Host "已選擇速度：$SelectedSpeedName" -ForegroundColor Green
@@ -379,7 +427,7 @@ try {
     try {
         while ($true) {
             Write-Host ""
-            Write-Host "操作：[S]狀態 [T]調整速度 [D]診斷工具 [A]AI 接口 [R]重新啟動 [Q]停止離開" -ForegroundColor Cyan
+            Write-Host "操作：[S]狀態 [T]調整速度 [P]切換 Port [D]診斷 [A]AI 接口 [R]重啟 [Q]停止" -ForegroundColor Cyan
             $Command = (Read-Host "請輸入指令 [S]").Trim().ToUpperInvariant()
             if ([string]::IsNullOrWhiteSpace($Command) -or $Command -eq "S") {
                 Show-BotStatus $BotProcess
@@ -387,6 +435,13 @@ try {
                 $NewSettings = Resolve-SpeedSettings -RequestedSpeed ""
                 Stop-BotLogWindow $BotProcess
                 $Settings = $NewSettings
+                $BotProcess = Start-BotLogWindow $Settings
+            } elseif ($Command -eq "P") {
+                $SuggestedPort = if ($StatusPort -lt 65535) { $StatusPort + 1 } else { 8765 }
+                $NewStatusPort = Read-AvailableStatusPort -DefaultPort $SuggestedPort
+                Stop-BotLogWindow $BotProcess
+                $StatusPort = $NewStatusPort
+                Write-Host "接口 Port 已切換為 $StatusPort。" -ForegroundColor Green
                 $BotProcess = Start-BotLogWindow $Settings
             } elseif ($Command -eq "D") {
                 Invoke-Diagnostics

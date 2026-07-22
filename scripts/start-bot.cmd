@@ -10,9 +10,17 @@ if not exist "%bot_launcher%" (
 )
 
 if "%~1"=="" (
-  powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%bot_launcher%"
+  if "%~2"=="" (
+    powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%bot_launcher%"
+  ) else (
+    powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%bot_launcher%" -StatusPort "%~2"
+  )
 ) else (
-  powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%bot_launcher%" -Speed "%~1"
+  if "%~2"=="" (
+    powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%bot_launcher%" -Speed "%~1"
+  ) else (
+    powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%bot_launcher%" -Speed "%~1" -StatusPort "%~2"
+  )
 )
 set "launcher_exit_code=%ERRORLEVEL%"
 

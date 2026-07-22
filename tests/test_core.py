@@ -14,7 +14,7 @@ import action as action_facade
 import capture as capture_facade
 import detector as detector_facade
 import planner as planner_facade
-from dino_bot.actions import AdbActionDriver, RecordingActionDriver
+from dino_bot.actions import AdbActionDriver, AdbClient, RecordingActionDriver
 from dino_bot.assets import create_template
 from dino_bot.cli import apply_run_timing, build_parser
 from dino_bot.config import AppConfig, ConfigError, load_config
@@ -126,6 +126,21 @@ def test_cli_parses_json_status_command() -> None:
     assert args.command == "status"
     assert args.json is True
     assert args.actions == 5
+
+
+def test_adb_client_discovers_android_sdk_for_current_user(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adb = tmp_path / "Android" / "Sdk" / "platform-tools" / "adb.exe"
+    adb.parent.mkdir(parents=True)
+    adb.touch()
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.delenv("ANDROID_SDK_ROOT", raising=False)
+    monkeypatch.delenv("ANDROID_HOME", raising=False)
+    monkeypatch.setattr("dino_bot.actions.shutil.which", lambda _: None)
+
+    assert AdbClient._resolve_executable(None) == str(adb)
 
 
 def test_compatibility_facades_are_independently_callable() -> None:
