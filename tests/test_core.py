@@ -16,7 +16,8 @@ import detector as detector_facade
 import planner as planner_facade
 from dino_bot.actions import AdbActionDriver, RecordingActionDriver
 from dino_bot.assets import create_template
-from dino_bot.config import ConfigError, load_config
+from dino_bot.cli import apply_run_timing, build_parser
+from dino_bot.config import AppConfig, ConfigError, load_config
 from dino_bot.detection import (
     HuntCapacityDetector,
     HuntTeamAvailabilityDetector,
@@ -63,6 +64,68 @@ def test_config_enforces_training_collection_limits(
     config_file.write_text(json.dumps({"training": training}), encoding="utf-8")
     with pytest.raises(ConfigError, match=message):
         load_config(config_file)
+
+
+def test_cli_fast_speed_profile_reduces_hunt_delays() -> None:
+    config = AppConfig(
+        root=Path("."),
+        click_delay=1500,
+        idle_delay=500,
+        post_action_delays={
+            "hunt_button": 5000,
+            "hunt_confirm_button": 3000,
+        },
+    )
+
+    result = apply_run_timing(config, speed="fast")
+
+    assert result.click_delay == 1000
+    assert result.idle_delay == 250
+    assert result.post_action_delays["dinosaur"] == 1000
+    assert result.post_action_delays["hunt_button"] == 3000
+    assert result.post_action_delays["hunt_confirm_button"] == 2000
+
+
+def test_cli_explicit_timing_overrides_profile() -> None:
+    result = apply_run_timing(
+        AppConfig(root=Path(".")),
+        speed="safe",
+        dinosaur_delay_ms=700,
+        hunt_button_delay_ms=1800,
+        hunt_confirm_delay_ms=1200,
+        idle_delay_ms=100,
+    )
+
+    assert result.post_action_delays["dinosaur"] == 700
+    assert result.post_action_delays["hunt_button"] == 1800
+    assert result.post_action_delays["hunt_confirm_button"] == 1200
+    assert result.idle_delay == 100
+
+
+def test_cli_parses_terminal_timing_options() -> None:
+    args = build_parser().parse_args(
+        [
+            "run",
+            "--speed",
+            "fast",
+            "--hunt-button-delay-ms",
+            "1800",
+            "--status-port",
+            "9876",
+        ]
+    )
+
+    assert args.speed == "fast"
+    assert args.hunt_button_delay_ms == 1800
+    assert args.status_port == 9876
+
+
+def test_cli_parses_json_status_command() -> None:
+    args = build_parser().parse_args(["status", "--json", "--actions", "5"])
+
+    assert args.command == "status"
+    assert args.json is True
+    assert args.actions == 5
 
 
 def test_compatibility_facades_are_independently_callable() -> None:

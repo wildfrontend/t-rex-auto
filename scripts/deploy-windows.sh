@@ -2,7 +2,7 @@
 set -euo pipefail
 
 project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-runtime_root="/mnt/d/DinoMutantBot"
+runtime_root="${1:-/mnt/d/DinoMutantBot}"
 runtime_app="${runtime_root}/app"
 
 mkdir -p "${runtime_app}" "${runtime_app}/scripts"
@@ -22,6 +22,7 @@ cp -a \
 cp -a \
   "${project_root}/scripts/run-windows.ps1" \
   "${project_root}/scripts/doctor-windows.ps1" \
+  "${project_root}/scripts/launcher-windows.ps1" \
   "${project_root}/scripts/watch-running-bot.ps1" \
   "${runtime_app}/scripts/"
 cp -a "${project_root}/scripts/start-bot.cmd" "${runtime_root}/start-bot.cmd"

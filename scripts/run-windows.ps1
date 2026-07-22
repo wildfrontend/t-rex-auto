@@ -5,13 +5,29 @@ param(
     [int]$MaxActions = 0,
     [int]$MaxCycles = 0,
     [int]$BatchSize = 0,
-    [int]$MailAfterHunts = 0
+    [int]$MailAfterHunts = 0,
+    [ValidateSet("safe", "fast")]
+    [string]$Speed = "fast",
+    [int]$ClickDelayMs = -1,
+    [int]$DinosaurDelayMs = -1,
+    [int]$HuntButtonDelayMs = -1,
+    [int]$HuntConfirmDelayMs = -1,
+    [int]$IdleDelayMs = -1,
+    [ValidateRange(0, 65535)]
+    [int]$StatusPort = 8765
 )
 
 $ErrorActionPreference = "Stop"
-$RuntimeRoot = "D:\DinoMutantBot"
+$AppRoot = Split-Path -Parent $PSScriptRoot
+$RuntimeRoot = Split-Path -Parent $AppRoot
 $PythonExecutable = Join-Path $RuntimeRoot "python\python.exe"
-$AppRoot = Join-Path $RuntimeRoot "app"
+if (-not (Test-Path $PythonExecutable)) {
+    $SharedPython = "D:\DinoMutantBot\python\python.exe"
+    if (Test-Path $SharedPython) {
+        $PythonExecutable = $SharedPython
+        Write-Host "Using shared Python runtime: $SharedPython"
+    }
+}
 if (-not (Test-Path $PythonExecutable)) {
     throw "Windows runtime is not installed. Run setup-windows.ps1 first."
 }
@@ -22,6 +38,8 @@ $RunArguments = @(
     "run", "--mode", $Mode,
     "--max-actions", $MaxActions,
     "--max-cycles", $MaxCycles,
+    "--speed", $Speed,
+    "--status-port", $StatusPort,
     "--verbose"
 )
 if ($BatchSize -gt 0) {
@@ -29,6 +47,23 @@ if ($BatchSize -gt 0) {
 }
 if ($MailAfterHunts -gt 0) {
     $RunArguments += @("--mail-after-hunts", $MailAfterHunts)
+}
+$TimingOverrides = @{
+    "--click-delay-ms" = $ClickDelayMs
+    "--dinosaur-delay-ms" = $DinosaurDelayMs
+    "--hunt-button-delay-ms" = $HuntButtonDelayMs
+    "--hunt-confirm-delay-ms" = $HuntConfirmDelayMs
+    "--idle-delay-ms" = $IdleDelayMs
+}
+foreach ($Entry in $TimingOverrides.GetEnumerator()) {
+    if ($Entry.Value -ge 0) {
+        $RunArguments += @($Entry.Key, $Entry.Value)
+    }
+}
+
+Write-Host "Bot speed profile: $Speed"
+if ($StatusPort -gt 0) {
+    Write-Host "Read-only AI/status API: http://127.0.0.1:$StatusPort/status"
 }
 
 Add-Type -TypeDefinition @"
