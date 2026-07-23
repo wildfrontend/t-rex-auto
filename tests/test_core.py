@@ -128,6 +128,16 @@ def test_cli_parses_json_status_command() -> None:
     assert args.actions == 5
 
 
+def test_cli_parses_diagnostics_bundle_options() -> None:
+    args = build_parser().parse_args(
+        ["diagnostics", "--include-screenshot", "--log-lines", "750"]
+    )
+
+    assert args.command == "diagnostics"
+    assert args.include_screenshot is True
+    assert args.log_lines == 750
+
+
 def test_adb_client_discovers_android_sdk_for_current_user(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
