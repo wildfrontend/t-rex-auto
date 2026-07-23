@@ -540,6 +540,29 @@ function Resolve-PythonExecutable {
     return $LocalPython
 }
 
+function Export-CodexDiagnosticBundle {
+    param([switch]$IncludeScreenshot)
+    $PythonExecutable = Resolve-PythonExecutable
+    $DiagnosticArguments = @(
+        (Join-Path $AppRoot "main.py"),
+        "--config", (Join-Path $AppRoot "config.json"),
+        "diagnostics"
+    )
+    if ($IncludeScreenshot) {
+        $DiagnosticArguments += "--include-screenshot"
+    }
+    & $PythonExecutable @DiagnosticArguments
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "診斷包產生失敗。" -ForegroundColor Red
+        return
+    }
+    $DiagnosticRoot = Join-Path $AppRoot "diagnostics"
+    Write-Host "診斷包已完成；請將最新 ZIP 上傳給 Codex。" -ForegroundColor Green
+    if (Test-Path $DiagnosticRoot) {
+        Start-Process explorer.exe -ArgumentList $DiagnosticRoot
+    }
+}
+
 function Invoke-Diagnostics {
     while ($true) {
         Write-Host ""
@@ -549,6 +572,8 @@ function Invoke-Diagnostics {
         Write-Host "  3. 顯示完整狀態 JSON"
         Write-Host "  4. 顯示最新 30 行原始日誌"
         Write-Host "  5. 開啟日誌資料夾"
+        Write-Host "  6. 產生 Codex 診斷包（不含截圖）"
+        Write-Host "  7. 產生 Codex 診斷包（包含目前畫面）"
         Write-Host "  B. 返回主選單"
         $Choice = (Read-Host "請選擇診斷指令 [B]").Trim().ToUpperInvariant()
         if ([string]::IsNullOrWhiteSpace($Choice) -or $Choice -eq "B") {
@@ -584,6 +609,11 @@ function Invoke-Diagnostics {
         } elseif ($Choice -eq "5") {
             New-Item -ItemType Directory -Force -Path $LogRoot | Out-Null
             Start-Process explorer.exe -ArgumentList $LogRoot
+        } elseif ($Choice -eq "6") {
+            Export-CodexDiagnosticBundle
+        } elseif ($Choice -eq "7") {
+            Write-Host "你已選擇把目前遊戲畫面放入診斷包。" -ForegroundColor Yellow
+            Export-CodexDiagnosticBundle -IncludeScreenshot
         } else {
             Write-Host "無法辨識這個診斷指令。" -ForegroundColor Yellow
         }
@@ -619,7 +649,7 @@ try {
     try {
         while ($true) {
             Write-Host ""
-            Write-Host "操作：[S]狀態 [T]調整速度 [P]切換 Port [D]診斷 [A]AI 接口 [R]重啟 [Q]停止" -ForegroundColor Cyan
+            Write-Host "操作：[S]狀態 [E]診斷包 [T]調整速度 [P]切換 Port [D]診斷 [A]AI 接口 [R]重啟 [Q]停止" -ForegroundColor Cyan
             $Command = (Read-Host "請輸入指令 [S]").Trim().ToUpperInvariant()
             if ([string]::IsNullOrWhiteSpace($Command) -or $Command -eq "S") {
                 Show-BotStatus $BotProcess
@@ -637,6 +667,8 @@ try {
                 $BotProcess = Start-BotLogWindow $Settings
             } elseif ($Command -eq "D") {
                 Invoke-Diagnostics
+            } elseif ($Command -eq "E") {
+                Export-CodexDiagnosticBundle
             } elseif ($Command -eq "A") {
                 Show-AiInterface
             } elseif ($Command -eq "R") {

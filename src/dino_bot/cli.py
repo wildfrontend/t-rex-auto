@@ -15,6 +15,7 @@ from .application import create_engine
 from .assets import AssetToolError, create_template
 from .capture import AdbScreencapCapture, MssBlueStacksCapture
 from .config import AppConfig, ConfigError, load_config
+from .diagnostics import create_diagnostic_bundle, default_diagnostic_output
 from .doctor import benchmark_capture, run_checks
 from .status import build_runtime_status
 from .status_server import LocalStatusServer
@@ -68,6 +69,23 @@ def build_parser() -> argparse.ArgumentParser:
     status.add_argument("--json", action="store_true", help="print machine-readable JSON")
     status.add_argument("--actions", type=int, default=10, help="recent actions to include")
 
+    diagnostics = subcommands.add_parser(
+        "diagnostics",
+        help="create a sanitized ZIP bundle for support or Codex analysis",
+    )
+    diagnostics.add_argument("--output", help="output ZIP path")
+    diagnostics.add_argument(
+        "--include-screenshot",
+        action="store_true",
+        help="include one current screenshot after explicit user consent",
+    )
+    diagnostics.add_argument(
+        "--log-lines",
+        type=int,
+        default=500,
+        help="maximum recent raw log lines to include",
+    )
+
     benchmark = subcommands.add_parser("benchmark", help="measure capture throughput")
     benchmark.add_argument("--frames", type=int, default=100)
     benchmark.add_argument("--backend", choices=["mss", "adb"])
@@ -110,6 +128,51 @@ def _capture_once(config: AppConfig):
         return provider.capture()
     finally:
         provider.close()
+
+
+def _create_diagnostics(args: argparse.Namespace) -> int:
+    config_path = Path(args.config).expanduser().resolve()
+    config: AppConfig | None
+    config_error: str | None = None
+    try:
+        config = load_config(config_path)
+    except ConfigError as exc:
+        config = None
+        config_error = str(exc)
+
+    root = config.root if config is not None else config_path.parent
+    output = Path(args.output) if args.output else default_diagnostic_output(root)
+    checks = run_checks(config) if config is not None else []
+    snapshot_png: bytes | None = None
+    snapshot_error: str | None = None
+    if args.include_screenshot:
+        if config is None:
+            snapshot_error = "Snapshot unavailable because the configuration could not be loaded."
+        else:
+            try:
+                frame = _capture_once(config)
+                encoded, buffer = cv2.imencode(".png", frame.image)
+                if not encoded:
+                    raise RuntimeError("OpenCV could not encode the screenshot")
+                snapshot_png = buffer.tobytes()
+            except Exception as exc:  # The failed capture is itself diagnostic evidence.
+                snapshot_error = str(exc)
+
+    bundle = create_diagnostic_bundle(
+        config,
+        output,
+        config_path=config_path,
+        config_error=config_error,
+        checks=checks,
+        snapshot_requested=args.include_screenshot,
+        snapshot_png=snapshot_png,
+        snapshot_error=snapshot_error,
+        recent_log_lines=max(1, min(args.log_lines, 5000)),
+    )
+    print(f"Diagnostic bundle saved: {bundle}")
+    if snapshot_error:
+        print(f"Snapshot warning: {snapshot_error}", file=sys.stderr)
+    return 0
 
 
 def apply_run_timing(
@@ -167,6 +230,8 @@ def apply_run_timing(
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command == "diagnostics":
+        return _create_diagnostics(args)
     config = _load(args.config)
     if args.command == "doctor":
         checks = run_checks(config)

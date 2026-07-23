@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dino-mutant-bot"
-version = "0.1.2"
+version = "0.1.3"
 description = "Extensible Sense-Think-Act framework for BlueStacks automation"
 readme = "README.md"
 requires-python = ">=3.12"
