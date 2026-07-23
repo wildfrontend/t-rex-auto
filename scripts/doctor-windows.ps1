@@ -2,12 +2,19 @@
 param()
 
 $ErrorActionPreference = "Stop"
-$RuntimeRoot = "D:\DinoMutantBot"
+$AppRoot = Split-Path -Parent $PSScriptRoot
+$RuntimeRoot = Split-Path -Parent $AppRoot
 $PythonExecutable = Join-Path $RuntimeRoot "python\python.exe"
-$AppRoot = Join-Path $RuntimeRoot "app"
 if (-not (Test-Path $PythonExecutable)) {
-    throw "Windows runtime is not installed. Run setup-windows.ps1 first."
+    throw "Windows runtime is not installed. Run start-bot.cmd for guided setup."
 }
-& $PythonExecutable (Join-Path $AppRoot "main.py") `
-    --config (Join-Path $AppRoot "config.json") doctor
-exit $LASTEXITCODE
+$DoctorExitCode = 1
+Push-Location $RuntimeRoot
+try {
+    & $PythonExecutable (Join-Path $AppRoot "main.py") `
+        --config (Join-Path $AppRoot "config.json") doctor
+    $DoctorExitCode = $LASTEXITCODE
+} finally {
+    Pop-Location
+}
+exit $DoctorExitCode

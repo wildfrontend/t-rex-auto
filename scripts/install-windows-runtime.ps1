@@ -1,8 +1,11 @@
 [CmdletBinding()]
-param()
+param([string]$RuntimeRoot = "")
 
 $ErrorActionPreference = "Stop"
-$RuntimeRoot = "D:\DinoMutantBot"
+if ([string]::IsNullOrWhiteSpace($RuntimeRoot)) {
+    $AppRoot = Split-Path -Parent $PSScriptRoot
+    $RuntimeRoot = Split-Path -Parent $AppRoot
+}
 $PythonRoot = Join-Path $RuntimeRoot "python"
 $PythonExecutable = Join-Path $PythonRoot "python.exe"
 $Archive = Join-Path $env:TEMP "python-3.12.10-embed-amd64.zip"
@@ -40,8 +43,8 @@ Invoke-Python "pip upgrade" @("-m", "pip", "install", "--upgrade", "pip")
 Invoke-Python "dependency install" @(
     "-m", "pip", "install",
     "numpy>=2,<3", "opencv-python-headless>=4.10,<5", "mss>=9,<11",
-    "pywin32>=306", "pytest>=8,<9", "ruff>=0.9,<1"
+    "pywin32>=306"
 )
 
 Write-Host "Portable Windows runtime ready: $PythonExecutable"
-Write-Host "Run scripts/deploy-windows.sh from WSL before the first doctor check."
+Write-Host "Return to start-bot.cmd to continue the environment check."

@@ -31,7 +31,7 @@
     "chrome_insets": [0, 40, 41, 0]
   },
   "adb": {
-    "executable": "C:\\Users\\Louis\\AppData\\Local\\Android\\Sdk\\platform-tools\\adb.exe",
+    "executable": null,
     "serial": "127.0.0.1:5555",
     "connect_on_start": true,
     "timeout": 5.0
