@@ -6,8 +6,15 @@
 目前完成 Auto Hunt MVP：辨識恐龍、選擇最大隊伍、發動狩獵並驗證結果。後續功能以
 Feature 方式加入，不需要修改核心狀態機。
 
-目前版本：`v0.1.1`。這一版強化黑畫面隔離、點擊驗證與地圖空轉復原：
+目前版本：`v0.1.2`。這一版加入雙視窗啟動器、可調整狩獵速度及本機 AI
+狀態接口，並保留 v0.1.1 的黑畫面與地圖復原保護：
 
+- 使用者只需雙擊 `start-bot.cmd`；啟動器會先檢查 Python、ADB、素材及畫面擷取。
+- 一個視窗顯示原始即時 LOG，另一個繁體中文互動視窗提供統計、調速、重啟與診斷工具。
+- `127.0.0.1:8765` 提供結構化狀態與白名單停止接口，讓同一台電腦上的 AI 安全操作。
+- Repository 內附 `.agents/skills/control-dino-bot`，限制 AI 使用固定接口與控制命令。
+- Windows 啟動器預設使用 `fast` 模式，也可互動切換 `safe` 或自訂毫秒數。
+- CLI 可個別覆寫選恐龍、狩獵、確認及空轉掃描延遲。
 - 黑畫面期間暫停 Detect/Verify，畫面恢復後才繼續原操作。
 - 有定義下一個 UI 的重要按鈕，必須真的看到預期 UI 才算成功。
 - 畫面只剩我方藍色路徑時，仍會累計空轉並安全重置地圖。
@@ -64,6 +71,9 @@ BlueStacks 必須保留在 Windows，不需要也不應安裝到 WSL。
 
 ```text
 .
+├── .agents/skills/control-dino-bot/
+│   ├── SKILL.md
+│   └── agents/openai.yaml
 ├── main.py
 ├── config.json
 ├── src/dino_bot/
@@ -82,6 +92,8 @@ BlueStacks 必須保留在 Windows，不需要也不應安裝到 WSL。
 │   ├── modes.py
 │   ├── planning.py
 │   ├── recovery.py
+│   ├── status.py
+│   ├── status_server.py
 │   └── verification.py
 ├── assets/
 │   ├── manifest.json
@@ -124,10 +136,12 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
 
 ### 3. 從 WSL 部署
 
-每次修改程式碼或 detector assets 後執行：
+每次修改程式碼或 detector assets 後執行。第二個參數可把既有 Python runtime 一併
+封裝成可直接分享的完整資料夾：
 
 ```bash
 bash scripts/deploy-windows.sh
+bash scripts/deploy-windows.sh /mnt/d/DinoMutantBot-release /mnt/d/DinoMutantBot/python
 ```
 
 ### 4. 環境檢查
@@ -198,16 +212,84 @@ PYTHONPATH=/tmp/t-rex-auto-deps:src python3 main.py template \
 
 ## 執行
 
-部署後可直接雙擊此前景啟動器：
+部署後只需要雙擊：
 
 ```text
 D:\DinoMutantBot\start-bot.cmd
 ```
 
-終端機會逐步顯示 Capture、Detect、Planning、Action、Verify 與 Recover LOG。
-關閉該終端機就會停止 Bot；完整日誌同時保存在 `app\logs\YYYYMMDD.log`。
+啟動流程會先做環境檢查，再開啟兩個視窗：
+
+- `Dino Mutant Bot - Control`：互動控制、統計、調速、診斷與 AI API 資訊。
+- Bot LOG 視窗：保留完整 Capture、Detect、Planning、Action、Verify、Recover 日誌。
+
+互動視窗可使用：
+
+```text
+S  查詢成功狩獵、操作、失敗、黑屏、重啟及最近動作
+T  改用 fast、safe 或自訂時間，並以新參數重啟 Bot
+P  切換本機接口 Port；Port 被占用時會顯示程式與 PID
+D  環境檢查、ADB 截圖、完整 JSON、原始日誌、開啟日誌資料夾
+A  顯示本機 AI API 端點
+R  使用目前參數重啟
+Q  停止 Bot 並關閉控制流程
+```
+
+也可在終端預先指定模式：
+
+```bat
+D:\DinoMutantBot\start-bot.cmd fast
+D:\DinoMutantBot\start-bot.cmd safe
+D:\DinoMutantBot\start-bot.cmd fast 8877
+```
+
+`fast` 使用 500/1500/2000 ms 的選恐龍、狩獵、確認延遲；`safe` 則使用
+1500/5000/3000 ms。
+
+完整日誌保存在 `app\logs\YYYYMMDD.log`。
 Bot 執行期間會阻止 Windows 系統睡眠，但不阻止螢幕依電源設定自動關閉；Bot
 停止後會自動解除保持喚醒要求。
+
+### 本機 AI 狀態與安全控制接口
+
+Bot 執行時只監聽 `127.0.0.1`。查詢端點為唯讀，控制端只接受固定的安全停止動作：
+
+```text
+http://127.0.0.1:8765/health
+http://127.0.0.1:8765/status
+http://127.0.0.1:8765/actions
+http://127.0.0.1:8765/settings
+POST http://127.0.0.1:8765/control/stop
+```
+
+AI 或本機工具可直接讀取 `/status`，取得本次工作階段的成功狩獵數、信箱循環、
+操作數、驗證失敗、黑屏、遊戲重啟、目前階段及最近操作。控制視窗按 `P` 可切換
+Port。啟動或切換時若 Port 被占用，控制視窗會顯示占用程式、執行檔與 PID，預設選項
+是改用下一個 Port。只有程序命令列與 `/health` API 身分都確認為 Dino Bot，且 API
+回報 PID 與占用者一致時，才會顯示 `[K]` 清理選項；使用者輸入確認碼後還會再檢查
+一次占用者，避免等待輸入期間 Port 已被其他程序接手。清理時必須手動
+輸入畫面上的 `CLEAN-<Port>` 確認碼；若正常停止失敗，強制結束前還會要求第二次
+`FORCE-<PID>` 確認。無法辨識或不是 Dino Bot 的程序不會被關閉。
+
+使用 Codex 開啟 repository 或部署資料夾後，可直接說：
+
+```text
+$control-dino-bot 幫我查狩獵進度
+$control-dino-bot 用 8877 Port 查詢目前狀態
+$control-dino-bot 請停止 Bot
+```
+
+Skill 只允許 `status/start/stop/restart/doctor/snapshot`。啟動、停止及重啟必須由使用者
+當次明確要求，控制腳本也會強制檢查 `-Confirm`；不允許 AI 自行執行 ADB 點擊、
+掃描 Port 或探索遊戲。控制腳本會先驗證 `/health` 服務身分；停止與重啟還會確認
+API PID、Port 占用者與 Bot 命令列一致，驗證失敗時不會送出控制請求。
+
+不啟動 HTTP 服務也能從 CLI 查詢同一份結構化資料：
+
+```powershell
+D:\DinoMutantBot\python\python.exe D:\DinoMutantBot\app\main.py `
+  --config D:\DinoMutantBot\app\config.json status --json
+```
 
 先用 Debug 模式限制一次操作：
 
@@ -220,7 +302,16 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass `
-  -File scripts\run-windows.ps1 -Mode runtime
+  -File scripts\run-windows.ps1 -Mode runtime -Speed fast
+```
+
+如果要個別調整，數值單位為毫秒，下次啟動即生效：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File scripts\run-windows.ps1 -Mode runtime -Speed fast `
+  -DinosaurDelayMs 800 -HuntButtonDelayMs 2500 `
+  -HuntConfirmDelayMs 1800 -IdleDelayMs 150
 ```
 
 執行完整流程：每 10 次重置地圖，累積 30 次後收取信箱並停止：
@@ -259,6 +350,10 @@ D:\DinoMutantBot\python\python.exe `
   若含有 BlueStacks 側欄，應設定此值以確保 ADB 座標精準。
 - `click_delay`: 點擊到驗證畫面的等待毫秒數。
 - `post_action_delays`: 可針對確認按鈕等動畫較長的操作設定額外等待時間。
+- `--speed safe|fast`: 從終端切換保守或快速延遲預設。
+- `--status-port`: 本機狀態與白名單控制 API 連接埠；`0` 代表停用。
+- `--dinosaur-delay-ms`、`--hunt-button-delay-ms`、`--hunt-confirm-delay-ms`、
+  `--idle-delay-ms`: 以毫秒個別覆寫狩獵流程速度。
 - `assets/manifest.json` 的 template `scales`: 同一辨識素材要嘗試的縮放倍率。
 - `verify_retry`: 初次失敗後最多重試次數。
 - `max_actions`: `0` 代表不限，用於 Debug 時建議先設為 `1`。

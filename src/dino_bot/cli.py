@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -15,6 +16,25 @@ from .assets import AssetToolError, create_template
 from .capture import AdbScreencapCapture, MssBlueStacksCapture
 from .config import AppConfig, ConfigError, load_config
 from .doctor import benchmark_capture, run_checks
+from .status import build_runtime_status
+from .status_server import LocalStatusServer
+
+SPEED_PROFILES: dict[str, dict[str, int]] = {
+    "safe": {
+        "click_delay_ms": 1500,
+        "dinosaur_delay_ms": 1500,
+        "hunt_button_delay_ms": 5000,
+        "hunt_confirm_delay_ms": 3000,
+        "idle_delay_ms": 500,
+    },
+    "fast": {
+        "click_delay_ms": 500,
+        "dinosaur_delay_ms": 500,
+        "hunt_button_delay_ms": 1500,
+        "hunt_confirm_delay_ms": 2000,
+        "idle_delay_ms": 250,
+    },
+}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -28,9 +48,25 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--max-cycles", type=int)
     run.add_argument("--batch-size", type=int)
     run.add_argument("--mail-after-hunts", type=int)
+    run.add_argument("--speed", choices=sorted(SPEED_PROFILES))
+    run.add_argument("--click-delay-ms", type=int)
+    run.add_argument("--dinosaur-delay-ms", type=int)
+    run.add_argument("--hunt-button-delay-ms", type=int)
+    run.add_argument("--hunt-confirm-delay-ms", type=int)
+    run.add_argument("--idle-delay-ms", type=int)
+    run.add_argument(
+        "--status-port",
+        type=int,
+        default=8765,
+        help="read-only localhost status API port; use 0 to disable",
+    )
     run.add_argument("--verbose", action="store_true")
 
     subcommands.add_parser("doctor", help="check configuration and runtime dependencies")
+
+    status = subcommands.add_parser("status", help="show the latest Bot session status")
+    status.add_argument("--json", action="store_true", help="print machine-readable JSON")
+    status.add_argument("--actions", type=int, default=10, help="recent actions to include")
 
     benchmark = subcommands.add_parser("benchmark", help="measure capture throughput")
     benchmark.add_argument("--frames", type=int, default=100)
@@ -76,6 +112,59 @@ def _capture_once(config: AppConfig):
         provider.close()
 
 
+def apply_run_timing(
+    config: AppConfig,
+    *,
+    speed: str | None = None,
+    click_delay_ms: int | None = None,
+    dinosaur_delay_ms: int | None = None,
+    hunt_button_delay_ms: int | None = None,
+    hunt_confirm_delay_ms: int | None = None,
+    idle_delay_ms: int | None = None,
+) -> AppConfig:
+    """Apply a speed preset, then any explicit terminal overrides."""
+
+    profile = SPEED_PROFILES.get(speed or "", {})
+    click_delay = profile.get("click_delay_ms", config.click_delay)
+    idle_delay = profile.get("idle_delay_ms", config.idle_delay)
+    post_action_delays = dict(config.post_action_delays)
+    profile_targets = {
+        "dinosaur": profile.get("dinosaur_delay_ms"),
+        "hunt_button": profile.get("hunt_button_delay_ms"),
+        "hunt_confirm_button": profile.get("hunt_confirm_delay_ms"),
+    }
+    post_action_delays.update(
+        {
+            target_type: delay
+            for target_type, delay in profile_targets.items()
+            if delay is not None
+        }
+    )
+
+    if click_delay_ms is not None:
+        click_delay = max(0, click_delay_ms)
+    if idle_delay_ms is not None:
+        idle_delay = max(0, idle_delay_ms)
+    explicit_targets = {
+        "dinosaur": dinosaur_delay_ms,
+        "hunt_button": hunt_button_delay_ms,
+        "hunt_confirm_button": hunt_confirm_delay_ms,
+    }
+    post_action_delays.update(
+        {
+            target_type: max(0, delay)
+            for target_type, delay in explicit_targets.items()
+            if delay is not None
+        }
+    )
+    return replace(
+        config,
+        click_delay=click_delay,
+        idle_delay=idle_delay,
+        post_action_delays=post_action_delays,
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     config = _load(args.config)
@@ -85,6 +174,27 @@ def main(argv: list[str] | None = None) -> int:
             icon = "PASS" if check.ok else ("WARN" if not check.required else "FAIL")
             print(f"[{icon}] {check.name}: {check.detail}")
         return 1 if any(not item.ok and item.required for item in checks) else 0
+    if args.command == "status":
+        status = build_runtime_status(config.logs_dir, max(0, args.actions))
+        if args.json:
+            print(json.dumps(status, ensure_ascii=False, indent=2))
+        else:
+            print(
+                f"Bot: {'running' if status['running'] else 'stopped'}"
+                f" | stage={status['current_stage']}"
+            )
+            print(
+                f"Hunts: {status['successful_hunts']}"
+                f" | mailbox cycles: {status['mailbox_cycles']}"
+                f" | actions: {status['total_actions']}"
+                f" | verification failures: {status['verification_failures']}"
+            )
+            print(
+                f"Black screens: {status['black_screen_detections']}"
+                f" | persisted: {status['black_screen_persisted']}"
+                f" | game restarts: {status['game_restarts']}"
+            )
+        return 0
     if args.command == "benchmark":
         if args.backend:
             config = replace(config, capture=replace(config.capture, backend=args.backend))
@@ -154,8 +264,37 @@ def main(argv: list[str] | None = None) -> int:
                     mail_after_hunts=max(1, args.mail_after_hunts),
                 ),
             )
+        config = apply_run_timing(
+            config,
+            speed=args.speed,
+            click_delay_ms=args.click_delay_ms,
+            dinosaur_delay_ms=args.dinosaur_delay_ms,
+            hunt_button_delay_ms=args.hunt_button_delay_ms,
+            hunt_confirm_delay_ms=args.hunt_confirm_delay_ms,
+            idle_delay_ms=args.idle_delay_ms,
+        )
         engine = create_engine(config, verbose=args.verbose)
-        engine.run()
+        status_server = None
+        if args.status_port > 0:
+            status_server = LocalStatusServer(
+                config.logs_dir,
+                args.status_port,
+                control_handlers={"stop": engine.stop},
+            )
+            try:
+                status_server.start()
+                engine.context.logger.info(
+                    "Status API | %s/status | localhost with allowlisted control",
+                    status_server.url,
+                )
+            except OSError as exc:
+                engine.context.logger.warning("Status API | unavailable | %s", exc)
+                status_server = None
+        try:
+            engine.run()
+        finally:
+            if status_server is not None:
+                status_server.stop()
         return 0
     return 2
 

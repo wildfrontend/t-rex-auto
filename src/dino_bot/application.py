@@ -27,6 +27,14 @@ from .verification import TargetChangedVerifier
 
 def create_engine(config: AppConfig, *, verbose: bool = False) -> BotEngine:
     logger = configure_logging(config.logs_dir, verbose=verbose)
+    logger.info(
+        "Timing | click=%dms | dinosaur=%dms | hunt=%dms | confirm=%dms | idle=%dms",
+        config.click_delay,
+        config.post_action_delays.get("dinosaur", config.click_delay),
+        config.post_action_delays.get("hunt_button", config.click_delay),
+        config.post_action_delays.get("hunt_confirm_button", config.click_delay),
+        config.idle_delay,
+    )
     adb = AdbClient(config.adb)
     device = adb.ensure_ready()
     logger.info("ADB | device=%s | %s", device.serial, device.description)
