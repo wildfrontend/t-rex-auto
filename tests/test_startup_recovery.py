@@ -46,8 +46,8 @@ def _manifest(tmp_path: Path, scales: list[float]) -> Path:
     return path
 
 
-def test_scaled_template_uses_scaled_click_offset(tmp_path: Path) -> None:
-    scale = 0.88
+@pytest.mark.parametrize("scale", [0.88, 0.95])
+def test_scaled_template_uses_scaled_click_offset(tmp_path: Path, scale: float) -> None:
     template = cv2.imread(str(ASSET), cv2.IMREAD_COLOR)
     assert template is not None
     height, width = template.shape[:2]
