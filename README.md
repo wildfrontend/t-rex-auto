@@ -189,7 +189,7 @@ PYTHONPATH=/tmp/t-rex-auto-deps:src python3 main.py template \
   "type": "device_history_confirm_button",
   "file": "templates/device-history-confirm-button.png",
   "threshold": 0.82,
-  "scales": [0.88, 0.9, 1.0],
+  "scales": [0.88, 0.9, 0.95, 1.0],
   "click_offset": [86, 41]
 }
 ```
