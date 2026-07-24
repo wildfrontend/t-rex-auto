@@ -278,7 +278,7 @@ class VerifyState:
             relevant_types.update(verifier_types(context.target.type))
         planner_types = getattr(context.planner, "verification_detection_types", None)
         if callable(planner_types):
-            relevant_types.update(planner_types())
+            relevant_types.update(planner_types(context.target.type))
         detect_started = time.perf_counter()
         detect_types = getattr(context.detector, "detect_types", None)
         if relevant_types and callable(detect_types):
@@ -369,6 +369,9 @@ class VerifyState:
             )
             return BotState.IDLE
         context.logger.warning("Verify | Failed | %s", result.reason)
+        on_action_failure = getattr(context.planner, "on_action_failure", None)
+        if callable(on_action_failure):
+            on_action_failure(context.target.type)
         if context.max_actions and context.action_count >= context.max_actions:
             context.logger.info("Verify | retry skipped because max_actions was reached")
             context.attempt = 0

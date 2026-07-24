@@ -491,6 +491,40 @@ def test_hunt_planner_counts_only_verified_confirmation() -> None:
     assert planner._total_hunt_count == 1
 
 
+def test_hunt_planner_releases_dinosaur_wait_after_failed_selection() -> None:
+    planner = HuntPlanner(("dinosaur",))
+    planner._awaiting_hunt_button = True
+    planner._waited_frames = 3
+
+    planner.on_action_failure("dinosaur")
+
+    assert planner._awaiting_hunt_button is False
+    assert planner._waited_frames == 0
+
+
+def test_hunt_planner_reuses_map_after_verified_confirmation() -> None:
+    planner = HuntPlanner(("dinosaur",))
+    map_detections = [
+        Detection("map_exit_nest_button", 841, 1295, 1.0),
+        Detection("map_center_egg", 450, 800, 1.0),
+        Detection("dinosaur", 500, 820, 0.9),
+    ]
+
+    relevant = planner.verification_detection_types("hunt_confirm_button")
+
+    assert {
+        "dinosaur",
+        "own_hunt_path",
+        "map_exit_nest_button",
+        "map_center_egg",
+        "hunt_capacity_full",
+    } <= relevant
+    assert planner.can_reuse_verification_result(
+        "hunt_confirm_button",
+        map_detections,
+    )
+
+
 def test_hunt_planner_collects_mail_after_hunt_threshold() -> None:
     frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
     planner = HuntPlanner(
