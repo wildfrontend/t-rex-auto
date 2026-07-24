@@ -221,6 +221,13 @@ class HuntPlanner(TargetPlanner):
         self._awaiting_hunt_button = False
         self._waited_frames = 0
 
+    def on_action_failure(self, target_type: str) -> None:
+        """Release transient waits when a dinosaur selection was not accepted."""
+
+        if target_type == self.dinosaur_type:
+            self._awaiting_hunt_button = False
+            self._waited_frames = 0
+
     def reset_workflow(self) -> None:
         """Discard screen-dependent state after the Android app is restarted."""
         self.clear_history()
@@ -244,16 +251,26 @@ class HuntPlanner(TargetPlanner):
         )
         return max(0, round((deadline - now) * 1000))
 
-    def verification_detection_types(self) -> frozenset[str]:
+    def verification_detection_types(self, target_type: str) -> frozenset[str]:
         """Return active hunt exceptions that verification must not filter out."""
 
-        return frozenset(
-            {
-                *self.recovery_button_types,
-                self.no_available_type,
-                self.target_too_strong_type,
-            }
-        )
+        target_types = {
+            *self.recovery_button_types,
+            self.no_available_type,
+            self.target_too_strong_type,
+        }
+        if target_type == self.completion_type:
+            target_types.update(
+                {
+                    self.dinosaur_type,
+                    *self.own_path_types,
+                    self.map_exit_type,
+                    self.center_anchor_type,
+                    self.mailbox_type,
+                    self.capacity_full_type,
+                }
+            )
+        return frozenset(target_types)
 
     def can_reuse_verification_result(
         self,
@@ -270,6 +287,16 @@ class HuntPlanner(TargetPlanner):
             and target_type != self.completion_type
         ):
             return self.completion_type in visible_types
+        if target_type == self.completion_type:
+            return bool(
+                visible_types
+                & {
+                    self.dinosaur_type,
+                    self.map_exit_type,
+                    self.center_anchor_type,
+                    self.mailbox_type,
+                }
+            )
         return False
 
     @staticmethod
