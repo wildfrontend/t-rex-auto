@@ -45,7 +45,7 @@ def run_checks(config: AppConfig) -> list[Check]:
         checks.append(
             Check(f"Dependency {module}", importlib.util.find_spec(module) is not None, "installed")
         )
-    if operating_system == "Windows":
+    if operating_system == "Windows" and config.capture.backend == "mss":
         checks.append(
             Check(
                 "Dependency win32gui",

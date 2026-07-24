@@ -23,6 +23,7 @@ $RuntimeRoot = Split-Path -Parent $AppRoot
 $RunnerScript = Join-Path $PSScriptRoot "run-windows.ps1"
 $LogRoot = Join-Path $AppRoot "logs"
 $ConfigPath = Join-Path $AppRoot "config.json"
+$UserSettingsPath = Join-Path $RuntimeRoot "user-settings.json"
 $Host.UI.RawUI.WindowTitle = "Dino Mutant Bot - 互動控制台"
 
 function Get-EmulatorConfiguration {
@@ -42,6 +43,27 @@ function Get-EmulatorConfiguration {
     $ExplicitSerial = ""
     if ($null -ne $Config.adb -and $null -ne $Config.adb.serial) {
         $ExplicitSerial = [string]$Config.adb.serial
+    }
+    if (Test-Path -LiteralPath $UserSettingsPath) {
+        try {
+            $UserSettings = Get-Content `
+                -LiteralPath $UserSettingsPath `
+                -Raw `
+                -Encoding UTF8 |
+                ConvertFrom-Json
+            $SavedSerial = [string]$UserSettings.adb_serial
+            if (-not [string]::IsNullOrWhiteSpace($SavedSerial)) {
+                $Profile = "custom"
+                $ExplicitSerial = $SavedSerial
+                Save-EmulatorConfiguration `
+                    -Config $Config `
+                    -Profile $Profile `
+                    -ExplicitSerial $ExplicitSerial `
+                    -SkipUserSettings
+            }
+        } catch {
+            Write-Host "已忽略無法讀取的 user-settings.json。" -ForegroundColor Yellow
+        }
     }
     $DefaultSerial = if ($Profile -eq "mumu") {
         "127.0.0.1:7555"
@@ -67,7 +89,7 @@ function Get-EmulatorDisplayName {
     param([string]$Profile)
     if ($Profile -eq "mumu") { return "MuMu Player" }
     if ($Profile -eq "bluestacks") { return "BlueStacks" }
-    if ($Profile -eq "custom") { return "自訂 Android 模擬器／裝置" }
+    if ($Profile -eq "custom") { return "通用 ADB Port" }
     return $Profile
 }
 
@@ -104,7 +126,8 @@ function Save-EmulatorConfiguration {
     param(
         [pscustomobject]$Config,
         [string]$Profile,
-        [string]$ExplicitSerial
+        [string]$ExplicitSerial,
+        [switch]$SkipUserSettings
     )
     if ($Config.PSObject.Properties.Name -contains "emulator") {
         $Config.emulator = $Profile
@@ -123,90 +146,63 @@ function Save-EmulatorConfiguration {
     }
     $Json = $Config | ConvertTo-Json -Depth 32
     [System.IO.File]::WriteAllText($ConfigPath, $Json + [Environment]::NewLine, $Utf8Encoding)
+    if (-not $SkipUserSettings -and -not [string]::IsNullOrWhiteSpace($ExplicitSerial)) {
+        $UserSettings = [ordered]@{
+            schema_version = 1
+            adb_serial = $ExplicitSerial
+        }
+        $UserSettingsJson = $UserSettings | ConvertTo-Json
+        [System.IO.File]::WriteAllText(
+            $UserSettingsPath,
+            $UserSettingsJson + [Environment]::NewLine,
+            $Utf8Encoding
+        )
+    }
 }
 
 function Select-EmulatorConfiguration {
     $Current = Get-EmulatorConfiguration
-    $CurrentName = Get-EmulatorDisplayName $Current.Profile
     $CurrentSerial = if ([string]::IsNullOrWhiteSpace($Current.EffectiveSerial)) {
-        "自動選擇已連線裝置"
+        "未設定"
     } else {
         $Current.EffectiveSerial
     }
     while ($true) {
         Write-Host ""
-        Write-Host "請選擇 Android 模擬器：" -ForegroundColor Cyan
-        Write-Host "  目前：$CurrentName｜ADB：$CurrentSerial"
-        Write-Host "  1. 保留目前設定"
-        Write-Host "  2. MuMu Player"
-        Write-Host "  3. BlueStacks"
-        Write-Host "  4. 自訂模擬器／ADB 裝置"
-        $Choice = (Read-Host "請選擇 [1]").Trim().ToUpperInvariant()
-        if ([string]::IsNullOrWhiteSpace($Choice) -or $Choice -eq "1") {
+        Write-Host "請先到模擬器設定／診斷頁面查看 ADB Port。" -ForegroundColor Cyan
+        Write-Host "MuMu、BlueStacks 與其他模擬器都只需輸入顯示的 Port。"
+        $RawSerial = Read-Host "ADB Port [$CurrentSerial]"
+        if ([string]::IsNullOrWhiteSpace($RawSerial)) {
+            if ([string]::IsNullOrWhiteSpace($Current.EffectiveSerial)) {
+                Write-Host "第一次啟動必須輸入 ADB Port。" -ForegroundColor Yellow
+                continue
+            }
             return [pscustomobject]@{
                 Changed = $false
                 Profile = $Current.Profile
                 Serial = $Current.EffectiveSerial
             }
         }
-
-        $Profile = ""
-        $DefaultSerial = ""
-        $Required = $false
-        if ($Choice -eq "2") {
-            $Profile = "mumu"
-            $DefaultSerial = "127.0.0.1:7555"
-        } elseif ($Choice -eq "3") {
-            $Profile = "bluestacks"
-            $DefaultSerial = "127.0.0.1:5555"
-        } elseif ($Choice -eq "4") {
-            $Profile = "custom"
-            $DefaultSerial = if ($Current.Profile -eq "custom") {
-                $Current.EffectiveSerial
-            } else {
-                ""
-            }
-            $Required = $true
-        } else {
-            Write-Host "選項無效，請重新輸入。" -ForegroundColor Yellow
-            continue
-        }
-
-        $PromptDefault = if ([string]::IsNullOrWhiteSpace($DefaultSerial)) {
-            "必填"
-        } else {
-            $DefaultSerial
-        }
-        $RawSerial = Read-Host "ADB 位址、裝置序號或 Port [$PromptDefault]"
         try {
             $EffectiveSerial = Resolve-AdbSerial `
                 -RawValue $RawSerial `
-                -DefaultValue $DefaultSerial `
-                -Required:$Required
+                -DefaultValue "" `
+                -Required
         } catch {
             Write-Host $_.Exception.Message -ForegroundColor Yellow
             continue
         }
-        $ExplicitSerial = if (
-            $Profile -in @("mumu", "bluestacks") -and
-            $EffectiveSerial -eq $DefaultSerial
-        ) {
-            ""
-        } else {
-            $EffectiveSerial
-        }
         Save-EmulatorConfiguration `
             -Config $Current.Config `
-            -Profile $Profile `
-            -ExplicitSerial $ExplicitSerial
-        $Name = Get-EmulatorDisplayName $Profile
-        Write-Host "已選擇：$Name｜ADB：$EffectiveSerial" -ForegroundColor Green
+            -Profile "custom" `
+            -ExplicitSerial $EffectiveSerial
+        Write-Host "ADB 已保存：$EffectiveSerial" -ForegroundColor Green
         return [pscustomobject]@{
             Changed = (
-                $Current.Profile -ne $Profile -or
-                $Current.ExplicitSerial -ne $ExplicitSerial
+                $Current.Profile -ne "custom" -or
+                $Current.ExplicitSerial -ne $EffectiveSerial
             )
-            Profile = $Profile
+            Profile = "custom"
             Serial = $EffectiveSerial
         }
     }
@@ -821,7 +817,7 @@ try {
         $ProcessIds = ($ExistingBots | ForEach-Object { $_.ProcessId }) -join ", "
         throw "已有另一個 Bot 正在執行（PID：$ProcessIds）。請先停止它再啟動新版。"
     }
-    if (-not $SkipEmulatorPrompt -and -not $DryRun) {
+    if (-not $SkipEmulatorPrompt) {
         [void](Select-EmulatorConfiguration)
     } else {
         $CurrentEmulator = Get-EmulatorConfiguration
@@ -845,7 +841,7 @@ try {
     try {
         while ($true) {
             Write-Host ""
-            Write-Host "操作：[S]狀態 [M]模擬器 [T]速度 [P]切換 Port [D]診斷 [E]診斷包 [A]AI 接口 [R]重啟 [Q]停止" -ForegroundColor Cyan
+            Write-Host "操作：[S]狀態 [M]ADB Port [T]速度 [P]接口 Port [D]診斷 [E]診斷包 [A]AI 接口 [R]重啟 [Q]停止" -ForegroundColor Cyan
             $Command = (Read-Host "請輸入指令 [S]").Trim().ToUpperInvariant()
             if ([string]::IsNullOrWhiteSpace($Command) -or $Command -eq "S") {
                 Show-BotStatus $BotProcess

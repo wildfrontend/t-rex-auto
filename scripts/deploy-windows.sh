@@ -4,6 +4,7 @@ set -euo pipefail
 project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 runtime_root="${1:-/mnt/d/DinoMutantBot}"
 runtime_python_source="${2:-}"
+platform_tools_source="${3:-}"
 runtime_app="${runtime_root}/app"
 
 mkdir -p "${runtime_app}" "${runtime_app}/scripts"
@@ -45,6 +46,15 @@ if [[ -n "${runtime_python_source}" ]]; then
   fi
   mkdir -p "${runtime_root}/python"
   cp -a "${runtime_python_source}/." "${runtime_root}/python/"
+fi
+
+if [[ -n "${platform_tools_source}" ]]; then
+  if [[ ! -f "${platform_tools_source}/adb.exe" ]]; then
+    echo "Android platform-tools source is invalid: ${platform_tools_source}" >&2
+    exit 1
+  fi
+  mkdir -p "${runtime_app}/tools/platform-tools"
+  cp -a "${platform_tools_source}/." "${runtime_app}/tools/platform-tools/"
 fi
 
 echo "Deployed portable app to ${runtime_root}"

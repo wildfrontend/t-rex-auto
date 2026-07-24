@@ -37,13 +37,17 @@ class AdbClient:
         candidates: list[str] = []
         if configured:
             candidates.append(configured)
+        executable_name = "adb.exe" if sys.platform == "win32" else "adb"
+        app_root = Path(__file__).resolve().parents[2]
+        candidates.append(
+            str(app_root / "tools" / "platform-tools" / executable_name)
+        )
         discovered = shutil.which("adb")
         if discovered:
             candidates.append(discovered)
         for variable in ("ANDROID_SDK_ROOT", "ANDROID_HOME"):
             sdk_root = os.environ.get(variable)
             if sdk_root:
-                executable_name = "adb.exe" if sys.platform == "win32" else "adb"
                 candidates.append(str(Path(sdk_root) / "platform-tools" / executable_name))
         if sys.platform == "darwin":
             candidates.append(

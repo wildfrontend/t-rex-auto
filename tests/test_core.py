@@ -39,7 +39,11 @@ from dino_bot.models import (
 )
 from dino_bot.modes import DebugMode, RuntimeMode, TrainingMode
 from dino_bot.planning import HuntPlanner, TargetPlanner
-from dino_bot.recovery import AdbAppRestarter, BlackScreenRecovery
+from dino_bot.recovery import (
+    AdbAppRestarter,
+    BlackScreenRecovery,
+    HuntProgressWatchdog,
+)
 from dino_bot.verification import TargetChangedVerifier
 
 
@@ -73,9 +77,9 @@ def test_config_enforces_training_collection_limits(
 def test_project_config_uses_short_no_available_verification_delay() -> None:
     config = load_config(Path(__file__).resolve().parents[1] / "config.json")
 
-    assert config.emulator == "mumu"
-    assert config.adb.serial == "127.0.0.1:7555"
-    assert "MuMuPlayer" in config.capture.window_titles
+    assert config.emulator == "custom"
+    assert config.adb.serial is None
+    assert config.recovery.no_hunt_progress_timeout_seconds == 180
     assert config.post_action_delays["no_available_dinosaurs"] == 300
     assert config.post_action_delays["target_too_strong"] == 3000
     assert config.post_action_delays["map_exit_nest_button"] == 2500
@@ -123,6 +127,17 @@ def test_config_rejects_negative_dinosaur_failure_cooldown(
     )
 
     with pytest.raises(ConfigError, match=setting):
+        load_config(config_file)
+
+
+def test_config_rejects_negative_no_hunt_progress_timeout(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.json"
+    config_file.write_text(
+        json.dumps({"recovery": {"no_hunt_progress_timeout_seconds": -1}}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="no_hunt_progress_timeout_seconds"):
         load_config(config_file)
 
 
@@ -255,6 +270,26 @@ def test_adb_client_discovers_android_sdk_on_macos(
     monkeypatch.setattr("dino_bot.actions.sys.platform", "darwin")
 
     assert AdbClient._resolve_executable(None) == str(adb)
+
+
+def test_adb_client_discovers_bundled_platform_tools(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("ANDROID_SDK_ROOT", raising=False)
+    monkeypatch.delenv("ANDROID_HOME", raising=False)
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    monkeypatch.setattr("dino_bot.actions.shutil.which", lambda _: None)
+    monkeypatch.setattr("dino_bot.actions.sys.platform", "win32")
+    monkeypatch.setattr(
+        "dino_bot.actions.Path.is_file",
+        lambda path: str(path).replace("\\", "/").endswith(
+            "/tools/platform-tools/adb.exe"
+        ),
+    )
+
+    executable = AdbClient._resolve_executable(None)
+
+    assert executable.replace("\\", "/").endswith("/tools/platform-tools/adb.exe")
 
 
 def test_mumu_profile_supplies_connection_and_window_defaults(tmp_path: Path) -> None:
@@ -1825,6 +1860,79 @@ def test_black_screen_recovery_restarts_after_timeout_and_honors_cooldown() -> N
     now[0] = 446
     assert recovery.observe(make_frame(0))
     assert restarter.restart_count == 2
+
+
+def test_hunt_progress_watchdog_restarts_after_sustained_stall() -> None:
+    now = [100.0]
+    restarter = RecordingRestarter()
+    logger = logging.getLogger("test_hunt_progress_timeout")
+    runtime_recovery = BlackScreenRecovery(
+        restarter,
+        logger,
+        cooldown_seconds=90,
+        launch_wait_seconds=0,
+        clock=lambda: now[0],
+        sleeper=lambda _: None,
+    )
+    watchdog = HuntProgressWatchdog(
+        runtime_recovery,
+        logger,
+        timeout_seconds=180,
+        clock=lambda: now[0],
+    )
+
+    assert not watchdog.observe([], None)
+    now[0] += 179
+    assert not watchdog.observe([], None)
+    assert restarter.restart_count == 0
+
+    now[0] += 1
+    assert watchdog.observe([], None)
+    assert restarter.restart_count == 1
+
+
+def test_hunt_progress_watchdog_ignores_expected_waits_and_resets_on_progress() -> None:
+    now = [100.0]
+    restarter = RecordingRestarter()
+    logger = logging.getLogger("test_hunt_progress_expected_wait")
+    runtime_recovery = BlackScreenRecovery(
+        restarter,
+        logger,
+        cooldown_seconds=0,
+        launch_wait_seconds=0,
+        clock=lambda: now[0],
+        sleeper=lambda _: None,
+    )
+    watchdog = HuntProgressWatchdog(
+        runtime_recovery,
+        logger,
+        timeout_seconds=60,
+        clock=lambda: now[0],
+    )
+
+    assert not watchdog.observe([], None)
+    now[0] += 59
+    no_available = make_detection(type="no_available_dinosaurs")
+    assert not watchdog.observe([no_available], None)
+
+    now[0] += 60
+    assert not watchdog.observe([], None)
+    now[0] += 59
+    dinosaur = make_detection(type="dinosaur")
+    target = Target(
+        "dinosaur",
+        dinosaur.x,
+        dinosaur.y,
+        dinosaur.confidence,
+        dinosaur,
+    )
+    assert not watchdog.observe([dinosaur], target)
+
+    now[0] += 60
+    assert not watchdog.observe([], None, cooldown_ms=300_000)
+    now[0] += 60
+    assert not watchdog.observe([], None)
+    assert restarter.restart_count == 0
 
 
 def test_adb_app_restarter_only_restarts_configured_game() -> None:

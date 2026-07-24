@@ -14,6 +14,7 @@ from .interfaces import (
     ActionDriver,
     CaptureProvider,
     Detector,
+    HuntProgressRecovery,
     ModeObserver,
     Planner,
     RuntimeRecovery,
@@ -61,6 +62,7 @@ class BotContext:
     max_cycles: int = 0
     cycle_complete_targets: tuple[str, ...] = ()
     runtime_recovery: RuntimeRecovery | None = None
+    hunt_progress_recovery: HuntProgressRecovery | None = None
     state: BotState = BotState.IDLE
     stop_requested: bool = False
     stop_event: threading.Event = field(default_factory=threading.Event, repr=False)
@@ -163,18 +165,30 @@ class PlanningState:
         if context.frame is None:
             raise RuntimeError("Planning state entered without a frame")
         context.target = context.planner.choose(context.frame, context.detections)
+        cooldown_ms = 0
         if context.target is None:
-            context.logger.debug("Planning | no actionable target")
-            delay_ms = context.idle_delay_ms
             next_ready_delay = getattr(context.planner, "next_ready_delay_ms", None)
             if callable(next_ready_delay):
                 cooldown_ms = int(next_ready_delay())
-                if cooldown_ms > delay_ms:
-                    context.logger.info(
-                        "Planning | cooldown | remaining=%dms",
-                        cooldown_ms,
-                    )
-                delay_ms = max(delay_ms, cooldown_ms)
+        if (
+            context.hunt_progress_recovery is not None
+            and context.hunt_progress_recovery.observe(
+                context.detections,
+                context.target,
+                cooldown_ms=cooldown_ms,
+            )
+        ):
+            _reset_after_runtime_recovery(context)
+            return BotState.IDLE
+        if context.target is None:
+            context.logger.debug("Planning | no actionable target")
+            delay_ms = context.idle_delay_ms
+            if cooldown_ms > delay_ms:
+                context.logger.info(
+                    "Planning | cooldown | remaining=%dms",
+                    cooldown_ms,
+                )
+            delay_ms = max(delay_ms, cooldown_ms)
             if delay_ms and _wait_for_delay(context, delay_ms):
                 return BotState.STOPPED
             return BotState.IDLE
@@ -402,6 +416,8 @@ class StoppedState:
 
 def _reset_after_runtime_recovery(context: BotContext) -> None:
     context.logger.info("Recovery | clearing transient workflow state")
+    if context.hunt_progress_recovery is not None:
+        context.hunt_progress_recovery.reset()
     reset_workflow = getattr(context.planner, "reset_workflow", None)
     if callable(reset_workflow):
         reset_workflow()

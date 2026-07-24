@@ -130,6 +130,7 @@ class RecoveryConfig:
     enabled: bool = True
     black_screen_timeout_seconds: float = 45.0
     black_mean_threshold: float = 2.0
+    no_hunt_progress_timeout_seconds: float = 180.0
     restart_cooldown_seconds: float = 90.0
     launch_wait_seconds: float = 15.0
     package: str = "com.mondayoff.dinomutant"
@@ -372,6 +373,9 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
             black_mean_threshold=float(
                 recovery_data.get("black_mean_threshold", 2)
             ),
+            no_hunt_progress_timeout_seconds=float(
+                recovery_data.get("no_hunt_progress_timeout_seconds", 180)
+            ),
             restart_cooldown_seconds=float(
                 recovery_data.get("restart_cooldown_seconds", 90)
             ),
@@ -438,6 +442,10 @@ def _validate(config: AppConfig) -> None:
         raise ConfigError("recovery.black_screen_timeout_seconds must be greater than zero")
     if not 0 <= config.recovery.black_mean_threshold <= 255:
         raise ConfigError("recovery.black_mean_threshold must be between 0 and 255")
+    if config.recovery.no_hunt_progress_timeout_seconds < 0:
+        raise ConfigError(
+            "recovery.no_hunt_progress_timeout_seconds cannot be negative"
+        )
     if config.recovery.restart_cooldown_seconds < 0:
         raise ConfigError("recovery.restart_cooldown_seconds cannot be negative")
     if config.recovery.launch_wait_seconds < 0:

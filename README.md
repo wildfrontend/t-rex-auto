@@ -38,7 +38,7 @@ Feature 方式加入，不需要修改核心狀態機。
 - macOS 使用 `caffeinate` 在 Bot 執行期間防止系統睡眠，仍允許螢幕休眠。
 - Windows 與 macOS 都使用 ADB framebuffer，不需要搶走滑鼠或鍵盤焦點。
 - 使用者只需雙擊 `start-bot.cmd`；啟動器會先檢查 Python、ADB、素材及畫面擷取。
-- Windows 啟動介面可直接選擇 MuMu、BlueStacks 或自訂 ADB 裝置，並支援 MuMu 多開 Port。
+- Windows 啟動介面只需輸入模擬器顯示的 ADB Port，品牌與多開方式不受限制。
 - 一個視窗顯示原始即時 LOG，另一個繁體中文互動視窗提供統計、調速、重啟與診斷工具。
 - `127.0.0.1:8765` 提供結構化狀態與白名單停止接口，讓同一台電腦上的 AI 安全操作。
 - Repository 內附 `.agents/skills/control-dino-bot`，限制 AI 使用固定接口與控制命令。
@@ -97,6 +97,8 @@ Windows 預設使用 MuMu Player，也可切換 BlueStacks 5；macOS 使用 Blue
 - 右上角同時派出隊伍為 `10/10` 時不再選目標，等待 5 分鐘後重試。
 - 出現「目標太強了，你會輸」時關閉狩獵視窗並等待 5 分鐘。
 - Unity 畫面持續全黑 45 秒時只重啟遊戲 App；短暫轉場不處理，且有 90 秒重啟冷卻。
+- 連續 180 秒沒有狩獵進度時重啟遊戲 App；隊伍滿額、沒有可用恐龍、過強冷卻、
+  信箱及登入流程不計入異常停滯。
 - 黑畫面不會被當成「按鈕消失」或像素變化成功，避免重複點擊與虛假狩獵計數。
 - 遊戲重啟後可優先處理重複登入、不同設備歷史記錄與啟動優惠提示。
 - 自動關閉「自動成長結果」及其後續「自動戰鬥」快捷視窗，再回到採集地圖。
@@ -204,9 +206,10 @@ macOS 只支援 `capture.backend: "adb"`；`mss` 視窗擷取仍是 Windows 專�
    將 `config.json` 的 `adb.serial` 改成該值。
 4. 保持模擬器運行，遊戲設為直向 `900 × 1600`。
 
-雙擊 `start-bot.cmd` 後會顯示模擬器選單。選擇 MuMu 時可直接按 Enter 使用
-`7555`，或輸入多開器顯示的 Port；只輸入數字時會自動組成
-`127.0.0.1:<Port>`。選擇結果會保存到 `config.json`。
+雙擊 `start-bot.cmd` 後，輸入模擬器設定／診斷頁面顯示的 ADB Port；例如輸入
+`16384` 會自動組成 `127.0.0.1:16384`。品牌不影響 ADB 背景操作。選擇結果會保存
+到根目錄的 `user-settings.json`，下次啟動直接按 Enter 即可沿用；更新 `app`
+內容時也會自動套回。
 
 專案預設使用：
 
@@ -219,10 +222,9 @@ MuMu 舊版內建 ADB 也會自動尋找
 `C:\Program Files (x86)\Nemu\vmonitor\bin\adb_server.exe`。官方操作說明見
 [MuMu Player 開發者必備手冊](https://www.mumuplayer.com/tw/help/win/developers-essentials-manual.html)。
 
-要切回 BlueStacks，只需將 `emulator` 改為 `bluestacks`，profile 會套用
-`127.0.0.1:5555` 等預設。若自行加入了 `capture.window_titles`、
-`capture.process_names` 或 `adb.serial`，這些明確設定會優先。多開實例一律以
-模擬器顯示的 ADB port 為準。
+MuMu、BlueStacks 或其他模擬器都使用相同流程，多開實例一律以模擬器顯示的 ADB
+Port 為準。`emulator` profile 仍可供手動設定預設值，但使用互動啟動器時不必選擇
+品牌。
 
 ### Windows runtime
 
@@ -232,6 +234,14 @@ MuMu 舊版內建 ADB 也會自動尋找
 powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -File scripts\install-windows-runtime.ps1
 ```
+
+發佈包分為兩種：
+
+- `Lite`：內附 Bot 與官方 Android Platform-Tools；首次啟動需連線下載 Python 與
+  OpenCV 等套件。
+- `Portable`：另外內附完整 Windows Python 與所有相依套件；解壓後可直接執行。
+
+兩種版本都不依賴使用者預先安裝 ADB，只需輸入模擬器顯示的 ADB Port。
 
 ### 從 WSL 部署
 
@@ -499,10 +509,12 @@ D:\DinoMutantBot\python\python.exe `
 - `planner.action_cooldowns_ms.target_too_strong`: 過強目標關閉並驗證成功後的
   可中斷冷卻，預設 `300000` ms（5 分鐘）。
 - `recovery.black_screen_timeout_seconds`: 持續黑畫面多久後重啟遊戲，預設 `45` 秒。
+- `recovery.no_hunt_progress_timeout_seconds`: 找不到任何狩獵進度多久後重啟遊戲 App，
+  預設 `180` 秒；設為 `0` 可停用。
 - `recovery.restart_cooldown_seconds`: 兩次遊戲重啟的最短間隔，預設 `90` 秒。
 - `workflow.max_cycles`: 完整「狩獵、信箱收取、關閉」流程次數；`0` 代表持續執行。
 
-Bot 執行期間可在中文控制介面按 `M` 更換模擬器。新設定會先接受完整環境檢查；
+Bot 執行期間可在中文控制介面按 `M` 更換 ADB Port。新設定會先接受完整環境檢查；
 通過後才重啟 Bot，失敗則自動還原設定並讓目前 Bot 繼續執行。
 
 ## 背景執行

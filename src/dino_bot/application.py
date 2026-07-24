@@ -21,7 +21,7 @@ from .logging import configure_logging
 from .models import ActionKind
 from .modes import create_mode
 from .planning import HuntPlanner
-from .recovery import AdbAppRestarter, BlackScreenRecovery
+from .recovery import AdbAppRestarter, BlackScreenRecovery, HuntProgressWatchdog
 from .verification import TargetChangedVerifier
 
 
@@ -109,6 +109,7 @@ def create_engine(config: AppConfig, *, verbose: bool = False) -> BotEngine:
         training_max_images=config.training.max_images,
     )
     runtime_recovery = None
+    hunt_progress_recovery = None
     if config.recovery.enabled:
         runtime_recovery = BlackScreenRecovery(
             AdbAppRestarter(
@@ -121,6 +122,11 @@ def create_engine(config: AppConfig, *, verbose: bool = False) -> BotEngine:
             mean_threshold=config.recovery.black_mean_threshold,
             cooldown_seconds=config.recovery.restart_cooldown_seconds,
             launch_wait_seconds=config.recovery.launch_wait_seconds,
+        )
+        hunt_progress_recovery = HuntProgressWatchdog(
+            runtime_recovery,
+            logger,
+            timeout_seconds=config.recovery.no_hunt_progress_timeout_seconds,
         )
     context = BotContext(
         capture_provider=capture,
@@ -143,6 +149,7 @@ def create_engine(config: AppConfig, *, verbose: bool = False) -> BotEngine:
         max_cycles=config.workflow.max_cycles,
         cycle_complete_targets=config.workflow.complete_on,
         runtime_recovery=runtime_recovery,
+        hunt_progress_recovery=hunt_progress_recovery,
     )
     return BotEngine(context)
 
