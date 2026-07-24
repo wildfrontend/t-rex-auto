@@ -445,7 +445,7 @@ class HuntCapacityDetector:
             else Path(__file__).resolve().parents[2]
             / "assets"
             / "templates"
-            / "map-center-egg.png"
+            / "map-center-egg-anchor.png"
         )
         self.anchor_template = cv2.imread(str(template_path), cv2.IMREAD_COLOR)
         if self.anchor_template is None:

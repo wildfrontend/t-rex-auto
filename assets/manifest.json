@@ -85,10 +85,10 @@
     {
       "type": "map_center_egg",
       "file": "templates/map-center-egg.png",
-      "threshold": 0.65,
+      "threshold": 0.75,
       "click_offset": [
-        26,
-        29
+        48,
+        35
       ]
     },
     {
