@@ -6,8 +6,8 @@
 目前完成 Auto Hunt MVP：辨識恐龍、選擇最大隊伍、發動狩獵並驗證結果。後續功能以
 Feature 方式加入，不需要修改核心狀態機。
 
-目前版本：`v0.2.2`。這一版讓完成狩獵後立即選擇下一個目標，並保留
-v0.2.1 的分階段辨識與連續操作：
+目前版本：`v0.2.3`。這一版排除中央蛋附近的恐龍誤判，並改善地圖與信箱
+轉場的驗證穩定度：
 
 - macOS 雙擊 `start-bot.command` 會先部署到 `.runtime-macos/app`，再從獨立副本啟動。
 - 動作後每 100–250 ms 檢查下一個 UI；成功時立即繼續，不必等滿固定秒數。
@@ -15,6 +15,8 @@ v0.2.1 的分階段辨識與連續操作：
 - 已確認的「恐龍 → 狩獵 → 確認」可沿用同一驗證畫面，省去重複截圖及完整掃描。
 - 確認狩獵回到地圖後直接沿用該畫面選下一隻，不等待隊伍回程或再次完整掃描。
 - 點恐龍未進入狩獵畫面時立即釋放等待狀態，直接尋找下一個安全目標。
+- 中央蛋周圍 50px 不會被選為恐龍，避免重複點擊固定畫面中心。
+- 地圖與信箱按鈕使用 2.5–3 秒最大轉場時間，畫面提早就緒仍立即繼續。
 - 轉場上限從第一個辨識結果開始計算，避免辨識本身耗時造成虛假失敗。
 - Capture、Detect 與 Verify 日誌會記錄實際耗時，方便繼續定位效能瓶頸。
 - `fast`、`safe` 的所有延遲與輪詢速度都集中在 `config.json` 的 `speed_profiles`。
@@ -452,6 +454,7 @@ D:\DinoMutantBot\python\python.exe `
 - `max_actions`: `0` 代表不限，用於 Debug 時建議先設為 `1`。
 - `planner.recenter_every`: 完成多少次狩獵後重返主頁並重新置中，預設 `10`。
 - `planner.own_path_radius`: 藍色虛線周圍的禁點半徑，預設 `90` px。
+- `planner.anchor_exclusion_radius`: 中央蛋周圍不選恐龍的半徑，預設 `50` px。
 - `planner.mail_after_hunts`: 累積多少次狩獵後收取信箱，預設 `30`。
 - `planner.capacity_wait_seconds`: 同時派出隊伍達 `10/10` 時的等待秒數，預設
   `300` 秒。
@@ -459,6 +462,8 @@ D:\DinoMutantBot\python\python.exe `
   畫面改變的最長時間，預設 `300` ms。
 - `post_action_delays.target_too_strong`: 關閉過強目標視窗的轉場上限，預設
   `3000` ms。
+- `post_action_delays.map_exit_nest_button`、`forest_recenter_button` 與信箱流程：
+  地圖／信箱動畫的最大轉場時間，預設 `2500–3000` ms。
 - `planner.action_cooldowns_ms.target_too_strong`: 過強目標關閉並驗證成功後的
   可中斷冷卻，預設 `300000` ms（5 分鐘）。
 - `recovery.black_screen_timeout_seconds`: 持續黑畫面多久後重啟遊戲，預設 `45` 秒。

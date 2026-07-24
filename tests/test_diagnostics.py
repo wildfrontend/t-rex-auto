@@ -57,7 +57,7 @@ def test_diagnostic_bundle_contains_sanitized_evidence(tmp_path: Path) -> None:
         "settings.json",
         "logs/recent.log",
     } <= names
-    assert manifest["bot_version"] == "0.2.2"
+    assert manifest["bot_version"] == "0.2.3"
     assert manifest["snapshot_included"] is False
     assert status["successful_hunts"] == 1
     assert settings["root"] == "<app-root>"

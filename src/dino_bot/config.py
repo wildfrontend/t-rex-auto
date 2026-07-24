@@ -72,6 +72,7 @@ class PlannerConfig:
     history_limit: int = 500
     recenter_every: int = 10
     own_path_radius: float = 90.0
+    anchor_exclusion_radius: float = 50.0
     mail_after_hunts: int = 30
     capacity_wait_seconds: float = 300.0
     ring_width: float = 150.0
@@ -275,6 +276,9 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
             history_limit=int(planner_data.get("history_limit", 500)),
             recenter_every=int(planner_data.get("recenter_every", 10)),
             own_path_radius=float(planner_data.get("own_path_radius", 90)),
+            anchor_exclusion_radius=float(
+                planner_data.get("anchor_exclusion_radius", 50)
+            ),
             mail_after_hunts=int(planner_data.get("mail_after_hunts", 30)),
             capacity_wait_seconds=float(
                 planner_data.get("capacity_wait_seconds", 300)
@@ -395,6 +399,8 @@ def _validate(config: AppConfig) -> None:
         raise ConfigError("recovery package/activity cannot be empty")
     if config.planner.own_path_radius < 0:
         raise ConfigError("planner.own_path_radius cannot be negative")
+    if config.planner.anchor_exclusion_radius < 0:
+        raise ConfigError("planner.anchor_exclusion_radius cannot be negative")
     if config.planner.mail_after_hunts <= 0:
         raise ConfigError("planner.mail_after_hunts must be greater than zero")
     if config.planner.capacity_wait_seconds < 0:

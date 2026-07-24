@@ -75,7 +75,22 @@ def test_project_config_uses_short_no_available_verification_delay() -> None:
 
     assert config.post_action_delays["no_available_dinosaurs"] == 300
     assert config.post_action_delays["target_too_strong"] == 3000
+    assert config.post_action_delays["map_exit_nest_button"] == 2500
+    assert config.post_action_delays["forest_recenter_button"] == 3000
+    assert config.post_action_delays["mailbox_button"] == 2500
+    assert config.planner.anchor_exclusion_radius == 50
     assert config.planner.action_cooldowns_ms["target_too_strong"] == 300_000
+
+
+def test_config_rejects_negative_anchor_exclusion_radius(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.json"
+    config_file.write_text(
+        json.dumps({"planner": {"anchor_exclusion_radius": -1}}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="anchor_exclusion_radius"):
+        load_config(config_file)
 
 
 def test_cli_fast_speed_profile_reduces_hunt_delays() -> None:
@@ -424,6 +439,25 @@ def test_hunt_planner_never_clicks_dinosaur_in_bottom_ui() -> None:
         frame,
         [anchor, bottom_ui_false_positive],
     ) is None
+
+
+def test_hunt_planner_excludes_false_dinosaur_on_center_egg() -> None:
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(
+        ("dinosaur",),
+        anchor_exclusion_radius=50,
+        safe_margin=80,
+    )
+    anchor = Detection("map_center_egg", 450, 800, 1.0)
+    egg_false_positive = Detection("dinosaur", 452, 820, 0.99)
+    safe_dinosaur = Detection("dinosaur", 510, 820, 0.85)
+
+    target = planner.choose(
+        frame,
+        [anchor, egg_false_positive, safe_dinosaur],
+    )
+
+    assert target is not None and (target.x, target.y) == (510, 820)
 
 
 def test_hunt_planner_waits_when_all_dinosaurs_are_on_own_blue_path() -> None:

@@ -146,6 +146,7 @@ class HuntPlanner(TargetPlanner):
         ),
         own_path_types: Sequence[str] = ("own_hunt_path",),
         own_path_radius: float = 90.0,
+        anchor_exclusion_radius: float = 50.0,
         recenter_every: int = 10,
         mail_after_hunts: int = 30,
         mailbox_type: str = "mailbox_button",
@@ -176,6 +177,7 @@ class HuntPlanner(TargetPlanner):
         self.interrupt_button_types = frozenset(interrupt_button_types)
         self.own_path_types = frozenset(own_path_types)
         self.own_path_radius = max(0.0, own_path_radius)
+        self.anchor_exclusion_radius = max(0.0, anchor_exclusion_radius)
         self.recenter_every = max(1, recenter_every)
         self.mail_after_hunts = max(1, mail_after_hunts)
         self.mailbox_type = mailbox_type
@@ -630,6 +632,8 @@ class HuntPlanner(TargetPlanner):
                 and self.safe_margin
                 <= anchor_y + frame.height / 2 - item.y
                 <= frame.height - self.safe_margin
+                and hypot(item.x - anchor_x, item.y - anchor_y)
+                > self.anchor_exclusion_radius
                 and all(
                     hypot(item.x - marker.x, item.y - marker.y)
                     > self.own_path_radius
