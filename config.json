@@ -104,6 +104,9 @@
     "ring_width": 150,
     "own_path_angle_degrees": 7,
     "stalled_recenter_frames": 8,
+    "map_settle_frames": 2,
+    "map_settle_tolerance_px": 20,
+    "map_settle_max_frames": 12,
     "bottom_exclusion_px": 180,
     "action_cooldowns_ms": {
       "target_too_strong": 300000

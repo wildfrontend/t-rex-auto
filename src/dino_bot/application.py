@@ -86,6 +86,9 @@ def create_engine(config: AppConfig, *, verbose: bool = False) -> BotEngine:
         ring_width=config.planner.ring_width,
         own_path_angle_degrees=config.planner.own_path_angle_degrees,
         stalled_recenter_frames=config.planner.stalled_recenter_frames,
+        map_settle_frames=config.planner.map_settle_frames,
+        map_settle_tolerance_px=config.planner.map_settle_tolerance_px,
+        map_settle_max_frames=config.planner.map_settle_max_frames,
         bottom_exclusion_px=config.planner.bottom_exclusion_px,
         action_cooldowns_ms=config.planner.action_cooldowns_ms,
     )
