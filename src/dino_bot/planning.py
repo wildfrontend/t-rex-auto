@@ -678,6 +678,26 @@ class HuntPlanner(TargetPlanner):
                 ]
                 if forest:
                     return super().choose(frame, forest)
+                has_hunt_control = any(
+                    item.type in self.hunt_button_types for item in detections
+                )
+                has_map_landmark = any(
+                    item.type in {self.map_exit_type, self.mailbox_type}
+                    for item in detections
+                )
+                has_dinosaur = any(
+                    item.type == self.dinosaur_type for item in detections
+                )
+                if has_map_landmark and has_dinosaur and not has_hunt_control:
+                    # The forest transition succeeded, but the animated egg
+                    # anchor can miss template matching. The forest action
+                    # guarantees a centered map, so retain a safe synthetic
+                    # center instead of waiting forever in recenter stage 2.
+                    self.clear_history()
+                    self._recenter_stage = 0
+                    self._last_anchor = (frame.width / 2, frame.height / 2)
+                    self._map_idle_frames = 0
+                    return None
             return super().choose(frame, anchors)
 
         has_hunt_control = any(
