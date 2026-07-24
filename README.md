@@ -1,6 +1,6 @@
 # Dino Mutant Bot
 
-以 BlueStacks 5 為執行環境的可擴充 Python Bot Framework。核心採用
+支援 MuMu Player 與 BlueStacks 的可擴充 Python Bot Framework。核心採用
 `Sense → Think → Act → Verify` 回饋循環，不依賴錄製 Macro。
 
 目前完成 Auto Hunt MVP：辨識恐龍、選擇最大隊伍、發動狩獵並驗證結果。後續功能以
@@ -38,6 +38,7 @@ Feature 方式加入，不需要修改核心狀態機。
 - macOS 使用 `caffeinate` 在 Bot 執行期間防止系統睡眠，仍允許螢幕休眠。
 - Windows 與 macOS 都使用 ADB framebuffer，不需要搶走滑鼠或鍵盤焦點。
 - 使用者只需雙擊 `start-bot.cmd`；啟動器會先檢查 Python、ADB、素材及畫面擷取。
+- Windows 啟動介面可直接選擇 MuMu、BlueStacks 或自訂 ADB 裝置，並支援 MuMu 多開 Port。
 - 一個視窗顯示原始即時 LOG，另一個繁體中文互動視窗提供統計、調速、重啟與診斷工具。
 - `127.0.0.1:8765` 提供結構化狀態與白名單停止接口，讓同一台電腦上的 AI 安全操作。
 - Repository 內附 `.agents/skills/control-dino-bot`，限制 AI 使用固定接口與控制命令。
@@ -54,7 +55,7 @@ Feature 方式加入，不需要修改核心狀態機。
 
 ```text
 Windows
-  ├─ BlueStacks 5
+  ├─ MuMu Player（目前預設）或 BlueStacks 5
   ├─ 可攜式 Python 3.12 runtime
   └─ PowerShell 啟動／控制器
 
@@ -68,12 +69,12 @@ macOS（Apple Silicon）
   └─ Android SDK adb 執行 tap/swipe/long press
 ```
 
-Windows 使用 BlueStacks 5；macOS 使用 BlueStacks Air。WSL 只用於 Windows 版的
+Windows 預設使用 MuMu Player，也可切換 BlueStacks 5；macOS 使用 BlueStacks Air。WSL 只用於 Windows 版的
 原始碼與離線測試，不執行 BlueStacks。
 
 ## 已完成項目
 
-- BlueStacks 視窗自動尋找：支援視窗標題及 `HD-Player.exe` 程序辨識。
+- 模擬器視窗自動尋找：內建 MuMu Player 與 BlueStacks 視窗／程序 profile。
 - MSS 指定客戶區域擷取：畫面以 BGR `numpy.ndarray` 留在 RAM。
 - ADB framebuffer 擷取備援。
 - OpenCV Template Matching（支援單一素材多尺寸比對）、HSV 輪廓偵測與 NMS。
@@ -195,20 +196,33 @@ python3 scripts/control-macos.py restart --speed fast --confirm
 
 macOS 只支援 `capture.backend: "adb"`；`mss` 視窗擷取仍是 Windows 專用。
 
-### Windows：BlueStacks 5
+### Windows：MuMu Player（預設）
 
-1. 啟動 BlueStacks 5。
-2. 開啟「設定 → 進階」。
-3. 啟用「Android 調試橋（ADB）」。
-4. 確認畫面顯示 `127.0.0.1:5555`。
-5. 保持 BlueStacks 視窗開啟且不要最小化。
+1. 啟動 MuMu Player 與 Dino Mutant。
+2. 在 MuMu 多開器或問題診斷中確認該實例的 ADB port。
+3. 單一預設實例通常可使用 `127.0.0.1:7555`；若畫面顯示其他 port，
+   將 `config.json` 的 `adb.serial` 改成該值。
+4. 保持模擬器運行，遊戲設為直向 `900 × 1600`。
+
+雙擊 `start-bot.cmd` 後會顯示模擬器選單。選擇 MuMu 時可直接按 Enter 使用
+`7555`，或輸入多開器顯示的 Port；只輸入數字時會自動組成
+`127.0.0.1:<Port>`。選擇結果會保存到 `config.json`。
 
 專案預設使用：
 
 ```text
 C:\Users\Louis\AppData\Local\Android\Sdk\platform-tools\adb.exe
-127.0.0.1:5555
+127.0.0.1:7555
 ```
+
+MuMu 舊版內建 ADB 也會自動尋找
+`C:\Program Files (x86)\Nemu\vmonitor\bin\adb_server.exe`。官方操作說明見
+[MuMu Player 開發者必備手冊](https://www.mumuplayer.com/tw/help/win/developers-essentials-manual.html)。
+
+要切回 BlueStacks，只需將 `emulator` 改為 `bluestacks`，profile 會套用
+`127.0.0.1:5555` 等預設。若自行加入了 `capture.window_titles`、
+`capture.process_names` 或 `adb.serial`，這些明確設定會優先。多開實例一律以
+模擬器顯示的 ADB port 為準。
 
 ### Windows runtime
 
@@ -452,7 +466,9 @@ D:\DinoMutantBot\python\python.exe `
 
 ## 設定重點
 
-- `capture.backend`: `adb` 不搶 focus；`mss` 較快但會把 BlueStacks 拉到前景。
+- `emulator`: `mumu`、`bluestacks` 或 `custom`；提供 ADB、視窗標題與程序預設。
+- `adb.serial`: 模擬器實例的實際 ADB 位址；MuMu 多開時需填該實例顯示的 port。
+- `capture.backend`: `adb` 不搶 focus；`mss` 較快但會把模擬器拉到前景。
 - `planner.stalled_recenter_frames`: 連續多少幀沒有安全目標後重置視野，預設 8。
 - `planner.map_settle_frames`、`map_settle_tolerance_px`、`map_settle_max_frames`：狩獵確認後，中央蛋或恐龍位置需連續穩定的幀數、允許位移，以及最長等待幀數；預設為 `2`、`20`、`12`。
 - `capture.viewport`: Android 畫面在 BlueStacks client 內的 `[x,y,width,height]`；
@@ -486,10 +502,13 @@ D:\DinoMutantBot\python\python.exe `
 - `recovery.restart_cooldown_seconds`: 兩次遊戲重啟的最短間隔，預設 `90` 秒。
 - `workflow.max_cycles`: 完整「狩獵、信箱收取、關閉」流程次數；`0` 代表持續執行。
 
+Bot 執行期間可在中文控制介面按 `M` 更換模擬器。新設定會先接受完整環境檢查；
+通過後才重啟 Bot，失敗則自動還原設定並讓目前 Bot 繼續執行。
+
 ## 背景執行
 
-預設使用 ADB framebuffer，因此 Bot 不使用滑鼠，也不需要 BlueStacks 是前景視窗；
-可以讓其他視窗蓋住 BlueStacks並正常使用電腦。Windows 可以鎖定或關閉螢幕，
+預設使用 ADB framebuffer，因此 Bot 不使用滑鼠，也不需要模擬器是前景視窗；
+可以讓其他視窗蓋住模擬器並正常使用電腦。Windows 可以鎖定或關閉螢幕，
 但不能進入睡眠或休眠，否則 Python、BlueStacks 與 ADB 都會暫停。
 
 ## 測試

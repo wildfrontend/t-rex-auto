@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 
 from .actions import AdbActionDriver, AdbClient
-from .capture import AdbScreencapCapture, MssBlueStacksCapture
+from .capture import AdbScreencapCapture, MssEmulatorCapture
 from .config import AppConfig
 from .detection import (
     CompositeDetector,
@@ -44,7 +44,7 @@ def create_engine(config: AppConfig, *, verbose: bool = False) -> BotEngine:
     if config.capture.backend == "adb":
         capture = AdbScreencapCapture(adb)
     else:
-        capture = MssBlueStacksCapture(
+        capture = MssEmulatorCapture(
             config.capture.window_titles,
             process_names=config.capture.process_names,
             viewport=config.capture.viewport,

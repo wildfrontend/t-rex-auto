@@ -9,7 +9,7 @@ import time
 from dataclasses import dataclass
 
 from .actions import AdbClient
-from .capture import AdbScreencapCapture, BlueStacksWindowFinder, MssBlueStacksCapture
+from .capture import AdbScreencapCapture, EmulatorWindowFinder, MssEmulatorCapture
 from .config import AppConfig
 from .detection import OpenCvDetector
 
@@ -72,22 +72,23 @@ def run_checks(config: AppConfig) -> list[Check]:
     try:
         adb = AdbClient(config.adb)
         checks.append(Check("ADB executable", True, adb.executable))
-        devices = adb.devices()
-        ready = [item for item in devices if item.state == "device"]
-        checks.append(
-            Check("ADB device", bool(ready), ", ".join(item.serial for item in ready) or "none")
-        )
     except Exception as exc:
-        checks.append(Check("ADB", False, str(exc)))
+        checks.append(Check("ADB executable", False, str(exc)))
+    else:
+        try:
+            device = adb.ensure_ready()
+            checks.append(Check("ADB device", True, device.serial))
+        except Exception as exc:
+            checks.append(Check("ADB device", False, str(exc)))
     if operating_system == "Windows":
         try:
-            hwnd = BlueStacksWindowFinder(
+            hwnd = EmulatorWindowFinder(
                 config.capture.window_titles,
                 config.capture.process_names,
             ).find()
-            checks.append(Check("BlueStacks window", True, f"HWND={hwnd}"))
+            checks.append(Check(f"{config.emulator} window", True, f"HWND={hwnd}"))
         except Exception as exc:
-            checks.append(Check("BlueStacks window", False, str(exc)))
+            checks.append(Check(f"{config.emulator} window", False, str(exc)))
     return checks
 
 
@@ -97,7 +98,7 @@ def benchmark_capture(config: AppConfig, frame_count: int = 100) -> tuple[float,
         adb.ensure_ready()
         capture = AdbScreencapCapture(adb)
     else:
-        capture = MssBlueStacksCapture(
+        capture = MssEmulatorCapture(
             config.capture.window_titles,
             config.capture.process_names,
             config.capture.viewport,

@@ -31,6 +31,24 @@ DEFAULT_SPEED_PROFILES: dict[str, dict[str, int]] = {
     },
 }
 
+EMULATOR_PROFILES: dict[str, dict[str, object]] = {
+    "bluestacks": {
+        "serial": "127.0.0.1:5555",
+        "window_titles": ("BlueStacks App Player", "BlueStacks"),
+        "process_names": ("HD-Player.exe",),
+    },
+    "mumu": {
+        "serial": "127.0.0.1:7555",
+        "window_titles": ("MuMuPlayer", "MuMu Player", "MuMu模擬器", "MuMu模拟器"),
+        "process_names": ("MuMuPlayer.exe", "NemuPlayer.exe", "MuMuNxDevice.exe"),
+    },
+    "custom": {
+        "serial": None,
+        "window_titles": (),
+        "process_names": (),
+    },
+}
+
 
 def _default_speed_profiles() -> dict[str, dict[str, int]]:
     return {name: dict(values) for name, values in DEFAULT_SPEED_PROFILES.items()}
@@ -121,6 +139,7 @@ class RecoveryConfig:
 @dataclass(frozen=True, slots=True)
 class AppConfig:
     root: Path
+    emulator: Literal["bluestacks", "mumu", "custom"] = "bluestacks"
     mode: Literal["runtime", "debug", "training"] = "runtime"
     debug: bool = False
     capture_fps: float = 10.0
@@ -181,6 +200,11 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
         raise ConfigError("Config root must be a JSON object")
 
     root = config_path.parent
+    emulator = str(data.get("emulator", "bluestacks")).lower()
+    if emulator not in EMULATOR_PROFILES:
+        supported = ", ".join(EMULATOR_PROFILES)
+        raise ConfigError(f"emulator must be one of: {supported}")
+    emulator_profile = EMULATOR_PROFILES[emulator]
     capture_data = _section(data, "capture")
     adb_data = _section(data, "adb")
     detector_data = _section(data, "detector")
@@ -230,6 +254,7 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
 
     config = AppConfig(
         root=root,
+        emulator=emulator,  # type: ignore[arg-type]
         mode=mode,  # type: ignore[arg-type]
         debug=bool(data.get("debug", False)),
         capture_fps=float(data.get("capture_fps", 10)),
@@ -250,15 +275,19 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
         max_actions=int(data.get("max_actions", 0)),
         capture=CaptureConfig(
             backend=backend,  # type: ignore[arg-type]
-            window_titles=tuple(capture_data.get("window_titles", ["BlueStacks"])),
-            process_names=tuple(capture_data.get("process_names", ["HD-Player.exe"])),
+            window_titles=tuple(
+                capture_data.get("window_titles", emulator_profile["window_titles"])
+            ),
+            process_names=tuple(
+                capture_data.get("process_names", emulator_profile["process_names"])
+            ),
             viewport=viewport,  # type: ignore[arg-type]
             auto_viewport=auto_viewport,
             chrome_insets=chrome_insets,  # type: ignore[arg-type]
         ),
         adb=AdbConfig(
             executable=adb_data.get("executable"),
-            serial=adb_data.get("serial"),
+            serial=adb_data.get("serial", emulator_profile["serial"]),
             connect_on_start=bool(adb_data.get("connect_on_start", True)),
             timeout=float(adb_data.get("timeout", 5.0)),
         ),

@@ -73,6 +73,9 @@ def test_config_enforces_training_collection_limits(
 def test_project_config_uses_short_no_available_verification_delay() -> None:
     config = load_config(Path(__file__).resolve().parents[1] / "config.json")
 
+    assert config.emulator == "mumu"
+    assert config.adb.serial == "127.0.0.1:7555"
+    assert "MuMuPlayer" in config.capture.window_titles
     assert config.post_action_delays["no_available_dinosaurs"] == 300
     assert config.post_action_delays["target_too_strong"] == 3000
     assert config.post_action_delays["map_exit_nest_button"] == 2500
@@ -252,6 +255,48 @@ def test_adb_client_discovers_android_sdk_on_macos(
     monkeypatch.setattr("dino_bot.actions.sys.platform", "darwin")
 
     assert AdbClient._resolve_executable(None) == str(adb)
+
+
+def test_mumu_profile_supplies_connection_and_window_defaults(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.json"
+    config_file.write_text(json.dumps({"emulator": "mumu"}), encoding="utf-8")
+
+    config = load_config(config_file)
+
+    assert config.adb.serial == "127.0.0.1:7555"
+    assert "MuMuPlayer" in config.capture.window_titles
+    assert "NemuPlayer.exe" in config.capture.process_names
+
+
+def test_emulator_profile_allows_instance_specific_overrides(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.json"
+    config_file.write_text(
+        json.dumps(
+            {
+                "emulator": "mumu",
+                "adb": {"serial": "127.0.0.1:16656"},
+                "capture": {
+                    "window_titles": ["Dino instance"],
+                    "process_names": ["custom-player.exe"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_config(config_file)
+
+    assert config.adb.serial == "127.0.0.1:16656"
+    assert config.capture.window_titles == ("Dino instance",)
+    assert config.capture.process_names == ("custom-player.exe",)
+
+
+def test_config_rejects_unknown_emulator_profile(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.json"
+    config_file.write_text(json.dumps({"emulator": "unknown"}), encoding="utf-8")
+
+    with pytest.raises(ConfigError, match="emulator must be one of"):
+        load_config(config_file)
 
 
 def test_macos_supports_only_adb_capture() -> None:

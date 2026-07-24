@@ -1,4 +1,4 @@
-"""ADB transport and coordinate-aware BlueStacks action driver."""
+"""ADB transport and coordinate-aware Android emulator action driver."""
 
 from __future__ import annotations
 
@@ -56,6 +56,7 @@ class AdbClient:
             )
         candidates.extend(
             [
+                r"C:\Program Files (x86)\Nemu\vmonitor\bin\adb_server.exe",
                 r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
                 r"C:\Program Files\BlueStacks\HD-Adb.exe",
             ]
@@ -64,7 +65,8 @@ class AdbClient:
             if Path(candidate).is_file():
                 return str(Path(candidate))
         raise AdbError(
-            "ADB executable not found. Install Android Platform Tools or enable BlueStacks ADB."
+            "ADB executable not found. Install Android Platform Tools or configure the "
+            "ADB executable supplied by your emulator."
         )
 
     def _command(self, args: Sequence[str], use_serial: bool = True) -> list[str]:
@@ -131,7 +133,7 @@ class AdbClient:
             wanted = self.config.serial or "any device"
             raise AdbError(
                 f"No ready ADB device for {wanted}. "
-                "Enable Android Debug Bridge in BlueStacks settings."
+                "Enable ADB in the emulator and verify its configured port."
             )
         return ready[0]
 

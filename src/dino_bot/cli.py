@@ -13,7 +13,7 @@ import cv2
 from .actions import AdbClient
 from .application import create_engine
 from .assets import AssetToolError, create_template
-from .capture import AdbScreencapCapture, MssBlueStacksCapture
+from .capture import AdbScreencapCapture, MssEmulatorCapture
 from .config import DEFAULT_SPEED_PROFILES, AppConfig, ConfigError, load_config
 from .diagnostics import create_diagnostic_bundle, default_diagnostic_output
 from .doctor import benchmark_capture, run_checks
@@ -101,7 +101,7 @@ def _capture_once(config: AppConfig):
         adb.ensure_ready()
         provider = AdbScreencapCapture(adb)
     else:
-        provider = MssBlueStacksCapture(
+        provider = MssEmulatorCapture(
             config.capture.window_titles,
             config.capture.process_names,
             config.capture.viewport,
