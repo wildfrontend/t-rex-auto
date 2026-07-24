@@ -29,6 +29,15 @@ class TargetChangedVerifier:
         }
         self.black_mean_threshold = black_mean_threshold
 
+    def relevant_detection_types(self, target_type: str) -> frozenset[str]:
+        expected = self.success_transitions.get(target_type)
+        return frozenset(
+            {
+                *(expected or (target_type,)),
+                *self.failure_types,
+            }
+        )
+
     def verify(
         self,
         before: Frame,

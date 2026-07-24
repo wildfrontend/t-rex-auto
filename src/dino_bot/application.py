@@ -66,6 +66,7 @@ def create_engine(config: AppConfig, *, verbose: bool = False) -> BotEngine:
         TargetTooStrongDetector(),
         StartupGrowthResultDetector(),
         StartupAutoBattleDialogDetector(),
+        reference_size=open_cv_detector.reference_size,
     )
     planner = HuntPlanner(
         config.planner.target_types,
