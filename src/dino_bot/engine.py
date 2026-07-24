@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Protocol
@@ -53,6 +55,7 @@ class BotContext:
     post_action_delays_ms: dict[str, int] = field(default_factory=dict)
     target_action_kinds: dict[str, ActionKind] = field(default_factory=dict)
     idle_delay_ms: int = 500
+    transition_poll_interval_ms: int = 250
     verify_retries: int = 3
     max_actions: int = 0
     max_cycles: int = 0
@@ -61,6 +64,7 @@ class BotContext:
     state: BotState = BotState.IDLE
     stop_requested: bool = False
     stop_event: threading.Event = field(default_factory=threading.Event, repr=False)
+    clock: Callable[[], float] = field(default=time.monotonic, repr=False)
     frame: Frame | None = None
     detections: list[Detection] = field(default_factory=list)
     target: Target | None = None
@@ -73,6 +77,7 @@ class BotContext:
     attempt: int = 0
     action_count: int = 0
     cycle_count: int = 0
+    verification_deadline: float | None = None
 
 
 class StateHandler(Protocol):
@@ -139,7 +144,17 @@ class PlanningState:
         context.target = context.planner.choose(context.frame, context.detections)
         if context.target is None:
             context.logger.debug("Planning | no actionable target")
-            if context.idle_delay_ms and _wait_for_delay(context, context.idle_delay_ms):
+            delay_ms = context.idle_delay_ms
+            next_ready_delay = getattr(context.planner, "next_ready_delay_ms", None)
+            if callable(next_ready_delay):
+                cooldown_ms = int(next_ready_delay())
+                if cooldown_ms > delay_ms:
+                    context.logger.info(
+                        "Planning | cooldown | remaining=%dms",
+                        cooldown_ms,
+                    )
+                delay_ms = max(delay_ms, cooldown_ms)
+            if delay_ms and _wait_for_delay(context, delay_ms):
                 return BotState.STOPPED
             return BotState.IDLE
         action_kind = context.target_action_kinds.get(
@@ -188,13 +203,19 @@ class ActionState:
             context.target.type,
             context.click_delay_ms,
         )
-        if delay_ms:
+        context.verification_deadline = context.clock() + max(0, delay_ms) / 1000
+        initial_poll_ms = min(
+            max(0, delay_ms),
+            max(1, context.transition_poll_interval_ms),
+        )
+        if initial_poll_ms:
             context.logger.debug(
-                "Action | wait %dms before verification | target=%s",
-                delay_ms,
+                "Action | poll in %dms; transition timeout=%dms | target=%s",
+                initial_poll_ms,
+                max(0, delay_ms),
                 context.target.type,
             )
-            if _wait_for_delay(context, delay_ms):
+            if _wait_for_delay(context, initial_poll_ms):
                 context.logger.info("Stop | interrupted post-action wait")
                 return BotState.STOPPED
         return BotState.VERIFY
@@ -235,6 +256,27 @@ class VerifyState:
             after_detections,
         )
         context.last_result = result
+        explicit_failure = result.reason.startswith("failure indicator detected:")
+        deadline = context.verification_deadline
+        if (
+            not result.success
+            and not explicit_failure
+            and deadline is not None
+            and context.clock() < deadline
+        ):
+            now = context.clock()
+            remaining_ms = max(1, round((deadline - now) * 1000))
+            poll_ms = min(max(1, context.transition_poll_interval_ms), remaining_ms)
+            context.logger.debug(
+                "Verify | Pending | %s | poll=%dms | remaining=%dms",
+                result.reason,
+                poll_ms,
+                remaining_ms,
+            )
+            if _wait_for_delay(context, poll_ms):
+                return BotState.STOPPED
+            return BotState.VERIFY
+        context.verification_deadline = None
         record = ActionRecord(
             timestamp=utc_now(),
             action=context.action,
@@ -301,6 +343,7 @@ def _reset_after_runtime_recovery(context: BotContext) -> None:
     context.after_detections = []
     context.last_result = None
     context.attempt = 0
+    context.verification_deadline = None
 
 
 def _runtime_recovery_is_blocking(runtime_recovery: RuntimeRecovery) -> bool:

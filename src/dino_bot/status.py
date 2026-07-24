@@ -11,7 +11,8 @@ _LOG_LINE = re.compile(
     r"^(?P<time>\d{2}:\d{2}:\d{2}) \| (?P<level>[^|]+) \| (?P<message>.*)$"
 )
 _TIMING = re.compile(
-    r"Timing \| click=(?P<click>\d+)ms \| dinosaur=(?P<dinosaur>\d+)ms"
+    r"Timing \| (?:poll=(?P<poll>\d+)ms \| )?"
+    r"click=(?P<click>\d+)ms \| dinosaur=(?P<dinosaur>\d+)ms"
     r" \| hunt=(?P<hunt>\d+)ms \| confirm=(?P<confirm>\d+)ms"
     r" \| idle=(?P<idle>\d+)ms"
 )
@@ -68,6 +69,8 @@ def _latest_session(entries: list[dict[str, str]]) -> tuple[list[dict[str, str]]
                 "hunt_confirm_delay_ms": int(match.group("confirm")),
                 "idle_delay_ms": int(match.group("idle")),
             }
+            if match.group("poll") is not None:
+                timing["poll_interval_ms"] = int(match.group("poll"))
             break
     return (entries[start_index:] if start_index >= 0 else entries), timing
 

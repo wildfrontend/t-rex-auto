@@ -14,28 +14,11 @@ from .actions import AdbClient
 from .application import create_engine
 from .assets import AssetToolError, create_template
 from .capture import AdbScreencapCapture, MssBlueStacksCapture
-from .config import AppConfig, ConfigError, load_config
+from .config import DEFAULT_SPEED_PROFILES, AppConfig, ConfigError, load_config
 from .diagnostics import create_diagnostic_bundle, default_diagnostic_output
 from .doctor import benchmark_capture, run_checks
 from .status import build_runtime_status
 from .status_server import LocalStatusServer
-
-SPEED_PROFILES: dict[str, dict[str, int]] = {
-    "safe": {
-        "click_delay_ms": 1500,
-        "dinosaur_delay_ms": 1500,
-        "hunt_button_delay_ms": 5000,
-        "hunt_confirm_delay_ms": 3000,
-        "idle_delay_ms": 500,
-    },
-    "fast": {
-        "click_delay_ms": 300,
-        "dinosaur_delay_ms": 300,
-        "hunt_button_delay_ms": 900,
-        "hunt_confirm_delay_ms": 1200,
-        "idle_delay_ms": 250,
-    },
-}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -49,12 +32,13 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--max-cycles", type=int)
     run.add_argument("--batch-size", type=int)
     run.add_argument("--mail-after-hunts", type=int)
-    run.add_argument("--speed", choices=sorted(SPEED_PROFILES))
+    run.add_argument("--speed", choices=sorted(DEFAULT_SPEED_PROFILES))
     run.add_argument("--click-delay-ms", type=int)
     run.add_argument("--dinosaur-delay-ms", type=int)
     run.add_argument("--hunt-button-delay-ms", type=int)
     run.add_argument("--hunt-confirm-delay-ms", type=int)
     run.add_argument("--idle-delay-ms", type=int)
+    run.add_argument("--poll-interval-ms", type=int)
     run.add_argument(
         "--status-port",
         type=int,
@@ -184,12 +168,17 @@ def apply_run_timing(
     hunt_button_delay_ms: int | None = None,
     hunt_confirm_delay_ms: int | None = None,
     idle_delay_ms: int | None = None,
+    poll_interval_ms: int | None = None,
 ) -> AppConfig:
     """Apply a speed preset, then any explicit terminal overrides."""
 
-    profile = SPEED_PROFILES.get(speed or "", {})
+    profile = config.speed_profiles.get(speed or "", {})
     click_delay = profile.get("click_delay_ms", config.click_delay)
     idle_delay = profile.get("idle_delay_ms", config.idle_delay)
+    poll_interval = profile.get(
+        "poll_interval_ms",
+        config.transition_poll_interval,
+    )
     post_action_delays = dict(config.post_action_delays)
     profile_targets = {
         "dinosaur": profile.get("dinosaur_delay_ms"),
@@ -208,6 +197,8 @@ def apply_run_timing(
         click_delay = max(0, click_delay_ms)
     if idle_delay_ms is not None:
         idle_delay = max(0, idle_delay_ms)
+    if poll_interval_ms is not None:
+        poll_interval = max(1, poll_interval_ms)
     explicit_targets = {
         "dinosaur": dinosaur_delay_ms,
         "hunt_button": hunt_button_delay_ms,
@@ -224,6 +215,7 @@ def apply_run_timing(
         config,
         click_delay=click_delay,
         idle_delay=idle_delay,
+        transition_poll_interval=poll_interval,
         post_action_delays=post_action_delays,
     )
 
@@ -337,6 +329,7 @@ def main(argv: list[str] | None = None) -> int:
             hunt_button_delay_ms=args.hunt_button_delay_ms,
             hunt_confirm_delay_ms=args.hunt_confirm_delay_ms,
             idle_delay_ms=args.idle_delay_ms,
+            poll_interval_ms=args.poll_interval_ms,
         )
         engine = create_engine(config, verbose=args.verbose)
         status_server = None

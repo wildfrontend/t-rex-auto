@@ -6,10 +6,12 @@
 目前完成 Auto Hunt MVP：辨識恐龍、選擇最大隊伍、發動狩獵並驗證結果。後續功能以
 Feature 方式加入，不需要修改核心狀態機。
 
-目前版本：`v0.1.3`。這一版加入可直接交給 Codex 或維護者分析的一鍵診斷包，
-並保留 v0.1.2 的雙視窗啟動器、可調整狩獵速度及本機 AI 狀態接口：
+目前版本：`v0.2.0`。這一版改用畫面狀態驅動的快速轉場檢查、集中管理速度設定，
+並將 macOS 原始碼與執行副本分離：
 
-- macOS 可雙擊 `start-bot.command` 自動建立隔離環境、診斷 ADB 並在背景啟動。
+- macOS 雙擊 `start-bot.command` 會先部署到 `.runtime-macos/app`，再從獨立副本啟動。
+- 動作後每 100–250 ms 檢查下一個 UI；成功時立即繼續，不必等滿固定秒數。
+- `fast`、`safe` 的所有延遲與輪詢速度都集中在 `config.json` 的 `speed_profiles`。
 - macOS 使用 `caffeinate` 在 Bot 執行期間防止系統睡眠，仍允許螢幕休眠。
 - Windows 與 macOS 都使用 ADB framebuffer，不需要搶走滑鼠或鍵盤焦點。
 - 使用者只需雙擊 `start-bot.cmd`；啟動器會先檢查 Python、ADB、素材及畫面擷取。
@@ -35,7 +37,7 @@ Windows
 
 macOS（Apple Silicon）
   ├─ BlueStacks Air
-  ├─ .venv Python 3.12+
+  ├─ .runtime-macos/app 執行副本與獨立 .venv
   └─ Finder .command 啟動／Python 安全控制器
 
 兩個平台
@@ -136,7 +138,8 @@ Windows 使用 BlueStacks 5；macOS 使用 BlueStacks Air。WSL 只用於 Window
 start-bot.command
 ```
 
-第一次執行會建立 `.venv` 並安裝相依套件。若 macOS 阻止開啟，可在 Finder
+第一次執行會部署 `.runtime-macos/app`、建立其中的 `.venv` 並安裝相依套件。
+若 macOS 阻止開啟，可在 Finder
 對檔案按右鍵後選擇「打開」一次。
 
 終端控制命令：
@@ -151,8 +154,13 @@ python3 scripts/control-macos.py restart --speed fast --confirm
 ```
 
 預設狀態 Port 是 `8765`；非預設 Port 必須在每個控制命令加上
-`--status-port <Port>`。背景啟動記錄保存在 `logs/macos-launcher.log`，完整 Bot
-日誌仍保存在 `logs/YYYYMMDD.log`。
+`--status-port <Port>`。來源端控制腳本會自動連到已部署的執行副本。背景啟動記錄
+保存在 `.runtime-macos/app/logs/macos-launcher.log`，完整 Bot 日誌保存在
+`.runtime-macos/app/logs/YYYYMMDD.log`。
+
+原始碼與執行內容是分開的：修改 `src/` 或 `config.json` 不會直接改到正在運行的
+程式；下次雙擊 `start-bot.command` 時才會重新部署。`.runtime-macos` 已加入
+`.gitignore`，其中的日誌、診斷包、截圖與 Python 環境不會被部署流程刪除。
 
 macOS 只支援 `capture.backend: "adb"`；`mss` 視窗擷取仍是 Windows 專用。
 
@@ -417,12 +425,14 @@ D:\DinoMutantBot\python\python.exe `
 - `planner.stalled_recenter_frames`: 連續多少幀沒有安全目標後重置視野，預設 8。
 - `capture.viewport`: Android 畫面在 BlueStacks client 內的 `[x,y,width,height]`；
   若含有 BlueStacks 側欄，應設定此值以確保 ADB 座標精準。
-- `click_delay`: 點擊到驗證畫面的等待毫秒數。
-- `post_action_delays`: 可針對確認按鈕等動畫較長的操作設定額外等待時間。
+- `click_delay`: 一般動作等待下一個 UI 的最長毫秒數，不是固定休眠。
+- `transition_poll_interval`: 等待轉場期間重新擷取畫面的間隔，預設 `250` ms。
+- `post_action_delays`: 各按鈕等待下一個 UI 的最長時間；畫面提早就緒便立即繼續。
+- `speed_profiles`: `safe`、`fast` 的點擊、流程、空轉與輪詢設定唯一來源。
 - `--speed safe|fast`: 從終端切換保守或快速延遲預設。
 - `--status-port`: 本機狀態與白名單控制 API 連接埠；`0` 代表停用。
 - `--dinosaur-delay-ms`、`--hunt-button-delay-ms`、`--hunt-confirm-delay-ms`、
-  `--idle-delay-ms`: 以毫秒個別覆寫狩獵流程速度。
+  `--idle-delay-ms`、`--poll-interval-ms`: 以毫秒個別覆寫狩獵流程速度。
 - `assets/manifest.json` 的 template `scales`: 同一辨識素材要嘗試的縮放倍率。
 - `verify_retry`: 初次失敗後最多重試次數。
 - `max_actions`: `0` 代表不限，用於 Debug 時建議先設為 `1`。
@@ -431,10 +441,12 @@ D:\DinoMutantBot\python\python.exe `
 - `planner.mail_after_hunts`: 累積多少次狩獵後收取信箱，預設 `30`。
 - `planner.capacity_wait_seconds`: 同時派出隊伍達 `10/10` 時的等待秒數，預設
   `300` 秒。
-- `post_action_delays.no_available_dinosaurs`: 關閉「沒有可用恐龍」提示後的
-  驗證等待時間，預設 `300` ms。
-- `post_action_delays.target_too_strong`: 關閉過強目標後的等待時間，預設
-  `300000` ms（5 分鐘）。
+- `post_action_delays.no_available_dinosaurs`: 關閉「沒有可用恐龍」提示後等待
+  畫面改變的最長時間，預設 `300` ms。
+- `post_action_delays.target_too_strong`: 關閉過強目標視窗的轉場上限，預設
+  `3000` ms。
+- `planner.action_cooldowns_ms.target_too_strong`: 過強目標關閉並驗證成功後的
+  可中斷冷卻，預設 `300000` ms（5 分鐘）。
 - `recovery.black_screen_timeout_seconds`: 持續黑畫面多久後重啟遊戲，預設 `45` 秒。
 - `recovery.restart_cooldown_seconds`: 兩次遊戲重啟的最短間隔，預設 `90` 秒。
 - `workflow.max_cycles`: 完整「狩獵、信箱收取、關閉」流程次數；`0` 代表持續執行。

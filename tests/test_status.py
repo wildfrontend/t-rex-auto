@@ -22,8 +22,8 @@ def sample_log() -> str:
         """
 19:00:00 | INFO | Bot started | Sense -> Think -> Act
 19:00:01 | INFO | Bot stopped | actions=0 | cycles=0
-19:01:00 | INFO | Timing | click=1000ms | dinosaur=1000ms | hunt=3000ms | confirm=2000ms"""
-        " | idle=250ms\n"
+19:01:00 | INFO | Timing | poll=100ms | click=1000ms | dinosaur=1000ms"""
+        " | hunt=3000ms | confirm=2000ms | idle=250ms\n"
         """
 19:01:01 | INFO | Bot started | Sense -> Think -> Act
 19:01:02 | INFO | Planning | dinosaur at (400,600) confidence=0.900
@@ -60,6 +60,7 @@ def test_status_parses_latest_session_counts_and_actions(tmp_path: Path) -> None
     assert status["game_restarts"] == 1
     assert status["last_successful_hunt"] == "2026-07-22T19:01:07"
     assert status["timing"]["hunt_button_delay_ms"] == 3000
+    assert status["timing"]["poll_interval_ms"] == 100
     assert [item["result"] for item in status["recent_actions"]] == [
         "failed",
         "success",
