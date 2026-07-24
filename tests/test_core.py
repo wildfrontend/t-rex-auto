@@ -913,6 +913,39 @@ def test_template_detector_can_filter_to_relevant_types(tmp_path: Path) -> None:
     assert {item.type for item in found} == {"second"}
 
 
+def test_map_center_egg_requires_meat_counter_context() -> None:
+    detector = OpenCvDetector(Path("assets/manifest.json"))
+    template = cv2.imread(str(Path("assets/templates/map-center-egg.png")))
+    similar_egg = cv2.imread(str(Path("assets/templates/map-center-egg-anchor.png")))
+    assert template is not None
+    assert similar_egg is not None
+
+    image = np.full((1600, 900, 3), template[0, 0], dtype=np.uint8)
+    similar_height, similar_width = similar_egg.shape[:2]
+    image[500 : 500 + similar_height, 100 : 100 + similar_width] = similar_egg
+
+    variable_counter = template.copy()
+    variable_counter[66:86, 34:47] = (8, 8, 12)
+    cv2.putText(
+        variable_counter,
+        "2",
+        (35, 83),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.45,
+        (255, 255, 255),
+        1,
+        cv2.LINE_AA,
+    )
+    height, width = variable_counter.shape[:2]
+    image[700 : 700 + height, 400 : 400 + width] = variable_counter
+
+    found = detector.detect_types(Frame(image), {"map_center_egg"})
+
+    assert len(found) == 1
+    assert (found[0].x, found[0].y) == (448, 735)
+    assert found[0].confidence > 0.9
+
+
 def test_composite_detector_normalizes_frame_only_once() -> None:
     observed_shapes: list[tuple[int, int]] = []
     observed_images: list[int] = []
@@ -988,7 +1021,7 @@ def test_hunt_team_availability_detector_only_matches_zero_of_eleven() -> None:
 
 def test_hunt_capacity_detector_only_matches_ten_at_egg_nest() -> None:
     detector = HuntCapacityDetector()
-    egg = cv2.imread(str(Path("assets/templates/map-center-egg.png")))
+    egg = cv2.imread(str(Path("assets/templates/map-center-egg-anchor.png")))
     assert egg is not None
 
     def capacity_screen(label: str, *, show_nest: bool = True) -> Frame:
