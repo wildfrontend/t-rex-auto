@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -42,7 +43,12 @@ class AdbClient:
         for variable in ("ANDROID_SDK_ROOT", "ANDROID_HOME"):
             sdk_root = os.environ.get(variable)
             if sdk_root:
-                candidates.append(str(Path(sdk_root) / "platform-tools" / "adb.exe"))
+                executable_name = "adb.exe" if sys.platform == "win32" else "adb"
+                candidates.append(str(Path(sdk_root) / "platform-tools" / executable_name))
+        if sys.platform == "darwin":
+            candidates.append(
+                str(Path.home() / "Library" / "Android" / "sdk" / "platform-tools" / "adb")
+            )
         local_app_data = os.environ.get("LOCALAPPDATA")
         if local_app_data:
             candidates.append(
