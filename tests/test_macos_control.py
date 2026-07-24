@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 
 import pytest
@@ -86,3 +87,31 @@ def test_start_rejects_occupied_port_with_unknown_api(
         control_macos.start_bot("fast", 8765)
 
     assert error.value.code == "status_api_identity_mismatch"
+
+
+def test_parser_accepts_diagnostics_action() -> None:
+    args = control_macos.build_parser().parse_args(["diagnostics"])
+
+    assert args.action == "diagnostics"
+
+
+def test_diagnostics_action_uses_sanitized_bundle_without_screenshot(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    calls: list[tuple[list[str], bool]] = []
+    monkeypatch.setattr(control_macos.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        control_macos,
+        "run_python_command",
+        lambda arguments, quiet=False: calls.append((arguments, quiet)) or 0,
+    )
+
+    assert control_macos.main(["diagnostics"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert calls[0][0][0] == "diagnostics"
+    assert calls[0][1] is True
+    assert payload["action"] == "diagnostics"
+    assert payload["includes_screenshot"] is False
+    assert payload["output"].endswith(".zip")

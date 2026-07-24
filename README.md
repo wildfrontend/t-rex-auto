@@ -144,6 +144,7 @@ start-bot.command
 ```bash
 python3 scripts/control-macos.py status
 python3 scripts/control-macos.py doctor
+python3 scripts/control-macos.py diagnostics
 python3 scripts/control-macos.py snapshot
 python3 scripts/control-macos.py stop --confirm
 python3 scripts/control-macos.py restart --speed fast --confirm
@@ -430,6 +431,8 @@ D:\DinoMutantBot\python\python.exe `
 - `planner.mail_after_hunts`: 累積多少次狩獵後收取信箱，預設 `30`。
 - `planner.capacity_wait_seconds`: 同時派出隊伍達 `10/10` 時的等待秒數，預設
   `300` 秒。
+- `post_action_delays.no_available_dinosaurs`: 關閉「沒有可用恐龍」提示後的
+  驗證等待時間，預設 `300` ms。
 - `post_action_delays.target_too_strong`: 關閉過強目標後的等待時間，預設
   `300000` ms（5 分鐘）。
 - `recovery.black_screen_timeout_seconds`: 持續黑畫面多久後重啟遊戲，預設 `45` 秒。

@@ -183,11 +183,12 @@ def stop_bot(port: int) -> tuple[dict[str, Any], int]:
     return response, int(health["process_id"])
 
 
-def run_python_command(arguments: list[str]) -> int:
+def run_python_command(arguments: list[str], *, quiet: bool = False) -> int:
     require_runtime()
     return subprocess.run(
         [str(PYTHON_EXECUTABLE), str(MAIN_SCRIPT), "--config", str(CONFIG_FILE), *arguments],
         cwd=APP_ROOT,
+        stdout=subprocess.DEVNULL if quiet else None,
         check=False,
     ).returncode
 
@@ -203,7 +204,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "action",
-        choices=("status", "start", "stop", "restart", "doctor", "snapshot"),
+        choices=(
+            "status",
+            "start",
+            "stop",
+            "restart",
+            "doctor",
+            "diagnostics",
+            "snapshot",
+        ),
     )
     parser.add_argument("--speed", choices=("fast", "safe"), default="fast")
     parser.add_argument("--status-port", type=port_value, default=8765)
@@ -251,6 +260,26 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.action == "doctor":
             return run_python_command(["doctor"])
+        if args.action == "diagnostics":
+            output = (
+                APP_ROOT
+                / "diagnostics"
+                / f"dino-diagnostic-{datetime.now():%Y%m%d-%H%M%S}.zip"
+            )
+            exit_code = run_python_command(
+                ["diagnostics", "--output", str(output)],
+                quiet=True,
+            )
+            if exit_code == 0:
+                write_json(
+                    {
+                        "ok": True,
+                        "action": "diagnostics",
+                        "output": str(output),
+                        "includes_screenshot": False,
+                    }
+                )
+            return exit_code
         output = APP_ROOT / "debug" / f"macos-{datetime.now():%Y%m%d-%H%M%S}.png"
         exit_code = run_python_command(
             ["snapshot", "--backend", "adb", "--output", str(output)]

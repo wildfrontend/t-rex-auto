@@ -1,6 +1,6 @@
 ---
 name: control-dino-bot
-description: Safely inspect and operate the local Dino Mutant Bot through its allowlisted status API and control-windows.ps1 entrypoint. Use when the user asks for hunting progress, current Bot status, failures, recent actions, health checks, diagnostic bundles, screenshots, environment diagnostics, starting, stopping, restarting, changing the fast/safe launch profile, or using a non-default local status port. Never use this skill for arbitrary ADB actions, game exploration, or unrequested process control.
+description: Safely inspect and operate the local Dino Mutant Bot through its allowlisted status API and fixed Windows or macOS controller. Use when the user asks for hunting progress, current Bot status, failures, recent actions, health checks, diagnostic bundles, screenshots, environment diagnostics, starting, stopping, restarting, changing the fast/safe launch profile, or using a non-default local status port. Never use this skill for arbitrary ADB actions, game exploration, or unrequested process control.
 ---
 
 # Control Dino Mutant Bot
@@ -72,6 +72,12 @@ file path.
 Run `-Action diagnostics` only when the user explicitly asks to create or export a diagnostic bundle.
 It creates a sanitized ZIP without a screenshot or any remote connection. Report the returned file
 path and tell the user they can inspect it before uploading it to Codex or a maintainer.
+
+On macOS, use:
+
+```bash
+... diagnostics --status-port 8765
+```
 
 ## State-changing requests
 

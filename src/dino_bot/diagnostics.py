@@ -26,7 +26,7 @@ _ASSIGNED_SECRET = re.compile(
     r"(?i)(\b(?:password|passwd|secret|token|api[-_]?key)\s*[:=]\s*)[^\s,;]+"
 )
 _WINDOWS_HOME = re.compile(r"(?i)\b[A-Z]:\\Users\\[^\\\r\n]+")
-_POSIX_HOME = re.compile(r"(?<![\w.-])/home/[^/\s]+")
+_POSIX_HOME = re.compile(r"(?<![\w.-])/(?:home|Users)/[^/\s]+")
 _EMAIL = re.compile(r"(?<![\w.+-])[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}(?![\w.-])")
 
 _CODEX_GUIDE = """# Dino Mutant Bot 診斷包
