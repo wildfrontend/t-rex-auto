@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -24,6 +25,7 @@ from dino_bot.detection import (
     OpenCvDetector,
     TargetTooStrongDetector,
 )
+from dino_bot.doctor import platform_supports_capture
 from dino_bot.engine import BotContext, BotEngine, BotState
 from dino_bot.models import (
     ActionCommand,
@@ -149,8 +151,38 @@ def test_adb_client_discovers_android_sdk_for_current_user(
     monkeypatch.delenv("ANDROID_SDK_ROOT", raising=False)
     monkeypatch.delenv("ANDROID_HOME", raising=False)
     monkeypatch.setattr("dino_bot.actions.shutil.which", lambda _: None)
+    monkeypatch.setattr("dino_bot.actions.sys.platform", "win32")
 
     assert AdbClient._resolve_executable(None) == str(adb)
+
+
+def test_adb_client_discovers_android_sdk_on_macos(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adb = tmp_path / "AndroidSdk" / "platform-tools" / "adb"
+    adb.parent.mkdir(parents=True)
+    adb.touch()
+    monkeypatch.setenv("ANDROID_SDK_ROOT", str(tmp_path / "AndroidSdk"))
+    monkeypatch.delenv("ANDROID_HOME", raising=False)
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    monkeypatch.setattr("dino_bot.actions.shutil.which", lambda _: None)
+    monkeypatch.setattr("dino_bot.actions.sys.platform", "darwin")
+
+    assert AdbClient._resolve_executable(None) == str(adb)
+
+
+def test_macos_supports_only_adb_capture() -> None:
+    windows_config = AppConfig(root=Path("."))
+    macos_config = replace(
+        windows_config,
+        capture=replace(windows_config.capture, backend="adb"),
+    )
+
+    assert platform_supports_capture(windows_config, "Windows")
+    assert platform_supports_capture(macos_config, "Darwin")
+    assert platform_supports_capture(windows_config, "Darwin") is False
+    assert platform_supports_capture(macos_config, "Linux") is False
 
 
 def test_compatibility_facades_are_independently_callable() -> None:
