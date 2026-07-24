@@ -301,10 +301,10 @@ function Resolve-SpeedSettings {
         IdleDelayMs = $IdleDelayMs
     }
     if ($SelectedSpeed -eq "custom") {
-        $Settings.ClickDelayMs = Read-PositiveTiming "一般點擊等待時間" 500
-        $Settings.DinosaurDelayMs = Read-PositiveTiming "選擇恐龍等待時間" 500
-        $Settings.HuntButtonDelayMs = Read-PositiveTiming "點擊狩獵後等待時間" 1500
-        $Settings.HuntConfirmDelayMs = Read-PositiveTiming "確認狩獵後等待時間" 2000
+        $Settings.ClickDelayMs = Read-PositiveTiming "一般點擊等待時間" 300
+        $Settings.DinosaurDelayMs = Read-PositiveTiming "選擇恐龍等待時間" 300
+        $Settings.HuntButtonDelayMs = Read-PositiveTiming "點擊狩獵後等待時間" 900
+        $Settings.HuntConfirmDelayMs = Read-PositiveTiming "確認狩獵後等待時間" 1200
         $Settings.IdleDelayMs = Read-PositiveTiming "無目標時掃描間隔" 250
     }
     return [pscustomobject]$Settings

@@ -29,10 +29,10 @@ SPEED_PROFILES: dict[str, dict[str, int]] = {
         "idle_delay_ms": 500,
     },
     "fast": {
-        "click_delay_ms": 500,
-        "dinosaur_delay_ms": 500,
-        "hunt_button_delay_ms": 1500,
-        "hunt_confirm_delay_ms": 2000,
+        "click_delay_ms": 300,
+        "dinosaur_delay_ms": 300,
+        "hunt_button_delay_ms": 900,
+        "hunt_confirm_delay_ms": 1200,
         "idle_delay_ms": 250,
     },
 }
