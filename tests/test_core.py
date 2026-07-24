@@ -21,6 +21,7 @@ from dino_bot.assets import create_template
 from dino_bot.cli import apply_run_timing, build_parser
 from dino_bot.config import AppConfig, ConfigError, load_config
 from dino_bot.detection import (
+    CompositeDetector,
     HuntCapacityDetector,
     HuntTeamAvailabilityDetector,
     OpenCvDetector,
@@ -713,6 +714,58 @@ def test_template_detector_finds_asset(tmp_path: Path) -> None:
     assert (found[0].x, found[0].y) == (37, 28)
 
 
+def test_template_detector_can_filter_to_relevant_types(tmp_path: Path) -> None:
+    rng = np.random.default_rng(7)
+    first = rng.integers(0, 256, (10, 10, 3), dtype=np.uint8)
+    second = rng.integers(0, 256, (10, 10, 3), dtype=np.uint8)
+    image = np.zeros((80, 100, 3), dtype=np.uint8)
+    image[10:20, 15:25] = first
+    image[45:55, 65:75] = second
+    assert cv2.imwrite(str(tmp_path / "first.png"), first)
+    assert cv2.imwrite(str(tmp_path / "second.png"), second)
+    (tmp_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "templates": [
+                    {"type": "first", "file": "first.png", "threshold": 0.99},
+                    {"type": "second", "file": "second.png", "threshold": 0.99},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    found = OpenCvDetector(tmp_path / "manifest.json").detect_types(
+        Frame(image),
+        {"second"},
+    )
+
+    assert {item.type for item in found} == {"second"}
+
+
+def test_composite_detector_normalizes_frame_only_once() -> None:
+    observed_shapes: list[tuple[int, int]] = []
+    observed_images: list[int] = []
+
+    class FixedDetector:
+        def detect(self, frame: Frame) -> list[Detection]:
+            observed_shapes.append((frame.width, frame.height))
+            observed_images.append(id(frame.image))
+            return [Detection("fixed", 450, 800, 1.0)]
+
+    detector = CompositeDetector(
+        FixedDetector(),
+        FixedDetector(),
+        reference_size=(900, 1600),
+    )
+
+    found = detector.detect(Frame(np.zeros((1920, 1080, 3), dtype=np.uint8)))
+
+    assert observed_shapes == [(900, 1600), (900, 1600)]
+    assert len(set(observed_images)) == 1
+    assert [(item.x, item.y) for item in found] == [(540, 960), (540, 960)]
+
+
 def test_hsv_detector_finds_blob(tmp_path: Path) -> None:
     image = np.zeros((80, 100, 3), dtype=np.uint8)
     image[20:40, 30:60] = (0, 255, 0)
@@ -997,10 +1050,21 @@ def test_engine_polls_within_target_specific_transition_timeout() -> None:
 
 def test_engine_detects_transition_without_repeating_action() -> None:
     class TransitionDetector:
+        filtered_calls = 0
+
         def detect(self, frame: Frame) -> list[Detection]:
             if int(frame.image[0, 0, 0]) == 10:
                 return [make_detection(type="hunt_button")]
             return []
+
+        def detect_types(
+            self,
+            frame: Frame,
+            target_types: set[str],
+        ) -> list[Detection]:
+            self.filtered_calls += 1
+            assert "hunt_button" in target_types
+            return self.detect(frame)
 
     now = [0.0]
     capture = SequenceCapture(
@@ -1011,9 +1075,10 @@ def test_engine_detects_transition_without_repeating_action() -> None:
         ]
     )
     driver = RecordingActionDriver()
+    detector = TransitionDetector()
     context = BotContext(
         capture_provider=capture,
-        detector=TransitionDetector(),
+        detector=detector,
         planner=TargetPlanner(("hunt_button",)),
         action_driver=driver,
         verifier=TargetChangedVerifier(),
@@ -1035,8 +1100,139 @@ def test_engine_detects_transition_without_repeating_action() -> None:
 
     assert [call.args for call in wait.call_args_list] == [(0.1,), (0.1,)]
     assert len(driver.actions) == 1
+    assert detector.filtered_calls == 2
     assert capture.index == 3
     assert context.last_result is not None and context.last_result.success
+
+
+def test_engine_timeout_starts_after_first_verification_observation() -> None:
+    now = [0.0]
+
+    class SlowTransitionDetector:
+        calls = 0
+
+        def detect(self, frame: Frame) -> list[Detection]:
+            self.calls += 1
+            if self.calls == 2:
+                now[0] += 2.0
+            if self.calls <= 2:
+                return [make_detection(type="hunt_button")]
+            return []
+
+    capture = SequenceCapture(
+        [
+            make_frame(10, 1),
+            make_frame(10, 2),
+            make_frame(255, 3),
+        ]
+    )
+    context = BotContext(
+        capture_provider=capture,
+        detector=SlowTransitionDetector(),
+        planner=TargetPlanner(("hunt_button",)),
+        action_driver=RecordingActionDriver(),
+        verifier=TargetChangedVerifier(),
+        observer=RuntimeMode(),
+        logger=logging.getLogger("test_engine_slow_detection_grace"),
+        post_action_delays_ms={"hunt_button": 300},
+        transition_poll_interval_ms=100,
+        idle_delay_ms=0,
+        max_actions=1,
+        clock=lambda: now[0],
+    )
+
+    def advance(seconds: float) -> bool:
+        now[0] += seconds
+        return False
+
+    with patch.object(context.stop_event, "wait", side_effect=advance):
+        BotEngine(context).run()
+
+    assert capture.index == 3
+    assert context.last_result is not None and context.last_result.success
+
+
+def test_engine_reuses_verified_successor_without_full_recapture() -> None:
+    class ChainingPlanner(TargetPlanner):
+        def can_reuse_verification_result(
+            self,
+            target_type: str,
+            detections: list[Detection],
+        ) -> bool:
+            return (
+                target_type == "dinosaur"
+                and any(item.type == "hunt_button" for item in detections)
+            )
+
+    class ChainingDetector:
+        def detect(self, frame: Frame) -> list[Detection]:
+            value = int(frame.image[0, 0, 0])
+            if value == 10:
+                return [make_detection(type="dinosaur")]
+            if value == 20:
+                return [make_detection(type="hunt_button")]
+            return []
+
+    capture = SequenceCapture(
+        [
+            make_frame(10, 1),
+            make_frame(20, 2),
+            make_frame(30, 3),
+        ]
+    )
+    driver = RecordingActionDriver()
+    context = BotContext(
+        capture_provider=capture,
+        detector=ChainingDetector(),
+        planner=ChainingPlanner(("dinosaur", "hunt_button")),
+        action_driver=driver,
+        verifier=TargetChangedVerifier(
+            success_transitions={"dinosaur": ("hunt_button",)}
+        ),
+        observer=RuntimeMode(),
+        logger=logging.getLogger("test_engine_reuses_verified_successor"),
+        click_delay_ms=0,
+        idle_delay_ms=0,
+        max_actions=2,
+    )
+
+    BotEngine(context).run()
+
+    assert len(driver.actions) == 2
+    assert capture.index == 3
+
+
+def test_action_attempts_reset_when_planner_changes_target_type() -> None:
+    frame = make_frame()
+    detection = make_detection(type="dinosaur")
+    target = Target(
+        detection.type,
+        detection.x,
+        detection.y,
+        detection.confidence,
+        detection,
+    )
+    context = BotContext(
+        capture_provider=SequenceCapture([frame]),
+        detector=PixelDetector(),
+        planner=TargetPlanner(),
+        action_driver=RecordingActionDriver(),
+        verifier=TargetChangedVerifier(),
+        observer=RuntimeMode(),
+        logger=logging.getLogger("test_engine_target_attempt_reset"),
+        click_delay_ms=0,
+        state=BotState.ACTION,
+        frame=frame,
+        target=target,
+        action=ActionCommand.tap(target.x, target.y),
+        attempt=3,
+        attempt_target_type="hunt_button",
+    )
+
+    BotEngine(context).step()
+
+    assert context.attempt == 1
+    assert context.attempt_target_type == "dinosaur"
 
 
 def test_engine_stop_interrupts_post_action_delay() -> None:

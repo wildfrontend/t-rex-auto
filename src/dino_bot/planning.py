@@ -244,6 +244,34 @@ class HuntPlanner(TargetPlanner):
         )
         return max(0, round((deadline - now) * 1000))
 
+    def verification_detection_types(self) -> frozenset[str]:
+        """Return active hunt exceptions that verification must not filter out."""
+
+        return frozenset(
+            {
+                *self.recovery_button_types,
+                self.no_available_type,
+                self.target_too_strong_type,
+            }
+        )
+
+    def can_reuse_verification_result(
+        self,
+        target_type: str,
+        detections: Sequence[Detection],
+    ) -> bool:
+        """Return True when filtered verification already found the next action."""
+
+        visible_types = {item.type for item in detections}
+        if target_type == self.dinosaur_type:
+            return bool(visible_types & self.hunt_button_types)
+        if (
+            target_type in self.hunt_button_types
+            and target_type != self.completion_type
+        ):
+            return self.completion_type in visible_types
+        return False
+
     @staticmethod
     def _angle_distance(left: float, right: float) -> float:
         difference = abs(left - right) % 360.0

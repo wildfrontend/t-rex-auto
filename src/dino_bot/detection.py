@@ -25,6 +25,7 @@ class TemplateAsset:
     threshold: float
     click_offset: tuple[int, int] | None = None
     scales: tuple[float, ...] = (1.0,)
+    prepared_images: tuple[tuple[float, np.ndarray], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,6 +103,25 @@ class OpenCvDetector:
             )
             if not scales or any(value <= 0 for value in scales):
                 raise DetectorAssetError(f"Template scales must be positive: {path}")
+            prepared_images: list[tuple[float, np.ndarray]] = []
+            for scale in scales:
+                if scale == 1.0:
+                    prepared_images.append((scale, image))
+                    continue
+                source_height, source_width = image.shape[:2]
+                width = max(1, round(source_width * scale))
+                height = max(1, round(source_height * scale))
+                interpolation = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
+                prepared_images.append(
+                    (
+                        scale,
+                        cv2.resize(
+                            image,
+                            (width, height),
+                            interpolation=interpolation,
+                        ),
+                    )
+                )
             templates.append(
                 TemplateAsset(
                     type=str(raw["type"]),
@@ -114,6 +134,7 @@ class OpenCvDetector:
                         else None
                     ),
                     scales=scales,
+                    prepared_images=tuple(prepared_images),
                 )
             )
 
@@ -136,6 +157,20 @@ class OpenCvDetector:
         return len(self.templates) + len(self.hsv_ranges)
 
     def detect(self, frame: Frame) -> list[Detection]:
+        return self._detect(frame)
+
+    def detect_types(
+        self,
+        frame: Frame,
+        target_types: set[str] | frozenset[str],
+    ) -> list[Detection]:
+        return self._detect(frame, frozenset(target_types))
+
+    def _detect(
+        self,
+        frame: Frame,
+        target_types: frozenset[str] | None = None,
+    ) -> list[Detection]:
         working = frame.image
         scale_x = scale_y = 1.0
         if self.reference_size and (frame.width, frame.height) != self.reference_size:
@@ -147,8 +182,8 @@ class OpenCvDetector:
             )
             scale_x = frame.width / reference_width
             scale_y = frame.height / reference_height
-        detections = self._detect_templates(working)
-        detections.extend(self._detect_hsv(working))
+        detections = self._detect_templates(working, target_types)
+        detections.extend(self._detect_hsv(working, target_types))
         if scale_x != 1.0 or scale_y != 1.0:
             detections = [self._scale_detection(item, scale_x, scale_y) for item in detections]
         return non_max_suppression(detections, self.nms_iou)
@@ -175,21 +210,16 @@ class OpenCvDetector:
             metadata={**item.metadata, "normalized_from": [scale_x, scale_y]},
         )
 
-    def _detect_templates(self, image: np.ndarray) -> list[Detection]:
+    def _detect_templates(
+        self,
+        image: np.ndarray,
+        target_types: frozenset[str] | None = None,
+    ) -> list[Detection]:
         results: list[Detection] = []
         for asset in self.templates:
-            for scale in asset.scales:
-                template = asset.image
-                if scale != 1.0:
-                    source_height, source_width = asset.image.shape[:2]
-                    width = max(1, round(source_width * scale))
-                    height = max(1, round(source_height * scale))
-                    interpolation = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
-                    template = cv2.resize(
-                        asset.image,
-                        (width, height),
-                        interpolation=interpolation,
-                    )
+            if target_types is not None and asset.type not in target_types:
+                continue
+            for scale, template in asset.prepared_images:
                 height, width = template.shape[:2]
                 if image.shape[0] < height or image.shape[1] < width:
                     continue
@@ -236,13 +266,19 @@ class OpenCvDetector:
                         )
         return results
 
-    def _detect_hsv(self, image: np.ndarray) -> list[Detection]:
+    def _detect_hsv(
+        self,
+        image: np.ndarray,
+        target_types: frozenset[str] | None = None,
+    ) -> list[Detection]:
         if not self.hsv_ranges:
             return []
         hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
         results: list[Detection] = []
         kernel = np.ones((3, 3), dtype=np.uint8)
         for item in self.hsv_ranges:
+            if target_types is not None and item.type not in target_types:
+                continue
             mask = cv2.inRange(hsv, np.array(item.lower), np.array(item.upper))
             mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
             contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -266,13 +302,63 @@ class OpenCvDetector:
 
 
 class CompositeDetector:
-    def __init__(self, *detectors: Any) -> None:
+    def __init__(
+        self,
+        *detectors: Any,
+        reference_size: tuple[int, int] | None = None,
+    ) -> None:
         self.detectors = detectors
+        self.reference_size = reference_size
 
     def detect(self, frame: Frame) -> list[Detection]:
+        return self._detect(frame)
+
+    def detect_types(
+        self,
+        frame: Frame,
+        target_types: set[str] | frozenset[str],
+    ) -> list[Detection]:
+        return self._detect(frame, frozenset(target_types))
+
+    def _detect(
+        self,
+        frame: Frame,
+        target_types: frozenset[str] | None = None,
+    ) -> list[Detection]:
+        working_frame = frame
+        scale_x = scale_y = 1.0
+        if self.reference_size and (frame.width, frame.height) != self.reference_size:
+            reference_width, reference_height = self.reference_size
+            working_frame = Frame(
+                cv2.resize(
+                    frame.image,
+                    self.reference_size,
+                    interpolation=cv2.INTER_LINEAR,
+                ),
+                captured_at=frame.captured_at,
+                source=frame.source,
+                sequence=frame.sequence,
+            )
+            scale_x = frame.width / reference_width
+            scale_y = frame.height / reference_height
+
         results: list[Detection] = []
         for detector in self.detectors:
-            results.extend(detector.detect(frame))
+            if target_types is None:
+                results.extend(detector.detect(working_frame))
+                continue
+            detect_types = getattr(detector, "detect_types", None)
+            if callable(detect_types):
+                results.extend(detect_types(working_frame, target_types))
+                continue
+            detector_type = getattr(detector, "target_type", None)
+            if detector_type is None or detector_type in target_types:
+                results.extend(detector.detect(working_frame))
+        if scale_x != 1.0 or scale_y != 1.0:
+            return [
+                OpenCvDetector._scale_detection(item, scale_x, scale_y)
+                for item in results
+            ]
         return results
 
 

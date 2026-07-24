@@ -75,9 +75,12 @@ class BotContext:
     after_detections: list[Detection] = field(default_factory=list)
     last_result: VerificationResult | None = None
     attempt: int = 0
+    attempt_target_type: str | None = None
     action_count: int = 0
     cycle_count: int = 0
+    verification_timeout_ms: int = 0
     verification_deadline: float | None = None
+    reuse_verified_detections: bool = False
 
 
 class StateHandler(Protocol):
@@ -102,15 +105,27 @@ class IdleState:
         if context.max_cycles and context.cycle_count >= context.max_cycles:
             context.logger.info("Stop | max_cycles=%d reached", context.max_cycles)
             return BotState.STOPPED
+        if context.reuse_verified_detections:
+            context.reuse_verified_detections = False
+            context.logger.debug("Idle | reuse verified detections")
+            return BotState.PLANNING
         return BotState.CAPTURE
 
 
 class CaptureState:
     def execute(self, context: BotContext) -> BotState:
+        started = time.perf_counter()
         frame = context.capture_provider.capture()
+        capture_ms = round((time.perf_counter() - started) * 1000)
         context.observer.on_frame(frame)
         context.frame = frame
-        context.logger.debug("Capture | %dx%d | #%d", frame.width, frame.height, frame.sequence)
+        context.logger.debug(
+            "Capture | %dx%d | #%d | %dms",
+            frame.width,
+            frame.height,
+            frame.sequence,
+            capture_ms,
+        )
         if context.runtime_recovery is not None:
             if context.runtime_recovery.observe(frame):
                 _reset_after_runtime_recovery(context)
@@ -128,12 +143,18 @@ class DetectState:
     def execute(self, context: BotContext) -> BotState:
         if context.frame is None:
             raise RuntimeError("Detect state entered without a frame")
+        started = time.perf_counter()
         context.detections = context.detector.detect(context.frame)
+        detect_ms = round((time.perf_counter() - started) * 1000)
         counts: dict[str, int] = {}
         for item in context.detections:
             counts[item.type] = counts.get(item.type, 0) + 1
         summary = ", ".join(f"{count} {name}" for name, count in sorted(counts.items()))
-        context.logger.info("Detect | %s", summary or "no targets")
+        context.logger.info(
+            "Detect | %s | %dms",
+            summary or "no targets",
+            detect_ms,
+        )
         return BotState.PLANNING
 
 
@@ -182,6 +203,9 @@ class ActionState:
             raise RuntimeError("Action state entered without frame, target, or command")
         context.before_frame = context.frame
         context.before_detections = list(context.detections)
+        if context.attempt_target_type != context.target.type:
+            context.attempt = 0
+            context.attempt_target_type = context.target.type
         context.attempt += 1
         if context.action.x is None or context.action.y is None:
             context.logger.info(
@@ -203,7 +227,8 @@ class ActionState:
             context.target.type,
             context.click_delay_ms,
         )
-        context.verification_deadline = context.clock() + max(0, delay_ms) / 1000
+        context.verification_timeout_ms = max(0, delay_ms)
+        context.verification_deadline = None
         initial_poll_ms = min(
             max(0, delay_ms),
             max(1, context.transition_poll_interval_ms),
@@ -229,7 +254,9 @@ class VerifyState:
             or context.action is None
         ):
             raise RuntimeError("Verify state entered without a pending action")
+        capture_started = time.perf_counter()
         after = context.capture_provider.capture()
+        capture_ms = round((time.perf_counter() - capture_started) * 1000)
         context.observer.on_frame(after)
         if context.runtime_recovery is not None:
             if context.runtime_recovery.observe(after):
@@ -245,7 +272,26 @@ class VerifyState:
                 ):
                     return BotState.STOPPED
                 return BotState.VERIFY
-        after_detections = context.detector.detect(after)
+        relevant_types: set[str] = set()
+        verifier_types = getattr(context.verifier, "relevant_detection_types", None)
+        if callable(verifier_types):
+            relevant_types.update(verifier_types(context.target.type))
+        planner_types = getattr(context.planner, "verification_detection_types", None)
+        if callable(planner_types):
+            relevant_types.update(planner_types())
+        detect_started = time.perf_counter()
+        detect_types = getattr(context.detector, "detect_types", None)
+        if relevant_types and callable(detect_types):
+            after_detections = detect_types(after, relevant_types)
+        else:
+            after_detections = context.detector.detect(after)
+        detect_ms = round((time.perf_counter() - detect_started) * 1000)
+        context.logger.debug(
+            "Verify | performance | capture=%dms | detect=%dms | types=%d",
+            capture_ms,
+            detect_ms,
+            len(relevant_types),
+        )
         context.after_frame = after
         context.after_detections = after_detections
         result = context.verifier.verify(
@@ -258,6 +304,16 @@ class VerifyState:
         context.last_result = result
         explicit_failure = result.reason.startswith("failure indicator detected:")
         deadline = context.verification_deadline
+        if (
+            not result.success
+            and not explicit_failure
+            and deadline is None
+            and context.verification_timeout_ms
+        ):
+            deadline = (
+                context.clock() + context.verification_timeout_ms / 1000
+            )
+            context.verification_deadline = deadline
         if (
             not result.success
             and not explicit_failure
@@ -277,6 +333,7 @@ class VerifyState:
                 return BotState.STOPPED
             return BotState.VERIFY
         context.verification_deadline = None
+        context.verification_timeout_ms = 0
         record = ActionRecord(
             timestamp=utc_now(),
             action=context.action,
@@ -298,18 +355,30 @@ class VerifyState:
                     context.max_cycles or "unlimited",
                 )
             context.attempt = 0
+            context.attempt_target_type = None
             context.frame = after
             context.detections = after_detections
+            can_reuse = getattr(
+                context.planner,
+                "can_reuse_verification_result",
+                None,
+            )
+            context.reuse_verified_detections = bool(
+                callable(can_reuse)
+                and can_reuse(context.target.type, after_detections)
+            )
             return BotState.IDLE
         context.logger.warning("Verify | Failed | %s", result.reason)
         if context.max_actions and context.action_count >= context.max_actions:
             context.logger.info("Verify | retry skipped because max_actions was reached")
             context.attempt = 0
+            context.attempt_target_type = None
             return BotState.IDLE
         if context.attempt <= context.verify_retries:
             return BotState.RECOVER
         context.logger.error("Verify | retry limit exhausted after %d attempts", context.attempt)
         context.attempt = 0
+        context.attempt_target_type = None
         return BotState.IDLE
 
 
@@ -343,7 +412,10 @@ def _reset_after_runtime_recovery(context: BotContext) -> None:
     context.after_detections = []
     context.last_result = None
     context.attempt = 0
+    context.attempt_target_type = None
+    context.verification_timeout_ms = 0
     context.verification_deadline = None
+    context.reuse_verified_detections = False
 
 
 def _runtime_recovery_is_blocking(runtime_recovery: RuntimeRecovery) -> bool:
