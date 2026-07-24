@@ -1,7 +1,7 @@
 ﻿[CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("status", "start", "stop", "restart", "doctor", "snapshot")]
+    [ValidateSet("status", "start", "stop", "restart", "doctor", "diagnostics", "snapshot")]
     [string]$Action,
     [ValidateSet("fast", "safe")]
     [string]$Speed = "fast",
@@ -187,6 +187,24 @@ try {
             "--config" (Join-Path $AppRoot "config.json") `
             "doctor"
         exit $LASTEXITCODE
+    } elseif ($Action -eq "diagnostics") {
+        $PythonExecutable = Resolve-PythonExecutable
+        $BundlePath = Join-Path $AppRoot (
+            "diagnostics\dino-diagnostic-" + (Get-Date -Format "yyyyMMdd-HHmmss") + ".zip"
+        )
+        & $PythonExecutable `
+            (Join-Path $AppRoot "main.py") `
+            "--config" (Join-Path $AppRoot "config.json") `
+            "diagnostics" "--output" $BundlePath | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw "Diagnostic bundle creation failed"
+        }
+        Write-JsonResult @{
+            ok = $true
+            action = "diagnostics"
+            output = $BundlePath
+            includes_screenshot = $false
+        }
     } elseif ($Action -eq "snapshot") {
         $PythonExecutable = Resolve-PythonExecutable
         $Output = Join-Path $AppRoot ("debug\ai-" + (Get-Date -Format "yyyyMMdd-HHmmss") + ".png")

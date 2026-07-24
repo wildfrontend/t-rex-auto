@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -68,6 +69,12 @@ def test_config_enforces_training_collection_limits(
         load_config(config_file)
 
 
+def test_project_config_uses_short_no_available_verification_delay() -> None:
+    config = load_config(Path(__file__).resolve().parents[1] / "config.json")
+
+    assert config.post_action_delays["no_available_dinosaurs"] == 300
+
+
 def test_cli_fast_speed_profile_reduces_hunt_delays() -> None:
     config = AppConfig(
         root=Path("."),
@@ -81,11 +88,11 @@ def test_cli_fast_speed_profile_reduces_hunt_delays() -> None:
 
     result = apply_run_timing(config, speed="fast")
 
-    assert result.click_delay == 500
+    assert result.click_delay == 300
     assert result.idle_delay == 250
-    assert result.post_action_delays["dinosaur"] == 500
-    assert result.post_action_delays["hunt_button"] == 1500
-    assert result.post_action_delays["hunt_confirm_button"] == 2000
+    assert result.post_action_delays["dinosaur"] == 300
+    assert result.post_action_delays["hunt_button"] == 900
+    assert result.post_action_delays["hunt_confirm_button"] == 1200
 
 
 def test_cli_explicit_timing_overrides_profile() -> None:
@@ -128,6 +135,16 @@ def test_cli_parses_json_status_command() -> None:
     assert args.command == "status"
     assert args.json is True
     assert args.actions == 5
+
+
+def test_cli_parses_diagnostics_bundle_options() -> None:
+    args = build_parser().parse_args(
+        ["diagnostics", "--include-screenshot", "--log-lines", "750"]
+    )
+
+    assert args.command == "diagnostics"
+    assert args.include_screenshot is True
+    assert args.log_lines == 750
 
 
 def test_adb_client_discovers_android_sdk_for_current_user(
@@ -922,11 +939,54 @@ def test_engine_uses_target_specific_post_action_delay() -> None:
         max_cycles=1,
         cycle_complete_targets=("hunt_confirm_button",),
     )
-    with patch("dino_bot.engine.time.sleep") as sleep:
+    with patch.object(context.stop_event, "wait", return_value=False) as wait:
         BotEngine(context).run()
-    sleep.assert_called_once_with(10.0)
+    wait.assert_called_once_with(10.0)
     assert context.cycle_count == 1
     assert context.action_count == 1
+
+
+def test_engine_stop_interrupts_post_action_delay() -> None:
+    action_started = threading.Event()
+
+    class SignalingActionDriver:
+        def execute(self, action: ActionCommand, frame: Frame) -> None:
+            action_started.set()
+
+    frame = make_frame()
+    detection = make_detection(type="no_available_dinosaurs")
+    target = Target(
+        detection.type,
+        detection.x,
+        detection.y,
+        detection.confidence,
+        detection,
+    )
+    context = BotContext(
+        capture_provider=SequenceCapture([frame]),
+        detector=PixelDetector(),
+        planner=TargetPlanner(),
+        action_driver=SignalingActionDriver(),
+        verifier=TargetChangedVerifier(),
+        observer=RuntimeMode(),
+        logger=logging.getLogger("test_engine_interruptible_delay"),
+        post_action_delays_ms={"no_available_dinosaurs": 300_000},
+        state=BotState.ACTION,
+        frame=frame,
+        target=target,
+        action=ActionCommand.tap(target.x, target.y),
+    )
+    engine = BotEngine(context)
+    result: list[BotState] = []
+    worker = threading.Thread(target=lambda: result.append(engine.step()))
+
+    worker.start()
+    assert action_started.wait(timeout=1)
+    engine.stop()
+    worker.join(timeout=1)
+
+    assert not worker.is_alive()
+    assert result == [BotState.STOPPED]
 
 
 def test_engine_retries_three_times_then_stops() -> None:
