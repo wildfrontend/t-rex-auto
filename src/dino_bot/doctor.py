@@ -80,7 +80,7 @@ def run_checks(config: AppConfig) -> list[Check]:
             checks.append(Check("ADB device", True, device.serial))
         except Exception as exc:
             checks.append(Check("ADB device", False, str(exc)))
-    if operating_system == "Windows":
+    if operating_system == "Windows" and config.capture.backend == "mss":
         try:
             hwnd = EmulatorWindowFinder(
                 config.capture.window_titles,
