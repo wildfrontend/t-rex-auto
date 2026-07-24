@@ -147,6 +147,8 @@ class HuntPlanner(TargetPlanner):
         own_path_types: Sequence[str] = ("own_hunt_path",),
         own_path_radius: float = 90.0,
         anchor_exclusion_radius: float = 50.0,
+        dinosaur_failure_cooldown_ms: int = 5_000,
+        dinosaur_failure_radius: float = 80.0,
         recenter_every: int = 10,
         mail_after_hunts: int = 30,
         mailbox_type: str = "mailbox_button",
@@ -178,6 +180,11 @@ class HuntPlanner(TargetPlanner):
         self.own_path_types = frozenset(own_path_types)
         self.own_path_radius = max(0.0, own_path_radius)
         self.anchor_exclusion_radius = max(0.0, anchor_exclusion_radius)
+        self.dinosaur_failure_cooldown_ms = max(
+            0,
+            dinosaur_failure_cooldown_ms,
+        )
+        self.dinosaur_failure_radius = max(0.0, dinosaur_failure_radius)
         self.recenter_every = max(1, recenter_every)
         self.mail_after_hunts = max(1, mail_after_hunts)
         self.mailbox_type = mailbox_type
@@ -206,10 +213,16 @@ class HuntPlanner(TargetPlanner):
         self._capacity_cooldown_until = 0.0
         self._action_cooldown_until = 0.0
         self._map_idle_frames = 0
+        self._failed_dinosaur_positions: list[tuple[float, float, float]] = []
+        self._last_selected_dinosaur: tuple[float, float] | None = None
+        self._anchor_before_dinosaur: tuple[float, float] | None = None
 
     def on_action_success(self, target_type: str) -> None:
         """Commit hunt counters only after the confirmation tap is verified."""
 
+        if target_type == self.dinosaur_type:
+            self._last_selected_dinosaur = None
+            self._anchor_before_dinosaur = None
         cooldown_ms = self.action_cooldowns_ms.get(target_type, 0)
         if cooldown_ms:
             self._action_cooldown_until = time.monotonic() + cooldown_ms / 1000
@@ -227,6 +240,21 @@ class HuntPlanner(TargetPlanner):
         """Release transient waits when a dinosaur selection was not accepted."""
 
         if target_type == self.dinosaur_type:
+            if (
+                self._last_selected_dinosaur is not None
+                and self.dinosaur_failure_cooldown_ms
+            ):
+                self._failed_dinosaur_positions.append(
+                    (
+                        *self._last_selected_dinosaur,
+                        time.monotonic()
+                        + self.dinosaur_failure_cooldown_ms / 1000,
+                    )
+                )
+            if self._anchor_before_dinosaur is not None:
+                self._last_anchor = self._anchor_before_dinosaur
+            self._last_selected_dinosaur = None
+            self._anchor_before_dinosaur = None
             self._awaiting_hunt_button = False
             self._waited_frames = 0
 
@@ -242,6 +270,9 @@ class HuntPlanner(TargetPlanner):
         self._capacity_cooldown_until = 0.0
         self._action_cooldown_until = 0.0
         self._map_idle_frames = 0
+        self._failed_dinosaur_positions.clear()
+        self._last_selected_dinosaur = None
+        self._anchor_before_dinosaur = None
 
     def next_ready_delay_ms(self) -> int:
         """Return the remaining non-UI cooldown without blocking the engine."""
@@ -606,6 +637,11 @@ class HuntPlanner(TargetPlanner):
         }
         actionable = [item for item in detections if item.type not in navigation_types]
         anchor_position = self._last_anchor
+        self._failed_dinosaur_positions = [
+            entry
+            for entry in self._failed_dinosaur_positions
+            if entry[2] > now
+        ]
         if anchor_position is not None:
             anchor_x, anchor_y = anchor_position
             established_angles = self._established_path_angles(
@@ -626,6 +662,15 @@ class HuntPlanner(TargetPlanner):
                 and self.safe_margin
                 <= item.y
                 <= frame.height - self.bottom_exclusion_px
+                # The center egg is fixed near the viewport center, but its
+                # template can disappear for an animated frame while the
+                # predicted map anchor remains offset. Keep a screen-space
+                # guard as a second line of defense against that false target.
+                and hypot(
+                    item.x - frame.width / 2,
+                    item.y - frame.height / 2,
+                )
+                > self.anchor_exclusion_radius
                 and self.safe_margin
                 <= anchor_x + frame.width / 2 - item.x
                 <= frame.width - self.safe_margin
@@ -634,6 +679,11 @@ class HuntPlanner(TargetPlanner):
                 <= frame.height - self.safe_margin
                 and hypot(item.x - anchor_x, item.y - anchor_y)
                 > self.anchor_exclusion_radius
+                and all(
+                    hypot(item.x - failed_x, item.y - failed_y)
+                    > self.dinosaur_failure_radius
+                    for failed_x, failed_y, _ in self._failed_dinosaur_positions
+                )
                 and all(
                     hypot(item.x - marker.x, item.y - marker.y)
                     > self.own_path_radius
@@ -696,6 +746,8 @@ class HuntPlanner(TargetPlanner):
         elif target is not None:
             self._map_idle_frames = 0
         if target is not None and target.type == self.dinosaur_type:
+            self._last_selected_dinosaur = (float(target.x), float(target.y))
+            self._anchor_before_dinosaur = anchor_position
             if anchor_position is not None:
                 self._last_anchor = (
                     anchor_position[0] + frame.width / 2 - target.x,

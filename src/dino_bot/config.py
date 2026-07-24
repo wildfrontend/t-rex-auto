@@ -73,6 +73,8 @@ class PlannerConfig:
     recenter_every: int = 10
     own_path_radius: float = 90.0
     anchor_exclusion_radius: float = 50.0
+    dinosaur_failure_cooldown_ms: int = 5_000
+    dinosaur_failure_radius: float = 80.0
     mail_after_hunts: int = 30
     capacity_wait_seconds: float = 300.0
     ring_width: float = 150.0
@@ -279,6 +281,12 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
             anchor_exclusion_radius=float(
                 planner_data.get("anchor_exclusion_radius", 50)
             ),
+            dinosaur_failure_cooldown_ms=int(
+                planner_data.get("dinosaur_failure_cooldown_ms", 5_000)
+            ),
+            dinosaur_failure_radius=float(
+                planner_data.get("dinosaur_failure_radius", 80)
+            ),
             mail_after_hunts=int(planner_data.get("mail_after_hunts", 30)),
             capacity_wait_seconds=float(
                 planner_data.get("capacity_wait_seconds", 300)
@@ -401,6 +409,10 @@ def _validate(config: AppConfig) -> None:
         raise ConfigError("planner.own_path_radius cannot be negative")
     if config.planner.anchor_exclusion_radius < 0:
         raise ConfigError("planner.anchor_exclusion_radius cannot be negative")
+    if config.planner.dinosaur_failure_cooldown_ms < 0:
+        raise ConfigError("planner.dinosaur_failure_cooldown_ms cannot be negative")
+    if config.planner.dinosaur_failure_radius < 0:
+        raise ConfigError("planner.dinosaur_failure_radius cannot be negative")
     if config.planner.mail_after_hunts <= 0:
         raise ConfigError("planner.mail_after_hunts must be greater than zero")
     if config.planner.capacity_wait_seconds < 0:

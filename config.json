@@ -97,6 +97,8 @@
     "recenter_every": 10,
     "own_path_radius": 90,
     "anchor_exclusion_radius": 50,
+    "dinosaur_failure_cooldown_ms": 5000,
+    "dinosaur_failure_radius": 80,
     "mail_after_hunts": 30,
     "capacity_wait_seconds": 300,
     "ring_width": 150,
@@ -114,7 +116,11 @@
     "success_transitions": {
       "dinosaur": ["hunt_button"],
       "hunt_button": ["hunt_confirm_button"],
-      "hunt_confirm_button": ["map_exit_nest_button"],
+      "hunt_confirm_button": [
+        "map_exit_nest_button",
+        "map_center_egg",
+        "mailbox_button"
+      ],
       "map_exit_nest_button": ["forest_recenter_button"],
       "forest_recenter_button": ["map_center_egg"],
       "mailbox_button": ["mail_collect_all_button"],

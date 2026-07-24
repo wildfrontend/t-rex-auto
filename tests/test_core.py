@@ -79,7 +79,14 @@ def test_project_config_uses_short_no_available_verification_delay() -> None:
     assert config.post_action_delays["forest_recenter_button"] == 3000
     assert config.post_action_delays["mailbox_button"] == 2500
     assert config.planner.anchor_exclusion_radius == 50
+    assert config.planner.dinosaur_failure_cooldown_ms == 5_000
+    assert config.planner.dinosaur_failure_radius == 80
     assert config.planner.action_cooldowns_ms["target_too_strong"] == 300_000
+    assert set(config.verify.success_transitions["hunt_confirm_button"]) == {
+        "map_exit_nest_button",
+        "map_center_egg",
+        "mailbox_button",
+    }
 
 
 def test_config_rejects_negative_anchor_exclusion_radius(tmp_path: Path) -> None:
@@ -90,6 +97,24 @@ def test_config_rejects_negative_anchor_exclusion_radius(tmp_path: Path) -> None
     )
 
     with pytest.raises(ConfigError, match="anchor_exclusion_radius"):
+        load_config(config_file)
+
+
+@pytest.mark.parametrize(
+    "setting",
+    ["dinosaur_failure_cooldown_ms", "dinosaur_failure_radius"],
+)
+def test_config_rejects_negative_dinosaur_failure_cooldown(
+    tmp_path: Path,
+    setting: str,
+) -> None:
+    config_file = tmp_path / "config.json"
+    config_file.write_text(
+        json.dumps({"planner": {setting: -1}}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match=setting):
         load_config(config_file)
 
 
@@ -460,6 +485,26 @@ def test_hunt_planner_excludes_false_dinosaur_on_center_egg() -> None:
     assert target is not None and (target.x, target.y) == (510, 820)
 
 
+def test_hunt_planner_excludes_screen_center_when_map_anchor_is_offset() -> None:
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(
+        ("dinosaur",),
+        safe_margin=0,
+        bottom_exclusion_px=0,
+        anchor_exclusion_radius=50,
+    )
+    offset_anchor = Detection("map_center_egg", 300, 800, 1.0)
+    screen_center_false_positive = Detection("dinosaur", 450, 800, 0.99)
+    safe_dinosaur = Detection("dinosaur", 600, 800, 0.85)
+
+    target = planner.choose(
+        frame,
+        [offset_anchor, screen_center_false_positive, safe_dinosaur],
+    )
+
+    assert target is not None and (target.x, target.y) == (600, 800)
+
+
 def test_hunt_planner_waits_when_all_dinosaurs_are_on_own_blue_path() -> None:
     frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
     planner = HuntPlanner(
@@ -534,6 +579,32 @@ def test_hunt_planner_releases_dinosaur_wait_after_failed_selection() -> None:
 
     assert planner._awaiting_hunt_button is False
     assert planner._waited_frames == 0
+
+
+def test_hunt_planner_cools_failed_dinosaur_and_restores_anchor() -> None:
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    anchor = Detection("map_center_egg", 450, 800, 1.0)
+    nearest = Detection("dinosaur", 550, 800, 0.95)
+    alternative = Detection("dinosaur", 700, 800, 0.90)
+    planner = HuntPlanner(
+        ("dinosaur",),
+        safe_margin=0,
+        bottom_exclusion_px=0,
+        anchor_exclusion_radius=0,
+        dinosaur_failure_cooldown_ms=5_000,
+        dinosaur_failure_radius=80,
+    )
+
+    first = planner.choose(frame, [anchor, nearest, alternative])
+
+    assert first is not None and (first.x, first.y) == (550, 800)
+    assert planner._last_anchor == (350.0, 800.0)
+
+    planner.on_action_failure("dinosaur")
+    second = planner.choose(frame, [anchor, nearest, alternative])
+
+    assert second is not None and (second.x, second.y) == (700, 800)
+    assert planner._anchor_before_dinosaur == (450.0, 800.0)
 
 
 def test_hunt_planner_reuses_map_after_verified_confirmation() -> None:
