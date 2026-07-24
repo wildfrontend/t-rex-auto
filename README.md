@@ -9,6 +9,9 @@ Feature 方式加入，不需要修改核心狀態機。
 目前版本：`v0.1.3`。這一版加入可直接交給 Codex 或維護者分析的一鍵診斷包，
 並保留 v0.1.2 的雙視窗啟動器、可調整狩獵速度及本機 AI 狀態接口：
 
+- macOS 可雙擊 `start-bot.command` 自動建立隔離環境、診斷 ADB 並在背景啟動。
+- macOS 使用 `caffeinate` 在 Bot 執行期間防止系統睡眠，仍允許螢幕休眠。
+- Windows 與 macOS 都使用 ADB framebuffer，不需要搶走滑鼠或鍵盤焦點。
 - 使用者只需雙擊 `start-bot.cmd`；啟動器會先檢查 Python、ADB、素材及畫面擷取。
 - 一個視窗顯示原始即時 LOG，另一個繁體中文互動視窗提供統計、調速、重啟與診斷工具。
 - `127.0.0.1:8765` 提供結構化狀態與白名單停止接口，讓同一台電腦上的 AI 安全操作。
@@ -25,20 +28,23 @@ Feature 方式加入，不需要修改核心狀態機。
 ## 執行架構
 
 ```text
-WSL /home/louis/github/wildfrontend/t-rex-auto
-  ├─ 原始碼、Git、離線測試
-  └─ scripts/deploy-windows.sh
-               │
-               ▼
-Windows D:\DinoMutantBot
-  ├─ python\   可攜式 Python 3.12 runtime
-  └─ app\      WSL 原始碼的執行副本
-               │
-               ├─ ADB framebuffer 背景擷取（預設）
-               └─ Android SDK adb 執行 tap/swipe/long press
+Windows
+  ├─ BlueStacks 5
+  ├─ 可攜式 Python 3.12 runtime
+  └─ PowerShell 啟動／控制器
+
+macOS（Apple Silicon）
+  ├─ BlueStacks Air
+  ├─ .venv Python 3.12+
+  └─ Finder .command 啟動／Python 安全控制器
+
+兩個平台
+  ├─ ADB framebuffer 背景擷取（預設）
+  └─ Android SDK adb 執行 tap/swipe/long press
 ```
 
-BlueStacks 必須保留在 Windows，不需要也不應安裝到 WSL。
+Windows 使用 BlueStacks 5；macOS 使用 BlueStacks Air。WSL 只用於 Windows 版的
+原始碼與離線測試，不執行 BlueStacks。
 
 ## 已完成項目
 
@@ -112,7 +118,44 @@ BlueStacks 必須保留在 Windows，不需要也不應安裝到 WSL。
 
 ## 第一次設定
 
-### 1. BlueStacks
+### macOS：BlueStacks Air
+
+需求：
+
+- Apple Silicon Mac 與 BlueStacks Air。
+- Python 3.12 或更新版本。
+- Android SDK Platform Tools；預設會尋找
+  `~/Library/Android/sdk/platform-tools/adb`。
+- 遊戲直向畫面 `900 × 1600`。
+
+在 BlueStacks Air 設定中啟用 Android Debug Bridge，確認顯示
+`127.0.0.1:5555`，啟動 Dino Mutant 並停在主地圖或採集地圖。接著在 Finder
+雙擊根目錄的：
+
+```text
+start-bot.command
+```
+
+第一次執行會建立 `.venv` 並安裝相依套件。若 macOS 阻止開啟，可在 Finder
+對檔案按右鍵後選擇「打開」一次。
+
+終端控制命令：
+
+```bash
+python3 scripts/control-macos.py status
+python3 scripts/control-macos.py doctor
+python3 scripts/control-macos.py snapshot
+python3 scripts/control-macos.py stop --confirm
+python3 scripts/control-macos.py restart --speed fast --confirm
+```
+
+預設狀態 Port 是 `8765`；非預設 Port 必須在每個控制命令加上
+`--status-port <Port>`。背景啟動記錄保存在 `logs/macos-launcher.log`，完整 Bot
+日誌仍保存在 `logs/YYYYMMDD.log`。
+
+macOS 只支援 `capture.backend: "adb"`；`mss` 視窗擷取仍是 Windows 專用。
+
+### Windows：BlueStacks 5
 
 1. 啟動 BlueStacks 5。
 2. 開啟「設定 → 進階」。
@@ -127,7 +170,7 @@ C:\Users\Louis\AppData\Local\Android\Sdk\platform-tools\adb.exe
 127.0.0.1:5555
 ```
 
-### 2. Windows runtime
+### Windows runtime
 
 專案使用不需管理員權限的可攜式 Python 3.12。若需要重建：
 
@@ -136,7 +179,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -File scripts\install-windows-runtime.ps1
 ```
 
-### 3. 從 WSL 部署
+### 從 WSL 部署
 
 每次修改程式碼或 detector assets 後執行。第二個參數可把既有 Python runtime 一併
 封裝成可直接分享的完整資料夾：
@@ -146,7 +189,7 @@ bash scripts/deploy-windows.sh
 bash scripts/deploy-windows.sh /mnt/d/DinoMutantBot-release /mnt/d/DinoMutantBot/python
 ```
 
-### 4. 環境檢查
+### Windows 環境檢查
 
 ```bash
 powershell.exe -NoProfile -ExecutionPolicy Bypass \
