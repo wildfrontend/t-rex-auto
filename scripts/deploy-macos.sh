@@ -59,9 +59,13 @@ done
 /bin/cp \
   "${project_root}/scripts/start-runtime-macos.sh" \
   "${runtime_root}/start-bot.command"
+/bin/cp \
+  "${project_root}/stop-bot.command" \
+  "${runtime_root}/stop-bot.command"
 
 /bin/chmod +x \
   "${runtime_root}/start-bot.command" \
+  "${runtime_root}/stop-bot.command" \
   "${runtime_app}/scripts/install-macos-runtime.sh" \
   "${runtime_app}/scripts/run-macos.sh"
 

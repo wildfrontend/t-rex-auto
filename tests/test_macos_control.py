@@ -52,6 +52,38 @@ def test_process_identity_matches_api_port_and_command(
     assert health["process_id"] == 123
 
 
+def test_process_identity_accepts_an_allowlisted_previous_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    previous_main = Path("/tmp/previous-dino-runtime/main.py").resolve()
+    monkeypatch.setattr(control_macos, "ALLOWED_MAIN_SCRIPTS", {previous_main})
+    monkeypatch.setattr(
+        control_macos,
+        "request_json",
+        lambda *_args, **_kwargs: {
+            "ok": True,
+            "service": control_macos.SERVICE_NAME,
+            "process_id": 123,
+        },
+    )
+    monkeypatch.setattr(control_macos, "listener_pids", lambda _port: {123})
+    monkeypatch.setattr(
+        control_macos,
+        "process_command",
+        lambda _pid: [
+            "python3",
+            str(previous_main),
+            "run",
+            "--status-port",
+            "8765",
+        ],
+    )
+
+    health = control_macos.assert_api_identity(8765, require_process=True)
+
+    assert health["process_id"] == 123
+
+
 def test_process_identity_rejects_wrong_listener(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -93,6 +125,25 @@ def test_parser_accepts_diagnostics_action() -> None:
     args = control_macos.build_parser().parse_args(["diagnostics"])
 
     assert args.action == "diagnostics"
+
+
+def test_stop_waits_until_process_has_exited(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(control_macos.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        control_macos,
+        "stop_bot",
+        lambda _port: ({"accepted": True, "action": "stop"}, 123),
+    )
+    monkeypatch.setattr(control_macos, "wait_for_process_exit", lambda _pid: True)
+
+    assert control_macos.main(["stop", "--confirm"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["result"] == "stopped"
+    assert payload["process_id"] == 123
 
 
 def test_diagnostics_action_uses_sanitized_bundle_without_screenshot(
