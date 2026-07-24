@@ -385,11 +385,13 @@ def test_hunt_planner_uses_egg_anchor_and_recenters_after_batch() -> None:
     assert planner.choose(frame, [confirm]).type == "hunt_confirm_button"  # type: ignore[union-attr]
     planner.on_action_success("hunt_confirm_button")
     second_dinosaur = Detection("dinosaur", 400, 850, 0.9)
+    assert planner.choose(frame, [anchor, exit_button, second_dinosaur]) is None
     second = planner.choose(frame, [anchor, exit_button, second_dinosaur])
     assert second is not None and second.type == "dinosaur"
     assert planner.choose(frame, [confirm]).type == "hunt_confirm_button"  # type: ignore[union-attr]
     planner.on_action_success("hunt_confirm_button")
 
+    assert planner.choose(frame, [anchor, exit_button]) is None
     leave_map = planner.choose(frame, [anchor, exit_button])
     assert leave_map is not None and leave_map.type == "map_exit_nest_button"
     enter_forest = planner.choose(frame, [forest_button])
@@ -419,6 +421,31 @@ def test_hunt_planner_retries_forest_when_recenter_tap_is_ignored() -> None:
     assert planner.choose(frame, [centered_anchor]) is None
     resumed = planner.choose(frame, [centered_anchor, dinosaur])
     assert resumed is not None and resumed.type == "dinosaur"
+
+
+def test_hunt_planner_waits_for_post_hunt_anchor_to_settle() -> None:
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(
+        ("hunt_confirm_button", "dinosaur"),
+        map_settle_frames=2,
+        map_settle_tolerance_px=20,
+        safe_margin=80,
+    )
+    centered_anchor = Detection("map_center_egg", 450, 800, 1.0)
+    moving_anchor = Detection("map_center_egg", 490, 780, 1.0)
+    dinosaur = Detection("dinosaur", 600, 900, 0.9)
+    confirm = Detection("hunt_confirm_button", 451, 1412, 1.0)
+
+    assert planner.choose(frame, [centered_anchor, dinosaur]).type == "dinosaur"  # type: ignore[union-attr]
+    assert planner.choose(frame, [confirm]).type == "hunt_confirm_button"  # type: ignore[union-attr]
+    planner.on_action_success("hunt_confirm_button")
+
+    # The first frame after confirmation is still moving, so it cannot arm a tap.
+    assert planner.choose(frame, [centered_anchor, dinosaur]) is None
+    assert planner.choose(frame, [moving_anchor, dinosaur]) is None
+    # Two consecutive frames at the new anchor position release the gate.
+    target = planner.choose(frame, [moving_anchor, dinosaur])
+    assert target is not None and target.type == "dinosaur"
 
 
 def test_hunt_planner_excludes_dinosaur_on_own_blue_path() -> None:
@@ -672,6 +699,7 @@ def test_hunt_planner_collects_mail_after_hunt_threshold() -> None:
     assert planner.choose(frame, [anchor, exit_button, mailbox, dinosaur]).type == "dinosaur"  # type: ignore[union-attr]
     assert planner.choose(frame, [confirm]).type == "hunt_confirm_button"  # type: ignore[union-attr]
     planner.on_action_success("hunt_confirm_button")
+    assert planner.choose(frame, [anchor, exit_button]) is None
     assert planner.choose(frame, [anchor, exit_button]).type == "map_exit_nest_button"  # type: ignore[union-attr]
     assert planner.choose(frame, [forest]).type == "forest_recenter_button"  # type: ignore[union-attr]
     assert planner.choose(frame, [anchor, exit_button, mailbox]) is None
@@ -713,6 +741,7 @@ def test_hunt_planner_taps_egg_until_map_is_centered() -> None:
     assert planner.choose(frame, [centered_anchor, exit_button, dinosaur]).type == "dinosaur"  # type: ignore[union-attr]
     assert planner.choose(frame, [confirm]).type == "hunt_confirm_button"  # type: ignore[union-attr]
     planner.on_action_success("hunt_confirm_button")
+    assert planner.choose(frame, [centered_anchor, exit_button]) is None
     assert planner.choose(frame, [centered_anchor, exit_button]).type == "map_exit_nest_button"  # type: ignore[union-attr]
     assert planner.choose(frame, [forest]).type == "forest_recenter_button"  # type: ignore[union-attr]
     recenter = planner.choose(frame, [shifted_anchor, exit_button])
@@ -751,10 +780,12 @@ def test_hunt_planner_counts_return_when_animated_map_landmarks_are_missing() ->
     assert planner.choose(frame, [confirm]).type == "hunt_confirm_button"  # type: ignore[union-attr]
     planner.on_action_success("hunt_confirm_button")
     # No egg, nest, or mailbox is detected in this animated map frame.
+    assert planner.choose(frame, [second]) is None
     assert planner.choose(frame, [second]).type == "dinosaur"  # type: ignore[union-attr]
     assert planner.choose(frame, [confirm]).type == "hunt_confirm_button"  # type: ignore[union-attr]
     planner.on_action_success("hunt_confirm_button")
     # The exact second return starts recentering and must not choose a third hunt.
+    assert planner.choose(frame, [third]) is None
     assert planner.choose(frame, [third]) is None
     exit_target = planner.choose(frame, [mailbox, third])
     assert exit_target is not None and exit_target.type == "map_exit_nest_button"

@@ -441,6 +441,7 @@ D:\DinoMutantBot\python\python.exe `
 
 - `capture.backend`: `adb` 不搶 focus；`mss` 較快但會把 BlueStacks 拉到前景。
 - `planner.stalled_recenter_frames`: 連續多少幀沒有安全目標後重置視野，預設 8。
+- `planner.map_settle_frames`、`map_settle_tolerance_px`、`map_settle_max_frames`：狩獵確認後，中央蛋或恐龍位置需連續穩定的幀數、允許位移，以及最長等待幀數；預設為 `2`、`20`、`12`。
 - `capture.viewport`: Android 畫面在 BlueStacks client 內的 `[x,y,width,height]`；
   若含有 BlueStacks 側欄，應設定此值以確保 ADB 座標精準。
 - `click_delay`: 一般動作等待下一個 UI 的最長毫秒數，不是固定休眠。

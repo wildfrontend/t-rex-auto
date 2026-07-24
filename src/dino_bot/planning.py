@@ -162,6 +162,9 @@ class HuntPlanner(TargetPlanner):
         ring_width: float = 150.0,
         own_path_angle_degrees: float = 7.0,
         stalled_recenter_frames: int = 8,
+        map_settle_frames: int = 2,
+        map_settle_tolerance_px: float = 20.0,
+        map_settle_max_frames: int = 12,
         safe_margin: int = 80,
         bottom_exclusion_px: int = 180,
         action_cooldowns_ms: dict[str, int] | None = None,
@@ -198,6 +201,12 @@ class HuntPlanner(TargetPlanner):
         self.ring_width = max(1.0, ring_width)
         self.own_path_angle_degrees = max(0.0, own_path_angle_degrees)
         self.stalled_recenter_frames = max(1, stalled_recenter_frames)
+        self.map_settle_frames = max(1, map_settle_frames)
+        self.map_settle_tolerance_px = max(0.0, map_settle_tolerance_px)
+        self.map_settle_max_frames = max(
+            self.map_settle_frames,
+            map_settle_max_frames,
+        )
         self.safe_margin = max(0, safe_margin)
         self.bottom_exclusion_px = max(0, bottom_exclusion_px)
         self.action_cooldowns_ms = dict(action_cooldowns_ms or {})
@@ -213,6 +222,11 @@ class HuntPlanner(TargetPlanner):
         self._capacity_cooldown_until = 0.0
         self._action_cooldown_until = 0.0
         self._map_idle_frames = 0
+        self._map_settle_active = False
+        self._map_settle_observed_frames = 0
+        self._map_settle_stable_frames = 0
+        self._map_settle_anchor: tuple[float, float] | None = None
+        self._map_settle_dinosaur: tuple[float, float] | None = None
         self._failed_dinosaur_positions: list[tuple[float, float, float]] = []
         self._last_selected_dinosaur: tuple[float, float] | None = None
         self._anchor_before_dinosaur: tuple[float, float] | None = None
@@ -235,6 +249,11 @@ class HuntPlanner(TargetPlanner):
         self._pending_hunt_return = True
         self._awaiting_hunt_button = False
         self._waited_frames = 0
+        self._map_settle_active = True
+        self._map_settle_observed_frames = 0
+        self._map_settle_stable_frames = 0
+        self._map_settle_anchor = None
+        self._map_settle_dinosaur = None
 
     def on_action_failure(self, target_type: str) -> None:
         """Release transient waits when a dinosaur selection was not accepted."""
@@ -270,6 +289,11 @@ class HuntPlanner(TargetPlanner):
         self._capacity_cooldown_until = 0.0
         self._action_cooldown_until = 0.0
         self._map_idle_frames = 0
+        self._map_settle_active = False
+        self._map_settle_observed_frames = 0
+        self._map_settle_stable_frames = 0
+        self._map_settle_anchor = None
+        self._map_settle_dinosaur = None
         self._failed_dinosaur_positions.clear()
         self._last_selected_dinosaur = None
         self._anchor_before_dinosaur = None
@@ -283,6 +307,89 @@ class HuntPlanner(TargetPlanner):
             self._action_cooldown_until,
         )
         return max(0, round((deadline - now) * 1000))
+
+    def _observe_map_settle(
+        self,
+        frame: Frame,
+        detections: Sequence[Detection],
+    ) -> bool:
+        """Hold new dinosaur taps until the post-hunt map motion settles."""
+
+        if not self._map_settle_active:
+            return False
+
+        self._map_settle_observed_frames += 1
+        anchors = [
+            item for item in detections if item.type == self.center_anchor_type
+        ]
+        if anchors:
+            anchor = min(
+                anchors,
+                key=lambda item: hypot(
+                    item.x - frame.width / 2,
+                    item.y - frame.height / 2,
+                ),
+            )
+            current = (float(anchor.x), float(anchor.y))
+            previous = self._map_settle_anchor
+            if (
+                previous is not None
+                and hypot(current[0] - previous[0], current[1] - previous[1])
+                <= self.map_settle_tolerance_px
+            ):
+                self._map_settle_stable_frames += 1
+            else:
+                self._map_settle_stable_frames = 1
+            self._map_settle_anchor = current
+            self._map_settle_dinosaur = None
+        else:
+            dinosaurs = [
+                item for item in detections if item.type == self.dinosaur_type
+            ]
+            if dinosaurs:
+                previous = self._map_settle_dinosaur
+                if previous is None:
+                    dinosaur = min(
+                        dinosaurs,
+                        key=lambda item: hypot(
+                            item.x - frame.width / 2,
+                            item.y - frame.height / 2,
+                        ),
+                    )
+                else:
+                    dinosaur = min(
+                        dinosaurs,
+                        key=lambda item: hypot(
+                            item.x - previous[0],
+                            item.y - previous[1],
+                        ),
+                    )
+                current = (float(dinosaur.x), float(dinosaur.y))
+                if (
+                    previous is not None
+                    and hypot(current[0] - previous[0], current[1] - previous[1])
+                    <= self.map_settle_tolerance_px
+                ):
+                    self._map_settle_stable_frames += 1
+                else:
+                    self._map_settle_stable_frames = 1
+                self._map_settle_dinosaur = current
+            else:
+                self._map_settle_stable_frames = 0
+                self._map_settle_anchor = None
+                self._map_settle_dinosaur = None
+
+        if (
+            self._map_settle_stable_frames >= self.map_settle_frames
+            or self._map_settle_observed_frames >= self.map_settle_max_frames
+        ):
+            self._map_settle_active = False
+            self._map_settle_observed_frames = 0
+            self._map_settle_stable_frames = 0
+            self._map_settle_anchor = None
+            self._map_settle_dinosaur = None
+            return False
+        return True
 
     def verification_detection_types(self, target_type: str) -> frozenset[str]:
         """Return active hunt exceptions that verification must not filter out."""
@@ -489,6 +596,9 @@ class HuntPlanner(TargetPlanner):
                 ),
             )
             self._last_anchor = (float(anchor.x), float(anchor.y))
+
+        if self._observe_map_settle(frame, detections):
+            return None
 
         if self._mail_stage:
             return self._choose_mail_target(frame, detections)

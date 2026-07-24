@@ -80,6 +80,9 @@ class PlannerConfig:
     ring_width: float = 150.0
     own_path_angle_degrees: float = 7.0
     stalled_recenter_frames: int = 8
+    map_settle_frames: int = 2
+    map_settle_tolerance_px: float = 20.0
+    map_settle_max_frames: int = 12
     bottom_exclusion_px: int = 180
     action_cooldowns_ms: dict[str, int] = field(default_factory=dict)
 
@@ -298,6 +301,13 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
             stalled_recenter_frames=int(
                 planner_data.get("stalled_recenter_frames", 8)
             ),
+            map_settle_frames=int(planner_data.get("map_settle_frames", 2)),
+            map_settle_tolerance_px=float(
+                planner_data.get("map_settle_tolerance_px", 20)
+            ),
+            map_settle_max_frames=int(
+                planner_data.get("map_settle_max_frames", 12)
+            ),
             bottom_exclusion_px=int(planner_data.get("bottom_exclusion_px", 180)),
             action_cooldowns_ms={
                 str(target_type): int(delay)
@@ -425,6 +435,14 @@ def _validate(config: AppConfig) -> None:
         raise ConfigError("planner.own_path_angle_degrees must be between 0 and 180")
     if config.planner.stalled_recenter_frames <= 0:
         raise ConfigError("planner.stalled_recenter_frames must be greater than zero")
+    if config.planner.map_settle_frames <= 0:
+        raise ConfigError("planner.map_settle_frames must be greater than zero")
+    if config.planner.map_settle_tolerance_px < 0:
+        raise ConfigError("planner.map_settle_tolerance_px cannot be negative")
+    if config.planner.map_settle_max_frames < config.planner.map_settle_frames:
+        raise ConfigError(
+            "planner.map_settle_max_frames must be at least map_settle_frames"
+        )
     if config.planner.bottom_exclusion_px < 0:
         raise ConfigError("planner.bottom_exclusion_px cannot be negative")
     if not 0 <= config.detector.default_threshold <= 1:
