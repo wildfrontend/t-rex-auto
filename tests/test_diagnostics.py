@@ -128,3 +128,14 @@ def test_redact_text_removes_bearer_and_home_paths(tmp_path: Path) -> None:
     assert "person@example.org" not in value
     assert "Bearer <redacted>" in value
     assert "<app-root>/logs" in value
+
+
+def test_redact_text_removes_macos_user_home() -> None:
+    value = redact_text(
+        "ADB=/Users/Alice/Library/Android/sdk/platform-tools/adb "
+        "log=/Users/Bob/Desktop/bot.log"
+    )
+
+    assert "Alice" not in value
+    assert "Bob" not in value
+    assert value == "ADB=$HOME/Library/Android/sdk/platform-tools/adb log=$HOME/Desktop/bot.log"

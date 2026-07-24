@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-import time
+import threading
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Protocol
@@ -60,6 +60,7 @@ class BotContext:
     runtime_recovery: RuntimeRecovery | None = None
     state: BotState = BotState.IDLE
     stop_requested: bool = False
+    stop_event: threading.Event = field(default_factory=threading.Event, repr=False)
     frame: Frame | None = None
     detections: list[Detection] = field(default_factory=list)
     target: Target | None = None
@@ -78,9 +79,17 @@ class StateHandler(Protocol):
     def execute(self, context: BotContext) -> BotState: ...
 
 
+def _wait_for_delay(context: BotContext, delay_ms: int) -> bool:
+    """Wait for a delay and return True when a stop request interrupts it."""
+
+    if context.stop_requested or context.stop_event.is_set():
+        return True
+    return context.stop_event.wait(max(0, delay_ms) / 1000)
+
+
 class IdleState:
     def execute(self, context: BotContext) -> BotState:
-        if context.stop_requested:
+        if context.stop_requested or context.stop_event.is_set():
             return BotState.STOPPED
         if context.max_actions and context.action_count >= context.max_actions:
             context.logger.info("Stop | max_actions=%d reached", context.max_actions)
@@ -102,8 +111,10 @@ class CaptureState:
                 _reset_after_runtime_recovery(context)
                 return BotState.IDLE
             if _runtime_recovery_is_blocking(context.runtime_recovery):
-                if context.idle_delay_ms:
-                    time.sleep(context.idle_delay_ms / 1000)
+                if context.idle_delay_ms and _wait_for_delay(
+                    context, context.idle_delay_ms
+                ):
+                    return BotState.STOPPED
                 return BotState.IDLE
         return BotState.DETECT
 
@@ -128,8 +139,8 @@ class PlanningState:
         context.target = context.planner.choose(context.frame, context.detections)
         if context.target is None:
             context.logger.debug("Planning | no actionable target")
-            if context.idle_delay_ms:
-                time.sleep(context.idle_delay_ms / 1000)
+            if context.idle_delay_ms and _wait_for_delay(context, context.idle_delay_ms):
+                return BotState.STOPPED
             return BotState.IDLE
         action_kind = context.target_action_kinds.get(
             context.target.type,
@@ -183,7 +194,9 @@ class ActionState:
                 delay_ms,
                 context.target.type,
             )
-            time.sleep(delay_ms / 1000)
+            if _wait_for_delay(context, delay_ms):
+                context.logger.info("Stop | interrupted post-action wait")
+                return BotState.STOPPED
         return BotState.VERIFY
 
 
@@ -206,8 +219,10 @@ class VerifyState:
             if _runtime_recovery_is_blocking(context.runtime_recovery):
                 context.after_frame = after
                 context.after_detections = []
-                if context.idle_delay_ms:
-                    time.sleep(context.idle_delay_ms / 1000)
+                if context.idle_delay_ms and _wait_for_delay(
+                    context, context.idle_delay_ms
+                ):
+                    return BotState.STOPPED
                 return BotState.VERIFY
         after_detections = context.detector.detect(after)
         context.after_frame = after
@@ -333,6 +348,7 @@ class BotEngine:
 
     def stop(self) -> None:
         self.context.stop_requested = True
+        self.context.stop_event.set()
 
     def close(self) -> None:
         self.context.capture_provider.close()
