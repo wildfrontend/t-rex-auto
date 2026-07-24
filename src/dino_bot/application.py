@@ -78,6 +78,7 @@ def create_engine(config: AppConfig, *, verbose: bool = False) -> BotEngine:
         history_limit=config.planner.history_limit,
         recenter_every=config.planner.recenter_every,
         own_path_radius=config.planner.own_path_radius,
+        anchor_exclusion_radius=config.planner.anchor_exclusion_radius,
         mail_after_hunts=config.planner.mail_after_hunts,
         capacity_wait_seconds=config.planner.capacity_wait_seconds,
         ring_width=config.planner.ring_width,
