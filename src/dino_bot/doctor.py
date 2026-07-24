@@ -72,10 +72,13 @@ def run_checks(config: AppConfig) -> list[Check]:
     try:
         adb = AdbClient(config.adb)
         checks.append(Check("ADB executable", True, adb.executable))
-        devices = adb.devices()
-        ready = [item for item in devices if item.state == "device"]
+        selected = adb.ensure_ready()
         checks.append(
-            Check("ADB device", bool(ready), ", ".join(item.serial for item in ready) or "none")
+            Check(
+                "ADB device",
+                True,
+                f"selected={selected.serial} {selected.description}".strip(),
+            )
         )
     except Exception as exc:
         checks.append(Check("ADB", False, str(exc)))

@@ -9,6 +9,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Sequence
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -31,6 +32,7 @@ class AdbClient:
     def __init__(self, config: AdbConfig):
         self.config = config
         self.executable = self._resolve_executable(config.executable)
+        self._selected_serial: str | None = None
 
     @staticmethod
     def _resolve_executable(configured: str | None) -> str:
@@ -69,10 +71,33 @@ class AdbClient:
 
     def _command(self, args: Sequence[str], use_serial: bool = True) -> list[str]:
         command = [self.executable]
-        if use_serial and self.config.serial:
-            command.extend(["-s", self.config.serial])
+        configured_serial = self._configured_serial()
+        serial = self._selected_serial or (
+            configured_serial if configured_serial != "auto" else None
+        )
+        if use_serial and serial:
+            command.extend(["-s", serial])
         command.extend(args)
         return command
+
+    def _configured_serial(self) -> str:
+        return (self.config.serial or "auto").strip() or "auto"
+
+    def _configured_fallback_serial(self) -> str | None:
+        serial = (self.config.fallback_serial or "").strip()
+        return serial or None
+
+    @staticmethod
+    def _is_network_or_emulator_serial(serial: str) -> bool:
+        return (
+            serial.startswith("emulator-")
+            or serial.startswith("adb-")
+            or ":" in serial
+        )
+
+    @property
+    def selected_serial(self) -> str | None:
+        return self._selected_serial
 
     def run(
         self,
@@ -99,9 +124,16 @@ class AdbClient:
         return completed.stdout.decode("utf-8", errors="replace").strip()
 
     def connect(self) -> str:
-        if not self.config.serial:
-            return "serial not configured"
-        return str(self.run(["connect", self.config.serial], use_serial=False))
+        serial = self._configured_serial()
+        if serial == "auto":
+            serial = self._configured_fallback_serial() or ""
+        if not serial:
+            return "no ADB network fallback configured"
+        if not self._is_network_or_emulator_serial(serial):
+            return "USB device does not require adb connect"
+        if serial.startswith("emulator-"):
+            return "local emulator does not require adb connect"
+        return str(self.run(["connect", serial], use_serial=False))
 
     def devices(self) -> list[DeviceInfo]:
         output = str(self.run(["devices", "-l"], use_serial=False))
@@ -121,19 +153,88 @@ class AdbClient:
         return devices
 
     def ensure_ready(self) -> DeviceInfo:
-        if self.config.connect_on_start and self.config.serial:
+        configured_serial = self._configured_serial()
+        if (
+            self.config.connect_on_start
+            and configured_serial != "auto"
+            and self._is_network_or_emulator_serial(configured_serial)
+        ):
             self.connect()
         devices = self.devices()
         ready = [item for item in devices if item.state == "device"]
-        if self.config.serial:
-            ready = [item for item in ready if item.serial == self.config.serial]
-        if not ready:
-            wanted = self.config.serial or "any device"
+        if configured_serial != "auto":
+            ready = [item for item in ready if item.serial == configured_serial]
+            if not ready:
+                raise AdbError(
+                    f"No ready ADB device for {configured_serial}. "
+                    "Authorize USB debugging or enable emulator ADB."
+                )
+            selected = ready[0]
+            if (
+                self.config.require_usb
+                and self._is_network_or_emulator_serial(selected.serial)
+            ):
+                raise AdbError(
+                    f"Configured ADB device {selected.serial} is not a USB device."
+                )
+        else:
+            if self.config.require_usb:
+                selected = self._select_usb_device(ready)
+            elif (
+                not ready
+                and self.config.connect_on_start
+                and self._configured_fallback_serial()
+            ):
+                with suppress(AdbError):
+                    self.connect()
+                devices = self.devices()
+                ready = [item for item in devices if item.state == "device"]
+                selected = self._select_automatic_device(ready)
+            else:
+                selected = self._select_automatic_device(ready)
+        self._selected_serial = selected.serial
+        return selected
+
+    @classmethod
+    def _select_usb_device(cls, ready: Sequence[DeviceInfo]) -> DeviceInfo:
+        usb_devices = [
+            item
+            for item in ready
+            if not cls._is_network_or_emulator_serial(item.serial)
+        ]
+        if len(usb_devices) == 1:
+            return usb_devices[0]
+        if len(usb_devices) > 1:
+            serials = ", ".join(item.serial for item in usb_devices)
             raise AdbError(
-                f"No ready ADB device for {wanted}. "
-                "Enable Android Debug Bridge in BlueStacks settings."
+                f"Multiple USB ADB devices are ready: {serials}. "
+                "Set adb.serial explicitly to avoid controlling the wrong device."
             )
-        return ready[0]
+        raise AdbError(
+            "No USB Android device is ready. Connect one device, enable USB debugging, "
+            "and authorize this computer."
+        )
+
+    @classmethod
+    def _select_automatic_device(cls, ready: Sequence[DeviceInfo]) -> DeviceInfo:
+        usb_devices = [
+            item
+            for item in ready
+            if not cls._is_network_or_emulator_serial(item.serial)
+        ]
+        if usb_devices:
+            return cls._select_usb_device(ready)
+        if len(ready) == 1:
+            return ready[0]
+        if not ready:
+            raise AdbError(
+                "No ready ADB device. Authorize USB debugging or enable emulator ADB."
+            )
+        serials = ", ".join(item.serial for item in ready)
+        raise AdbError(
+            f"Multiple non-USB ADB devices are ready: {serials}. "
+            "Set adb.serial explicitly to avoid controlling the wrong device."
+        )
 
     def display_size(self) -> tuple[int, int]:
         output = str(self.run(["shell", "wm", "size"]))

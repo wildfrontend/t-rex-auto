@@ -49,7 +49,9 @@ class CaptureConfig:
 @dataclass(frozen=True, slots=True)
 class AdbConfig:
     executable: str | None = None
-    serial: str | None = "127.0.0.1:5555"
+    serial: str | None = "auto"
+    fallback_serial: str | None = "127.0.0.1:5555"
+    require_usb: bool = False
     connect_on_start: bool = True
     timeout: float = 5.0
 
@@ -255,7 +257,9 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
         ),
         adb=AdbConfig(
             executable=adb_data.get("executable"),
-            serial=adb_data.get("serial"),
+            serial=adb_data.get("serial", "auto"),
+            fallback_serial=adb_data.get("fallback_serial", "127.0.0.1:5555"),
+            require_usb=bool(adb_data.get("require_usb", False)),
             connect_on_start=bool(adb_data.get("connect_on_start", True)),
             timeout=float(adb_data.get("timeout", 5.0)),
         ),
