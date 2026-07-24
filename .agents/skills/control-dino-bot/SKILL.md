@@ -1,29 +1,45 @@
 ---
 name: control-dino-bot
-description: Safely inspect and operate the local Dino Mutant Bot through its allowlisted status API and control-windows.ps1 entrypoint. Use when the user asks for hunting progress, current Bot status, failures, recent actions, health checks, screenshots, environment diagnostics, starting, stopping, restarting, changing the fast/safe launch profile, or using a non-default local status port. Never use this skill for arbitrary ADB actions, game exploration, or unrequested process control.
+description: Safely inspect and operate the local Dino Mutant Bot through its allowlisted status API and fixed Windows or macOS controller. Use when the user asks for hunting progress, current Bot status, failures, recent actions, health checks, screenshots, environment diagnostics, starting, stopping, restarting, changing the fast/safe launch profile, or using a non-default local status port. Never use this skill for arbitrary ADB actions, game exploration, or unrequested process control.
 ---
 
 # Control Dino Mutant Bot
 
-Use only the Bot's structured localhost API and the fixed Windows controller. Keep all access on
+Use only the Bot's structured localhost API and the fixed platform controller. Keep all access on
 `127.0.0.1`; never expose the service to a LAN or public address.
 
 ## Resolve the controller
 
-Resolve the skill directory, then go up three directories to get `BOT_ROOT`. Use the first existing
-path below without searching elsewhere:
+Resolve the skill directory, then go up three directories to get `BOT_ROOT`. Detect the current
+operating system and use the first existing path for that platform without searching elsewhere.
+
+Windows:
 
 1. `BOT_ROOT/app/scripts/control-windows.ps1` for a deployed Bot folder.
 2. `BOT_ROOT/scripts/control-windows.ps1` for a source checkout.
 
-If neither path exists, stop and report that the Bot controller is missing. In WSL, convert this
-exact path with `wslpath -w` before passing it to `powershell.exe`; do not scan the filesystem.
+macOS:
 
-Use this command shape:
+1. `BOT_ROOT/app/scripts/control-macos.py` for a deployed Bot folder.
+2. `BOT_ROOT/scripts/control-macos.py` for a source checkout.
+
+If no controller exists for the current platform, stop and report that the Bot controller is
+missing. In WSL, convert the exact Windows controller path with `wslpath -w` before passing it to
+`powershell.exe`; do not scan the filesystem.
+
+Use the matching command shape.
+
+Windows:
 
 ```powershell
 powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
   -File <control-windows.ps1> -Action <action> -StatusPort <port>
+```
+
+macOS:
+
+```bash
+python3 <control-macos.py> <action> --status-port <port>
 ```
 
 Use port `8765` unless the user gives another port or the interactive launcher reports a different
@@ -36,6 +52,12 @@ For progress, status, failure, stuck, black-screen, settings, or recent-action q
 
 ```powershell
 ... -Action status -StatusPort 8765
+```
+
+On macOS, use:
+
+```bash
+... status --status-port 8765
 ```
 
 Treat `successful_hunts` as confirmed hunts. Report `current_stage`, `successful_hunts`,
@@ -60,15 +82,25 @@ The controller enforces confirmation. Pass `-Confirm` only after verifying expli
 ... -Action restart -Speed fast -StatusPort 8765 -Confirm
 ```
 
+On macOS, use:
+
+```bash
+... start   --speed fast --status-port 8765 --confirm
+... stop                 --status-port 8765 --confirm
+... restart --speed fast --status-port 8765 --confirm
+```
+
 Allow only `fast` or `safe`. Use the user's stated profile; otherwise preserve the known current
 profile, or use `fast` only for a new start when no current profile is known. A restart may take up
 to 20 seconds. After a start or restart, query status once and report the result.
 
-For custom millisecond timings or changing the port interactively, direct the user to the Chinese
-control window: `[T]` changes timings and `[P]` changes the local API port. Do not edit
-`config.json` or source code as a substitute for a runtime control request. Port cleanup is also a
-human-only launcher action: tell the user to use `[K]` when it is offered and enter the displayed
-confirmation token themselves; never reproduce that action with process commands.
+On Windows, for custom millisecond timings or changing the port interactively, direct the user to
+the Chinese control window: `[T]` changes timings and `[P]` changes the local API port. On macOS,
+the fixed controller supports `fast` or `safe` and an explicit `--status-port`; custom millisecond
+timings are not exposed through this skill. Do not edit `config.json` or source code as a substitute
+for a runtime control request. Windows port cleanup is also a human-only launcher action: tell the
+user to use `[K]` when it is offered and enter the displayed confirmation token themselves; never
+reproduce that action with process commands.
 
 ## Allowed HTTP surface
 

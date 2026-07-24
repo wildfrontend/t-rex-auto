@@ -22,16 +22,30 @@ class Check:
     required: bool = True
 
 
+def platform_supports_capture(config: AppConfig, system: str | None = None) -> bool:
+    """Return whether the configured capture backend is supported on this OS."""
+
+    operating_system = system or platform.system()
+    return operating_system == "Windows" or (
+        operating_system == "Darwin" and config.capture.backend == "adb"
+    )
+
+
 def run_checks(config: AppConfig) -> list[Check]:
+    operating_system = platform.system()
     checks = [
         Check("Python", sys.version_info >= (3, 12), platform.python_version()),
-        Check("Operating system", platform.system() == "Windows", platform.platform()),
+        Check(
+            "Operating system and capture backend",
+            platform_supports_capture(config, operating_system),
+            f"{platform.platform()} | capture={config.capture.backend}",
+        ),
     ]
     for module in ("numpy", "cv2", "mss"):
         checks.append(
             Check(f"Dependency {module}", importlib.util.find_spec(module) is not None, "installed")
         )
-    if platform.system() == "Windows":
+    if operating_system == "Windows":
         checks.append(
             Check(
                 "Dependency win32gui",
@@ -65,7 +79,7 @@ def run_checks(config: AppConfig) -> list[Check]:
         )
     except Exception as exc:
         checks.append(Check("ADB", False, str(exc)))
-    if platform.system() == "Windows":
+    if operating_system == "Windows":
         try:
             hwnd = BlueStacksWindowFinder(
                 config.capture.window_titles,
