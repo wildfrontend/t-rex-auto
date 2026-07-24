@@ -142,7 +142,7 @@
   },
   "workflow": {
     "max_cycles": 0,
-    "complete_on": ["mail_close_button"]
+    "complete_on": ["mail_reward_collect_button"]
   },
   "recovery": {
     "enabled": true,
