@@ -87,6 +87,11 @@ def test_project_config_uses_short_no_available_verification_delay() -> None:
         "map_center_egg",
         "mailbox_button",
     }
+    assert set(config.verify.success_transitions["forest_recenter_button"]) == {
+        "map_center_egg",
+        "map_exit_nest_button",
+        "mailbox_button",
+    }
 
 
 def test_config_rejects_negative_anchor_exclusion_radius(tmp_path: Path) -> None:
@@ -420,6 +425,33 @@ def test_hunt_planner_retries_forest_when_recenter_tap_is_ignored() -> None:
 
     assert planner.choose(frame, [centered_anchor]) is None
     resumed = planner.choose(frame, [centered_anchor, dinosaur])
+    assert resumed is not None and resumed.type == "dinosaur"
+
+
+def test_hunt_planner_recovers_when_center_anchor_is_missed_after_recenter() -> None:
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(
+        (
+            "forest_recenter_button",
+            "map_exit_nest_button",
+            "mailbox_button",
+            "dinosaur",
+        ),
+        safe_margin=80,
+    )
+    forest_button = Detection("forest_recenter_button", 841, 1295, 1.0)
+    exit_button = Detection("map_exit_nest_button", 841, 1295, 1.0)
+    mailbox = Detection("mailbox_button", 60, 1250, 1.0)
+    dinosaur = Detection("dinosaur", 500, 820, 0.9)
+    centered_map_without_anchor = [exit_button, mailbox, dinosaur]
+
+    first_attempt = planner.choose(frame, [forest_button])
+    assert first_attempt is not None and first_attempt.type == "forest_recenter_button"
+
+    # The forest button disappeared and map landmarks prove the transition
+    # completed even though the animated center egg was not detected.
+    assert planner.choose(frame, centered_map_without_anchor) is None
+    resumed = planner.choose(frame, centered_map_without_anchor)
     assert resumed is not None and resumed.type == "dinosaur"
 
 
