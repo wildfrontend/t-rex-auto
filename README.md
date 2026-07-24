@@ -6,9 +6,8 @@
 目前完成 Auto Hunt MVP：辨識恐龍、選擇最大隊伍、發動狩獵並驗證結果。後續功能以
 Feature 方式加入，不需要修改核心狀態機。
 
-目前版本：`v0.2.0`。這一版加入 Apple Silicon macOS／BlueStacks Air 支援，
-並保留 Windows 雙視窗啟動器、可調整狩獵速度、本機 AI 狀態接口，以及黑畫面與
-地圖復原保護：
+目前版本：`v0.1.3`。這一版加入可直接交給 Codex 或維護者分析的一鍵診斷包，
+並保留 v0.1.2 的雙視窗啟動器、可調整狩獵速度及本機 AI 狀態接口：
 
 - macOS 可雙擊 `start-bot.command` 自動建立隔離環境、診斷 ADB 並在背景啟動。
 - macOS 使用 `caffeinate` 在 Bot 執行期間防止系統睡眠，仍允許螢幕休眠。
@@ -17,6 +16,8 @@ Feature 方式加入，不需要修改核心狀態機。
 - 一個視窗顯示原始即時 LOG，另一個繁體中文互動視窗提供統計、調速、重啟與診斷工具。
 - `127.0.0.1:8765` 提供結構化狀態與白名單停止接口，讓同一台電腦上的 AI 安全操作。
 - Repository 內附 `.agents/skills/control-dino-bot`，限制 AI 使用固定接口與控制命令。
+- 控制視窗按 `E` 會輸出經過敏感資訊遮蔽的診斷 ZIP，不需要提供遠端控制權。
+- 診斷包包含環境檢查、最新工作階段、近期日誌、有效設定及 Codex 分析指引；截圖必須另外明確選擇。
 - Windows 啟動器預設使用 `fast` 模式，也可互動切換 `safe` 或自訂毫秒數。
 - CLI 可個別覆寫選恐龍、狩獵、確認及空轉掃描延遲。
 - 黑畫面期間暫停 Detect/Verify，畫面恢復後才繼續原操作。
@@ -143,6 +144,7 @@ start-bot.command
 ```bash
 python3 scripts/control-macos.py status
 python3 scripts/control-macos.py doctor
+python3 scripts/control-macos.py diagnostics
 python3 scripts/control-macos.py snapshot
 python3 scripts/control-macos.py stop --confirm
 python3 scripts/control-macos.py restart --speed fast --confirm
@@ -231,7 +233,7 @@ PYTHONPATH=/tmp/t-rex-auto-deps:src python3 main.py template \
   "type": "device_history_confirm_button",
   "file": "templates/device-history-confirm-button.png",
   "threshold": 0.82,
-  "scales": [0.88, 0.9, 1.0],
+  "scales": [0.88, 0.9, 0.95, 1.0],
   "click_offset": [86, 41]
 }
 ```
@@ -274,6 +276,7 @@ S  查詢成功狩獵、操作、失敗、黑屏、重啟及最近動作
 T  改用 fast、safe 或自訂時間，並以新參數重啟 Bot
 P  切換本機接口 Port；Port 被占用時會顯示程式與 PID
 D  環境檢查、ADB 截圖、完整 JSON、原始日誌、開啟日誌資料夾
+E  產生不含截圖的 Codex 診斷包並開啟輸出資料夾
 A  顯示本機 AI API 端點
 R  使用目前參數重啟
 Q  停止 Bot 並關閉控制流程
@@ -287,7 +290,7 @@ D:\DinoMutantBot\start-bot.cmd safe
 D:\DinoMutantBot\start-bot.cmd fast 8877
 ```
 
-`fast` 使用 500/1500/2000 ms 的選恐龍、狩獵、確認延遲；`safe` 則使用
+`fast` 使用 300/900/1200 ms 的選恐龍、狩獵、確認延遲；`safe` 則使用
 1500/5000/3000 ms。
 
 完整日誌保存在 `app\logs\YYYYMMDD.log`。
@@ -323,7 +326,7 @@ $control-dino-bot 用 8877 Port 查詢目前狀態
 $control-dino-bot 請停止 Bot
 ```
 
-Skill 只允許 `status/start/stop/restart/doctor/snapshot`。啟動、停止及重啟必須由使用者
+Skill 只允許 `status/start/stop/restart/doctor/diagnostics/snapshot`。啟動、停止及重啟必須由使用者
 當次明確要求，控制腳本也會強制檢查 `-Confirm`；不允許 AI 自行執行 ADB 點擊、
 掃描 Port 或探索遊戲。控制腳本會先驗證 `/health` 服務身分；停止與重啟還會確認
 API PID、Port 占用者與 Bot 命令列一致，驗證失敗時不會送出控制請求。
@@ -334,6 +337,28 @@ API PID、Port 占用者與 Bot 命令列一致，驗證失敗時不會送出控
 D:\DinoMutantBot\python\python.exe D:\DinoMutantBot\app\main.py `
   --config D:\DinoMutantBot\app\config.json status --json
 ```
+
+### Codex 診斷包
+
+控制視窗按 `E` 可直接產生不含截圖的安全診斷包，輸出位置為：
+
+```text
+D:\DinoMutantBot\app\diagnostics\dino-diagnostic-YYYYMMDD-HHMMSS.zip
+```
+
+診斷選單 `D → 7` 才會加入目前遊戲畫面，選擇前會顯示明確提示。ZIP 內含
+`summary.json`、`status.json`、`doctor.json`、遮蔽後的 `settings.json`、近期日誌及
+`README_FOR_CODEX.md`。可直接把 ZIP 上傳給 Codex，請它說明故障原因、使用者可採取的
+步驟，以及哪些問題需要修改 Bot 程式。診斷包不會建立遠端連線，也不包含任意控制接口。
+
+也可以從終端產生：
+
+```powershell
+D:\DinoMutantBot\python\python.exe D:\DinoMutantBot\app\main.py `
+  --config D:\DinoMutantBot\app\config.json diagnostics
+```
+
+只有在使用者同意分享畫面時才加上 `--include-screenshot`。
 
 先用 Debug 模式限制一次操作：
 
@@ -406,6 +431,8 @@ D:\DinoMutantBot\python\python.exe `
 - `planner.mail_after_hunts`: 累積多少次狩獵後收取信箱，預設 `30`。
 - `planner.capacity_wait_seconds`: 同時派出隊伍達 `10/10` 時的等待秒數，預設
   `300` 秒。
+- `post_action_delays.no_available_dinosaurs`: 關閉「沒有可用恐龍」提示後的
+  驗證等待時間，預設 `300` ms。
 - `post_action_delays.target_too_strong`: 關閉過強目標後的等待時間，預設
   `300000` ms（5 分鐘）。
 - `recovery.black_screen_timeout_seconds`: 持續黑畫面多久後重啟遊戲，預設 `45` 秒。

@@ -1,6 +1,6 @@
 ---
 name: control-dino-bot
-description: Safely inspect and operate the local Dino Mutant Bot through its allowlisted status API and fixed Windows or macOS controller. Use when the user asks for hunting progress, current Bot status, failures, recent actions, health checks, screenshots, environment diagnostics, starting, stopping, restarting, changing the fast/safe launch profile, or using a non-default local status port. Never use this skill for arbitrary ADB actions, game exploration, or unrequested process control.
+description: Safely inspect and operate the local Dino Mutant Bot through its allowlisted status API and fixed Windows or macOS controller. Use when the user asks for hunting progress, current Bot status, failures, recent actions, health checks, diagnostic bundles, screenshots, environment diagnostics, starting, stopping, restarting, changing the fast/safe launch profile, or using a non-default local status port. Never use this skill for arbitrary ADB actions, game exploration, or unrequested process control.
 ---
 
 # Control Dino Mutant Bot
@@ -69,6 +69,16 @@ Run `-Action doctor` only when the user asks to diagnose prerequisites or connec
 `-Action snapshot` only when the user explicitly asks for a current screenshot; report the returned
 file path.
 
+Run `-Action diagnostics` only when the user explicitly asks to create or export a diagnostic bundle.
+It creates a sanitized ZIP without a screenshot or any remote connection. Report the returned file
+path and tell the user they can inspect it before uploading it to Codex or a maintainer.
+
+On macOS, use:
+
+```bash
+... diagnostics --status-port 8765
+```
+
 ## State-changing requests
 
 Only start, stop, or restart when the user explicitly requests that action in the current turn.
@@ -118,7 +128,8 @@ Do not try other routes, methods, parameters, hosts, or payloads.
 
 - Do not run `adb`, `taskkill`, `Stop-Process`, or arbitrary shell commands.
 - Do not click, tap, swipe, or explore the game UI directly.
-- Do not change source files, configuration, templates, or detector assets.
+- Do not change source files, configuration, templates, or detector assets. The `diagnostics` action
+  may only create its timestamped ZIP under the app's `diagnostics` directory.
 - Do not expose, tunnel, or bind the API beyond `127.0.0.1`.
 - Do not guess ports, runtime folders, credentials, or device identifiers.
 - Stop on `confirmation_required`, `status_api_unavailable`, or an unknown response; report it
@@ -128,5 +139,6 @@ Do not try other routes, methods, parameters, hosts, or payloads.
 
 ## Report results
 
-Answer in the user's language. State the action performed, port used, whether it succeeded, and the
-key status counts. Mention that the interface is local-only when explaining connection behavior.
+Answer in the user's language. State the action performed, port used when applicable, whether it
+succeeded, and the key status counts or diagnostic bundle path. Mention that the interface is
+local-only when explaining connection behavior.

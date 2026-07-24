@@ -12,7 +12,7 @@
     "hunt_button": 5000,
     "hunt_confirm_button": 3000,
     "map_center_egg": 5000,
-    "no_available_dinosaurs": 300000,
+    "no_available_dinosaurs": 300,
     "target_too_strong": 300000
   },
   "target_actions": {
