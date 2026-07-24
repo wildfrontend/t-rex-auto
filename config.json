@@ -59,7 +59,7 @@
     "executable": null,
     "serial": "127.0.0.1:5555",
     "connect_on_start": true,
-    "timeout": 5.0
+    "timeout": 30.0
   },
   "detector": {
     "manifest": "assets/manifest.json",
