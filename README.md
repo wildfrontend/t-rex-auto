@@ -142,6 +142,14 @@ start-bot.command
 若 macOS 阻止開啟，可在 Finder
 對檔案按右鍵後選擇「打開」一次。
 
+要明確關閉 Bot，可直接雙擊 `stop-bot.command`。它會驗證本機 API、Port、PID
+及執行路徑，送出安全停止要求，並等待程序真正退出後才顯示完成。終端用法：
+
+```bash
+./stop-bot.command
+./stop-bot.command 8877
+```
+
 終端控制命令：
 
 ```bash

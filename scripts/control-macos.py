@@ -28,6 +28,12 @@ SCRIPT_DIR = APP_ROOT / "scripts"
 PYTHON_EXECUTABLE = APP_ROOT / ".venv" / "bin" / "python"
 RUN_SCRIPT = SCRIPT_DIR / "run-macos.sh"
 MAIN_SCRIPT = APP_ROOT / "main.py"
+ALLOWED_MAIN_SCRIPTS = frozenset(
+    {
+        (SOURCE_APP_ROOT / "main.py").resolve(),
+        (DEPLOYED_APP_ROOT / "main.py").resolve(),
+    }
+)
 CONFIG_FILE = APP_ROOT / "config.json"
 LOG_FILE = APP_ROOT / "logs" / "macos-launcher.log"
 SERVICE_NAME = "dino-mutant-bot-status"
@@ -111,7 +117,11 @@ def assert_api_identity(port: int, *, require_process: bool = False) -> dict[str
         raise ControlError("status_api_process_identity_mismatch")
 
     command = process_command(raw_pid)
-    main_matches = any(Path(item).resolve() == MAIN_SCRIPT for item in command if "main.py" in item)
+    main_matches = any(
+        Path(item).resolve() in ALLOWED_MAIN_SCRIPTS
+        for item in command
+        if "main.py" in item
+    )
     port_matches = any(
         command[index : index + 2] == ["--status-port", str(port)]
         for index in range(max(0, len(command) - 1))
@@ -184,6 +194,13 @@ def process_exists(pid: int) -> bool:
     return True
 
 
+def wait_for_process_exit(pid: int, timeout_seconds: float = 20) -> bool:
+    deadline = time.monotonic() + timeout_seconds
+    while process_exists(pid) and time.monotonic() < deadline:
+        time.sleep(0.25)
+    return not process_exists(pid)
+
+
 def stop_bot(port: int) -> tuple[dict[str, Any], int]:
     health = assert_api_identity(port, require_process=True)
     response = request_json(port, "/control/stop", method="POST")
@@ -243,12 +260,15 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.action == "stop":
             require_confirmation(args.confirm)
-            response, _ = stop_bot(args.status_port)
+            response, process_id = stop_bot(args.status_port)
+            if not wait_for_process_exit(process_id):
+                raise ControlError("stop_timeout", "Bot did not stop within 20 seconds")
             write_json(
                 {
                     "ok": True,
                     "action": "stop",
-                    "result": "graceful_stop_requested",
+                    "result": "stopped",
+                    "process_id": process_id,
                     "response": response,
                 }
             )
@@ -256,10 +276,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.action == "restart":
             require_confirmation(args.confirm)
             _, process_id = stop_bot(args.status_port)
-            deadline = time.monotonic() + 20
-            while process_exists(process_id) and time.monotonic() < deadline:
-                time.sleep(0.25)
-            if process_exists(process_id):
+            if not wait_for_process_exit(process_id):
                 raise ControlError("stop_timeout", "Bot did not stop within 20 seconds")
             result = start_bot(args.speed, args.status_port)
             result["action"] = "restart"
