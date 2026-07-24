@@ -697,6 +697,8 @@ class HuntPlanner(TargetPlanner):
                     self._recenter_stage = 0
                     self._last_anchor = (frame.width / 2, frame.height / 2)
                     self._map_idle_frames = 0
+                    if self._total_hunt_count >= self.mail_after_hunts:
+                        self._mail_stage = 1
                     return None
             return super().choose(frame, anchors)
 
