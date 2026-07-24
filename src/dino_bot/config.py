@@ -12,6 +12,30 @@ class ConfigError(ValueError):
     pass
 
 
+DEFAULT_SPEED_PROFILES: dict[str, dict[str, int]] = {
+    "safe": {
+        "click_delay_ms": 1500,
+        "dinosaur_delay_ms": 1500,
+        "hunt_button_delay_ms": 5000,
+        "hunt_confirm_delay_ms": 3000,
+        "idle_delay_ms": 500,
+        "poll_interval_ms": 250,
+    },
+    "fast": {
+        "click_delay_ms": 300,
+        "dinosaur_delay_ms": 300,
+        "hunt_button_delay_ms": 900,
+        "hunt_confirm_delay_ms": 1200,
+        "idle_delay_ms": 250,
+        "poll_interval_ms": 100,
+    },
+}
+
+
+def _default_speed_profiles() -> dict[str, dict[str, int]]:
+    return {name: dict(values) for name, values in DEFAULT_SPEED_PROFILES.items()}
+
+
 @dataclass(frozen=True, slots=True)
 class CaptureConfig:
     backend: Literal["mss", "adb"] = "mss"
@@ -54,6 +78,7 @@ class PlannerConfig:
     own_path_angle_degrees: float = 7.0
     stalled_recenter_frames: int = 8
     bottom_exclusion_px: int = 180
+    action_cooldowns_ms: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,6 +124,10 @@ class AppConfig:
     verify_retry: int = 3
     save_debug_image: bool = False
     idle_delay: int = 500
+    transition_poll_interval: int = 250
+    speed_profiles: dict[str, dict[str, int]] = field(
+        default_factory=_default_speed_profiles
+    )
     max_actions: int = 0
     capture: CaptureConfig = field(default_factory=CaptureConfig)
     adb: AdbConfig = field(default_factory=AdbConfig)
@@ -154,6 +183,17 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
     training_data = _section(data, "training")
     workflow_data = _section(data, "workflow")
     recovery_data = _section(data, "recovery")
+    speed_profiles_data = _section(data, "speed_profiles")
+
+    speed_profiles = _default_speed_profiles()
+    for profile_name, raw_profile in speed_profiles_data.items():
+        if profile_name not in DEFAULT_SPEED_PROFILES:
+            raise ConfigError(f"unknown speed profile: {profile_name}")
+        if not isinstance(raw_profile, dict):
+            raise ConfigError(f"speed_profiles.{profile_name} must be a JSON object")
+        speed_profiles[profile_name].update(
+            {str(key): int(value) for key, value in raw_profile.items()}
+        )
 
     viewport_raw = capture_data.get("viewport")
     auto_viewport = isinstance(viewport_raw, str) and viewport_raw.lower() == "auto"
@@ -199,6 +239,8 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
         verify_retry=int(data.get("verify_retry", 3)),
         save_debug_image=bool(data.get("save_debug_image", False)),
         idle_delay=int(data.get("idle_delay", 500)),
+        transition_poll_interval=int(data.get("transition_poll_interval", 250)),
+        speed_profiles=speed_profiles,
         max_actions=int(data.get("max_actions", 0)),
         capture=CaptureConfig(
             backend=backend,  # type: ignore[arg-type]
@@ -245,6 +287,12 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
                 planner_data.get("stalled_recenter_frames", 8)
             ),
             bottom_exclusion_px=int(planner_data.get("bottom_exclusion_px", 180)),
+            action_cooldowns_ms={
+                str(target_type): int(delay)
+                for target_type, delay in _section(
+                    planner_data, "action_cooldowns_ms"
+                ).items()
+            },
         ),
         verify=VerifyConfig(
             max_distance=float(verify_data.get("max_distance", 35)),
@@ -297,9 +345,30 @@ def _validate(config: AppConfig) -> None:
     if config.capture_fps <= 0:
         raise ConfigError("capture_fps must be greater than zero")
     if config.click_delay < 0 or config.idle_delay < 0:
-        raise ConfigError("delays cannot be negative")
+        raise ConfigError("click_delay and idle_delay cannot be negative")
+    if config.transition_poll_interval <= 0:
+        raise ConfigError("transition_poll_interval must be greater than zero")
     if any(delay < 0 for delay in config.post_action_delays.values()):
         raise ConfigError("post_action_delays cannot be negative")
+    required_profile_keys = frozenset(DEFAULT_SPEED_PROFILES["fast"])
+    for profile_name, profile in config.speed_profiles.items():
+        unknown = profile.keys() - required_profile_keys
+        if unknown:
+            raise ConfigError(
+                f"speed_profiles.{profile_name} contains unknown keys: "
+                f"{', '.join(sorted(unknown))}"
+            )
+        missing = required_profile_keys - profile.keys()
+        if missing:
+            raise ConfigError(
+                f"speed_profiles.{profile_name} is missing: {', '.join(sorted(missing))}"
+            )
+        if any(value < 0 for value in profile.values()):
+            raise ConfigError(f"speed_profiles.{profile_name} cannot contain negative values")
+        if profile["poll_interval_ms"] <= 0:
+            raise ConfigError(
+                f"speed_profiles.{profile_name}.poll_interval_ms must be greater than zero"
+            )
     if any(action not in {"tap", "back"} for action in config.target_actions.values()):
         raise ConfigError("target_actions values must be tap or back")
     if config.verify_retry < 0:
@@ -330,6 +399,8 @@ def _validate(config: AppConfig) -> None:
         raise ConfigError("planner.mail_after_hunts must be greater than zero")
     if config.planner.capacity_wait_seconds < 0:
         raise ConfigError("planner.capacity_wait_seconds cannot be negative")
+    if any(delay < 0 for delay in config.planner.action_cooldowns_ms.values()):
+        raise ConfigError("planner.action_cooldowns_ms cannot be negative")
     if config.planner.ring_width <= 0:
         raise ConfigError("planner.ring_width must be greater than zero")
     if not 0 <= config.planner.own_path_angle_degrees <= 180:

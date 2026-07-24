@@ -3,6 +3,25 @@
   "debug": false,
   "capture_fps": 10,
   "click_delay": 1500,
+  "transition_poll_interval": 250,
+  "speed_profiles": {
+    "fast": {
+      "click_delay_ms": 300,
+      "dinosaur_delay_ms": 300,
+      "hunt_button_delay_ms": 900,
+      "hunt_confirm_delay_ms": 1200,
+      "idle_delay_ms": 250,
+      "poll_interval_ms": 100
+    },
+    "safe": {
+      "click_delay_ms": 1500,
+      "dinosaur_delay_ms": 1500,
+      "hunt_button_delay_ms": 5000,
+      "hunt_confirm_delay_ms": 3000,
+      "idle_delay_ms": 500,
+      "poll_interval_ms": 250
+    }
+  },
   "post_action_delays": {
     "duplicate_login_close_button": 5000,
     "device_history_confirm_button": 5000,
@@ -13,7 +32,7 @@
     "hunt_confirm_button": 3000,
     "map_center_egg": 5000,
     "no_available_dinosaurs": 300,
-    "target_too_strong": 300000
+    "target_too_strong": 3000
   },
   "target_actions": {
     "no_available_dinosaurs": "tap",
@@ -76,7 +95,10 @@
     "ring_width": 150,
     "own_path_angle_degrees": 7,
     "stalled_recenter_frames": 8,
-    "bottom_exclusion_px": 180
+    "bottom_exclusion_px": 180,
+    "action_cooldowns_ms": {
+      "target_too_strong": 300000
+    }
   },
   "verify": {
     "max_distance": 35,

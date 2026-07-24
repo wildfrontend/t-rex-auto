@@ -28,7 +28,9 @@ from .verification import TargetChangedVerifier
 def create_engine(config: AppConfig, *, verbose: bool = False) -> BotEngine:
     logger = configure_logging(config.logs_dir, verbose=verbose)
     logger.info(
-        "Timing | click=%dms | dinosaur=%dms | hunt=%dms | confirm=%dms | idle=%dms",
+        "Timing | poll=%dms | click=%dms | dinosaur=%dms | hunt=%dms"
+        " | confirm=%dms | idle=%dms",
+        config.transition_poll_interval,
         config.click_delay,
         config.post_action_delays.get("dinosaur", config.click_delay),
         config.post_action_delays.get("hunt_button", config.click_delay),
@@ -81,6 +83,7 @@ def create_engine(config: AppConfig, *, verbose: bool = False) -> BotEngine:
         own_path_angle_degrees=config.planner.own_path_angle_degrees,
         stalled_recenter_frames=config.planner.stalled_recenter_frames,
         bottom_exclusion_px=config.planner.bottom_exclusion_px,
+        action_cooldowns_ms=config.planner.action_cooldowns_ms,
     )
     action = AdbActionDriver(adb)
     verifier = TargetChangedVerifier(
@@ -127,6 +130,7 @@ def create_engine(config: AppConfig, *, verbose: bool = False) -> BotEngine:
             for target_type, action in config.target_actions.items()
         },
         idle_delay_ms=config.idle_delay,
+        transition_poll_interval_ms=config.transition_poll_interval,
         verify_retries=config.verify_retry,
         max_actions=config.max_actions,
         max_cycles=config.workflow.max_cycles,

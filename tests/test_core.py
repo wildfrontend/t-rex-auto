@@ -73,6 +73,8 @@ def test_project_config_uses_short_no_available_verification_delay() -> None:
     config = load_config(Path(__file__).resolve().parents[1] / "config.json")
 
     assert config.post_action_delays["no_available_dinosaurs"] == 300
+    assert config.post_action_delays["target_too_strong"] == 3000
+    assert config.planner.action_cooldowns_ms["target_too_strong"] == 300_000
 
 
 def test_cli_fast_speed_profile_reduces_hunt_delays() -> None:
@@ -90,9 +92,33 @@ def test_cli_fast_speed_profile_reduces_hunt_delays() -> None:
 
     assert result.click_delay == 300
     assert result.idle_delay == 250
+    assert result.transition_poll_interval == 100
     assert result.post_action_delays["dinosaur"] == 300
     assert result.post_action_delays["hunt_button"] == 900
     assert result.post_action_delays["hunt_confirm_button"] == 1200
+
+
+def test_config_speed_profile_is_the_cli_source_of_truth(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.json"
+    config_file.write_text(
+        json.dumps(
+            {
+                "speed_profiles": {
+                    "fast": {
+                        "click_delay_ms": 125,
+                        "poll_interval_ms": 50,
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = apply_run_timing(load_config(config_file), speed="fast")
+
+    assert result.click_delay == 125
+    assert result.transition_poll_interval == 50
+    assert result.post_action_delays["hunt_button"] == 900
 
 
 def test_cli_explicit_timing_overrides_profile() -> None:
@@ -119,6 +145,8 @@ def test_cli_parses_terminal_timing_options() -> None:
             "fast",
             "--hunt-button-delay-ms",
             "1800",
+            "--poll-interval-ms",
+            "75",
             "--status-port",
             "9876",
         ]
@@ -126,6 +154,7 @@ def test_cli_parses_terminal_timing_options() -> None:
 
     assert args.speed == "fast"
     assert args.hunt_button_delay_ms == 1800
+    assert args.poll_interval_ms == 75
     assert args.status_port == 9876
 
 
@@ -640,6 +669,26 @@ def test_hunt_planner_waits_when_concurrent_hunt_capacity_is_full() -> None:
     assert resumed is not None and resumed.type == "dinosaur"
 
 
+def test_hunt_planner_applies_verified_action_cooldown() -> None:
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(
+        ("hunt_button",),
+        action_cooldowns_ms={"target_too_strong": 300_000},
+    )
+    hunt_button = Detection("hunt_button", 450, 1200, 1.0)
+
+    with patch(
+        "dino_bot.planning.time.monotonic",
+        side_effect=[10, 11, 11, 311, 311],
+    ):
+        planner.on_action_success("target_too_strong")
+        assert planner.choose(frame, [hunt_button]) is None
+        assert planner.next_ready_delay_ms() == 299_000
+        resumed = planner.choose(frame, [hunt_button])
+
+    assert resumed is not None and resumed.type == "hunt_button"
+
+
 def test_template_detector_finds_asset(tmp_path: Path) -> None:
     rng = np.random.default_rng(42)
     template = rng.integers(0, 256, (12, 12, 3), dtype=np.uint8)
@@ -915,7 +964,7 @@ def test_engine_runs_complete_feedback_loop() -> None:
     assert capture.closed
 
 
-def test_engine_uses_target_specific_post_action_delay() -> None:
+def test_engine_polls_within_target_specific_transition_timeout() -> None:
     class HuntConfirmDetector:
         def detect(self, frame: Frame) -> list[Detection]:
             if int(frame.image[0, 0, 0]) == 0:
@@ -941,9 +990,53 @@ def test_engine_uses_target_specific_post_action_delay() -> None:
     )
     with patch.object(context.stop_event, "wait", return_value=False) as wait:
         BotEngine(context).run()
-    wait.assert_called_once_with(10.0)
+    wait.assert_called_once_with(0.25)
     assert context.cycle_count == 1
     assert context.action_count == 1
+
+
+def test_engine_detects_transition_without_repeating_action() -> None:
+    class TransitionDetector:
+        def detect(self, frame: Frame) -> list[Detection]:
+            if int(frame.image[0, 0, 0]) == 10:
+                return [make_detection(type="hunt_button")]
+            return []
+
+    now = [0.0]
+    capture = SequenceCapture(
+        [
+            make_frame(10, 1),
+            make_frame(10, 2),
+            make_frame(255, 3),
+        ]
+    )
+    driver = RecordingActionDriver()
+    context = BotContext(
+        capture_provider=capture,
+        detector=TransitionDetector(),
+        planner=TargetPlanner(("hunt_button",)),
+        action_driver=driver,
+        verifier=TargetChangedVerifier(),
+        observer=RuntimeMode(),
+        logger=logging.getLogger("test_engine_transition_polling"),
+        post_action_delays_ms={"hunt_button": 1000},
+        transition_poll_interval_ms=100,
+        idle_delay_ms=0,
+        max_actions=1,
+        clock=lambda: now[0],
+    )
+
+    def advance(seconds: float) -> bool:
+        now[0] += seconds
+        return False
+
+    with patch.object(context.stop_event, "wait", side_effect=advance) as wait:
+        BotEngine(context).run()
+
+    assert [call.args for call in wait.call_args_list] == [(0.1,), (0.1,)]
+    assert len(driver.actions) == 1
+    assert capture.index == 3
+    assert context.last_result is not None and context.last_result.success
 
 
 def test_engine_stop_interrupts_post_action_delay() -> None:

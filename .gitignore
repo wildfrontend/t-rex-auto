@@ -1,5 +1,6 @@
 .venv/
 .venv-win/
+.runtime-macos/
 .deps/
 __pycache__/
 *.py[cod]

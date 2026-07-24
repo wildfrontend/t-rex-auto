@@ -161,6 +161,7 @@ class HuntPlanner(TargetPlanner):
         stalled_recenter_frames: int = 8,
         safe_margin: int = 80,
         bottom_exclusion_px: int = 180,
+        action_cooldowns_ms: dict[str, int] | None = None,
         await_hunt_frames: int = 5,
         **kwargs: Any,
     ) -> None:
@@ -190,6 +191,7 @@ class HuntPlanner(TargetPlanner):
         self.stalled_recenter_frames = max(1, stalled_recenter_frames)
         self.safe_margin = max(0, safe_margin)
         self.bottom_exclusion_px = max(0, bottom_exclusion_px)
+        self.action_cooldowns_ms = dict(action_cooldowns_ms or {})
         self.await_hunt_frames = max(1, await_hunt_frames)
         self._awaiting_hunt_button = False
         self._waited_frames = 0
@@ -200,11 +202,15 @@ class HuntPlanner(TargetPlanner):
         self._last_anchor: tuple[float, float] | None = None
         self._mail_stage = 0
         self._capacity_cooldown_until = 0.0
+        self._action_cooldown_until = 0.0
         self._map_idle_frames = 0
 
     def on_action_success(self, target_type: str) -> None:
         """Commit hunt counters only after the confirmation tap is verified."""
 
+        cooldown_ms = self.action_cooldowns_ms.get(target_type, 0)
+        if cooldown_ms:
+            self._action_cooldown_until = time.monotonic() + cooldown_ms / 1000
         if target_type != self.completion_type:
             return
         self.clear_history()
@@ -225,7 +231,18 @@ class HuntPlanner(TargetPlanner):
         self._last_anchor = None
         self._mail_stage = 0
         self._capacity_cooldown_until = 0.0
+        self._action_cooldown_until = 0.0
         self._map_idle_frames = 0
+
+    def next_ready_delay_ms(self) -> int:
+        """Return the remaining non-UI cooldown without blocking the engine."""
+
+        now = time.monotonic()
+        deadline = max(
+            self._capacity_cooldown_until,
+            self._action_cooldown_until,
+        )
+        return max(0, round((deadline - now) * 1000))
 
     @staticmethod
     def _angle_distance(left: float, right: float) -> float:
@@ -364,6 +381,12 @@ class HuntPlanner(TargetPlanner):
             return super().choose(frame, interruptions)
 
         if any(item.type in self.blocking_types for item in detections):
+            return None
+
+        if (
+            self._action_cooldown_until
+            and time.monotonic() < self._action_cooldown_until
+        ):
             return None
 
         visible_anchors = [

@@ -16,8 +16,15 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-APP_ROOT = SCRIPT_DIR.parent
+CONTROLLER_DIR = Path(__file__).resolve().parent
+SOURCE_APP_ROOT = CONTROLLER_DIR.parent
+DEPLOYED_APP_ROOT = SOURCE_APP_ROOT / ".runtime-macos" / "app"
+APP_ROOT = (
+    DEPLOYED_APP_ROOT
+    if (DEPLOYED_APP_ROOT / "main.py").is_file()
+    else SOURCE_APP_ROOT
+)
+SCRIPT_DIR = APP_ROOT / "scripts"
 PYTHON_EXECUTABLE = APP_ROOT / ".venv" / "bin" / "python"
 RUN_SCRIPT = SCRIPT_DIR / "run-macos.sh"
 MAIN_SCRIPT = APP_ROOT / "main.py"
