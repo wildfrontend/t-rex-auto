@@ -1,6 +1,7 @@
 .venv/
 .venv-win/
 .runtime-macos/
+.runtime-android-usb/
 .deps/
 __pycache__/
 *.py[cod]

@@ -16,10 +16,16 @@ import action as action_facade
 import capture as capture_facade
 import detector as detector_facade
 import planner as planner_facade
-from dino_bot.actions import AdbActionDriver, AdbClient, RecordingActionDriver
+from dino_bot.actions import (
+    AdbActionDriver,
+    AdbClient,
+    AdbError,
+    DeviceInfo,
+    RecordingActionDriver,
+)
 from dino_bot.assets import create_template
 from dino_bot.cli import apply_run_timing, build_parser
-from dino_bot.config import AppConfig, ConfigError, load_config
+from dino_bot.config import AdbConfig, AppConfig, ConfigError, load_config
 from dino_bot.detection import (
     CompositeDetector,
     HuntCapacityDetector,
@@ -82,6 +88,9 @@ def test_project_config_uses_short_no_available_verification_delay() -> None:
     assert config.planner.dinosaur_failure_cooldown_ms == 5_000
     assert config.planner.dinosaur_failure_radius == 80
     assert config.planner.action_cooldowns_ms["target_too_strong"] == 300_000
+    assert config.adb.serial == "auto"
+    assert config.adb.fallback_serial is None
+    assert config.adb.require_usb is True
     assert set(config.verify.success_transitions["hunt_confirm_button"]) == {
         "map_exit_nest_button",
         "map_center_egg",
@@ -98,6 +107,96 @@ def test_config_rejects_negative_anchor_exclusion_radius(tmp_path: Path) -> None
 
     with pytest.raises(ConfigError, match="anchor_exclusion_radius"):
         load_config(config_file)
+
+
+def make_adb_client(
+    serial: str = "auto",
+    *,
+    require_usb: bool = False,
+) -> AdbClient:
+    with patch.object(AdbClient, "_resolve_executable", return_value="/mock/adb"):
+        return AdbClient(AdbConfig(serial=serial, require_usb=require_usb))
+
+
+def test_adb_auto_selects_single_usb_device_over_emulator() -> None:
+    client = make_adb_client()
+    usb = DeviceInfo("R58M123ABC", "device", "usb:1-1 model:Phone")
+    emulator = DeviceInfo("127.0.0.1:5555", "device", "model:BlueStacks")
+
+    with patch.object(client, "devices", return_value=[emulator, usb]):
+        selected = client.ensure_ready()
+
+    assert selected == usb
+    assert client.selected_serial == usb.serial
+    assert client._command(["shell", "wm", "size"])[:3] == [
+        "/mock/adb",
+        "-s",
+        usb.serial,
+    ]
+
+
+def test_adb_auto_falls_back_to_single_emulator() -> None:
+    client = make_adb_client()
+    emulator = DeviceInfo("127.0.0.1:5555", "device", "model:BlueStacks")
+
+    with patch.object(client, "devices", return_value=[emulator]):
+        selected = client.ensure_ready()
+
+    assert selected == emulator
+
+
+def test_adb_auto_connects_configured_fallback_when_no_device_is_listed() -> None:
+    client = make_adb_client()
+    emulator = DeviceInfo("127.0.0.1:5555", "device", "model:BlueStacks")
+
+    with (
+        patch.object(client, "connect", return_value="connected") as connect,
+        patch.object(client, "devices", side_effect=[[], [emulator]]),
+    ):
+        selected = client.ensure_ready()
+
+    assert selected == emulator
+    connect.assert_called_once_with()
+
+
+def test_adb_auto_rejects_multiple_usb_devices() -> None:
+    client = make_adb_client()
+    devices = [
+        DeviceInfo("PHONE_A", "device"),
+        DeviceInfo("PHONE_B", "device"),
+        DeviceInfo("127.0.0.1:5555", "device"),
+    ]
+
+    with (
+        patch.object(client, "devices", return_value=devices),
+        pytest.raises(AdbError, match="Multiple USB ADB devices"),
+    ):
+        client.ensure_ready()
+
+
+def test_adb_usb_experiment_never_falls_back_to_emulator() -> None:
+    client = make_adb_client(require_usb=True)
+    emulator = DeviceInfo("127.0.0.1:5555", "device", "model:BlueStacks")
+
+    with (
+        patch.object(client, "devices", return_value=[emulator]),
+        pytest.raises(AdbError, match="No USB Android device"),
+    ):
+        client.ensure_ready()
+
+
+def test_adb_does_not_connect_usb_serial() -> None:
+    client = make_adb_client("R58M123ABC")
+    usb = DeviceInfo("R58M123ABC", "device", "usb:1-1 model:Phone")
+
+    with (
+        patch.object(client, "connect") as connect,
+        patch.object(client, "devices", return_value=[usb]),
+    ):
+        selected = client.ensure_ready()
+
+    assert selected == usb
+    connect.assert_not_called()
 
 
 @pytest.mark.parametrize(

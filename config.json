@@ -57,7 +57,9 @@
   },
   "adb": {
     "executable": null,
-    "serial": "127.0.0.1:5555",
+    "serial": "auto",
+    "fallback_serial": null,
+    "require_usb": true,
     "connect_on_start": true,
     "timeout": 5.0
   },
