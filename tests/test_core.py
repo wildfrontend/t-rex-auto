@@ -88,11 +88,11 @@ def test_cli_fast_speed_profile_reduces_hunt_delays() -> None:
 
     result = apply_run_timing(config, speed="fast")
 
-    assert result.click_delay == 500
+    assert result.click_delay == 300
     assert result.idle_delay == 250
-    assert result.post_action_delays["dinosaur"] == 500
-    assert result.post_action_delays["hunt_button"] == 1500
-    assert result.post_action_delays["hunt_confirm_button"] == 2000
+    assert result.post_action_delays["dinosaur"] == 300
+    assert result.post_action_delays["hunt_button"] == 900
+    assert result.post_action_delays["hunt_confirm_button"] == 1200
 
 
 def test_cli_explicit_timing_overrides_profile() -> None:

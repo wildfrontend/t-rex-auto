@@ -290,7 +290,7 @@ D:\DinoMutantBot\start-bot.cmd safe
 D:\DinoMutantBot\start-bot.cmd fast 8877
 ```
 
-`fast` 使用 500/1500/2000 ms 的選恐龍、狩獵、確認延遲；`safe` 則使用
+`fast` 使用 300/900/1200 ms 的選恐龍、狩獵、確認延遲；`safe` 則使用
 1500/5000/3000 ms。
 
 完整日誌保存在 `app\logs\YYYYMMDD.log`。
