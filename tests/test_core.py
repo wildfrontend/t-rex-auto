@@ -795,6 +795,53 @@ def test_hunt_planner_collects_mail_when_center_anchor_is_missed() -> None:
     assert planner.choose(frame, [anchor, exit_button]) is None
 
 
+def test_hunt_planner_resumes_hunting_when_egg_is_missed_after_mail() -> None:
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(
+        (
+            "mail_reward_collect_button",
+            "mail_collect_all_button",
+            "mail_close_button",
+            "mailbox_button",
+            "forest_recenter_button",
+            "map_exit_nest_button",
+            "hunt_confirm_button",
+            "dinosaur",
+        ),
+        recenter_every=1,
+        mail_after_hunts=1,
+        safe_margin=80,
+    )
+    anchor = Detection("map_center_egg", 450, 800, 1.0)
+    exit_button = Detection("map_exit_nest_button", 841, 1295, 1.0)
+    dinosaur = Detection("dinosaur", 500, 820, 0.9)
+    confirm = Detection("hunt_confirm_button", 451, 1412, 1.0)
+    forest = Detection("forest_recenter_button", 841, 1295, 1.0)
+    mailbox = Detection("mailbox_button", 60, 1250, 1.0)
+    collect_all = Detection("mail_collect_all_button", 636, 1165, 1.0)
+    reward = Detection("mail_reward_collect_button", 450, 910, 1.0)
+    close = Detection("mail_close_button", 450, 1380, 1.0)
+    centered_map_without_anchor = [exit_button, mailbox, dinosaur]
+
+    assert planner.choose(frame, [anchor, exit_button, mailbox, dinosaur]).type == "dinosaur"  # type: ignore[union-attr]
+    assert planner.choose(frame, [confirm]).type == "hunt_confirm_button"  # type: ignore[union-attr]
+    planner.on_action_success("hunt_confirm_button")
+    assert planner.choose(frame, [anchor, exit_button]) is None
+    assert planner.choose(frame, [anchor, exit_button]).type == "map_exit_nest_button"  # type: ignore[union-attr]
+    assert planner.choose(frame, [forest]).type == "forest_recenter_button"  # type: ignore[union-attr]
+    assert planner.choose(frame, [anchor, exit_button, mailbox]) is None
+    assert planner.choose(frame, [anchor, exit_button, mailbox]).type == "mailbox_button"  # type: ignore[union-attr]
+    assert planner.choose(frame, [collect_all, close]).type == "mail_collect_all_button"  # type: ignore[union-attr]
+    assert planner.choose(frame, [reward, close]).type == "mail_reward_collect_button"  # type: ignore[union-attr]
+    assert planner.choose(frame, [close]).type == "mail_close_button"  # type: ignore[union-attr]
+    # The mail overlay closed but the animated egg was missed again. Map
+    # landmarks plus dinosaurs must end the mail cycle and resume hunting
+    # instead of idling until an egg detection eventually succeeds.
+    assert planner.choose(frame, centered_map_without_anchor) is None
+    resumed = planner.choose(frame, centered_map_without_anchor)
+    assert resumed is not None and resumed.type == "dinosaur"
+
+
 def test_hunt_planner_taps_egg_until_map_is_centered() -> None:
     frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
     planner = HuntPlanner(

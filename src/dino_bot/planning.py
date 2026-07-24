@@ -527,6 +527,39 @@ class HuntPlanner(TargetPlanner):
         close_target = super().choose(frame, by_type[self.mail_close_type])
         if close_target is not None:
             return close_target
+        mail_overlay_visible = any(
+            by_type[mail_type]
+            for mail_type in (
+                self.mail_collect_all_type,
+                self.mail_reward_collect_type,
+                self.mail_close_type,
+            )
+        )
+        has_hunt_control = any(
+            item.type in self.hunt_button_types for item in detections
+        )
+        has_map_landmark = any(
+            item.type in {self.map_exit_type, self.mailbox_type}
+            for item in detections
+        )
+        has_dinosaur = any(
+            item.type == self.dinosaur_type for item in detections
+        )
+        if (
+            not mail_overlay_visible
+            and has_map_landmark
+            and has_dinosaur
+            and not has_hunt_control
+        ):
+            # The mail overlay is gone and only map UI remains, but the
+            # animated egg anchor can miss template matching. Accept the
+            # synthetic center so hunting resumes instead of idling forever.
+            self.clear_history()
+            self._mail_stage = 0
+            self._total_hunt_count = 0
+            self._recenter_stage = 0
+            self._last_anchor = (frame.width / 2, frame.height / 2)
+            self._map_idle_frames = 0
         return None
 
     def _choose_map_exit(
