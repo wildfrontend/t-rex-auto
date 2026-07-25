@@ -13,3 +13,4 @@ capture/*
 !logs/.gitkeep
 !debug/.gitkeep
 !capture/.gitkeep
+.debug
