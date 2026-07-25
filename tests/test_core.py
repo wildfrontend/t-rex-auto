@@ -33,6 +33,7 @@ from dino_bot.models import (
     ActionCommand,
     BoundingBox,
     Detection,
+    ExclusionZone,
     Frame,
     Target,
     VerificationResult,
@@ -99,6 +100,82 @@ def test_project_config_uses_short_no_available_verification_delay() -> None:
         "map_exit_nest_button",
         "mailbox_button",
     }
+
+
+def test_config_loads_exclusion_zones_in_reference_pixels(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.json"
+    config_file.write_text(
+        json.dumps(
+            {
+                "planner": {
+                    "exclusion_zones": [
+                        {
+                            "name": "left_buff_stack",
+                            "reference_width": 900,
+                            "x": [0, 115],
+                            "y": [445, 800],
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_config(config_file)
+
+    assert config.planner.exclusion_zones == (
+        ExclusionZone("left_buff_stack", 0.0, 445.0, 115.0, 800.0, 900.0),
+    )
+    zone = config.planner.exclusion_zones[0]
+    assert zone.contains(110, 570, 900)
+    assert not zone.contains(650, 1000, 900)
+
+
+def test_exclusion_zone_tracks_ui_through_an_aspect_ratio_change() -> None:
+    """The buff stack scales with frame width, not height.
+
+    Both captures show the same UI: at 900 wide the stack spans y 463-726, and
+    at 501 wide (a different aspect ratio) it spans y 258-404.
+    """
+
+    zone = ExclusionZone("left_buff_stack", 0.0, 445.0, 115.0, 800.0, 900.0)
+
+    for y in (463, 572, 652, 726):
+        assert zone.contains(60, y, 900), f"missed y={y} at 900 wide"
+    for y in (258, 305, 352, 404):
+        assert zone.contains(33, y, 501), f"missed y={y} at 501 wide"
+
+    # Dinosaurs out on the open map stay selectable at both sizes.
+    assert not zone.contains(650, 1000, 900)
+    assert not zone.contains(362, 518, 501)
+
+
+@pytest.mark.parametrize(
+    ("bounds", "message"),
+    [
+        ({"x": [-5, 115], "y": [445, 800]}, "cannot be negative"),
+        ({"x": [115, 40], "y": [445, 800]}, "smaller than end"),
+        ({"x": [115], "y": [445, 800]}, r"must be \[start, end\]"),
+        (
+            {"reference_width": 0, "x": [0, 115], "y": [445, 800]},
+            "reference_width",
+        ),
+    ],
+)
+def test_config_rejects_malformed_exclusion_zones(
+    tmp_path: Path,
+    bounds: dict[str, list[float]],
+    message: str,
+) -> None:
+    config_file = tmp_path / "config.json"
+    config_file.write_text(
+        json.dumps({"planner": {"exclusion_zones": [bounds]}}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match=message):
+        load_config(config_file)
 
 
 def test_config_rejects_negative_anchor_exclusion_radius(tmp_path: Path) -> None:
@@ -603,6 +680,46 @@ def test_hunt_planner_never_clicks_dinosaur_in_bottom_ui() -> None:
         frame,
         [anchor, bottom_ui_false_positive],
     ) is None
+
+
+def test_hunt_planner_never_clicks_dinosaur_inside_exclusion_zone() -> None:
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    buff_stack = ExclusionZone("left_buff_stack", 0.0, 445.0, 115.0, 800.0, 900.0)
+    planner = HuntPlanner(
+        ("dinosaur",),
+        safe_margin=80,
+        exclusion_zones=(buff_stack,),
+    )
+    anchor = Detection("map_center_egg", 450, 800, 1.0)
+    # Clears safe_margin on every side, so only the zone can reject it.
+    behind_buff_stack = Detection("dinosaur", 110, 570, 0.99)
+    safe_dinosaur = Detection("dinosaur", 650, 1000, 0.80)
+
+    target = planner.choose(frame, [anchor, behind_buff_stack, safe_dinosaur])
+    assert target is not None and (target.x, target.y) == (650, 1000)
+
+    zone_only_planner = HuntPlanner(
+        ("dinosaur",),
+        safe_margin=80,
+        exclusion_zones=(buff_stack,),
+    )
+    assert zone_only_planner.choose(frame, [anchor, behind_buff_stack]) is None
+
+    unzoned_planner = HuntPlanner(("dinosaur",), safe_margin=80)
+    unzoned = unzoned_planner.choose(frame, [anchor, behind_buff_stack])
+    assert unzoned is not None and (unzoned.x, unzoned.y) == (110, 570)
+
+
+def test_hunt_planner_applies_exclusion_zone_without_a_known_anchor() -> None:
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(
+        ("dinosaur",),
+        safe_margin=80,
+        exclusion_zones=(ExclusionZone("left_buff_stack", 0.0, 445.0, 115.0, 800.0, 900.0),),
+    )
+    behind_buff_stack = Detection("dinosaur", 110, 570, 0.99)
+
+    assert planner.choose(frame, [behind_buff_stack]) is None
 
 
 def test_hunt_planner_excludes_false_dinosaur_on_center_egg() -> None:

@@ -90,6 +90,7 @@ def create_engine(config: AppConfig, *, verbose: bool = False) -> BotEngine:
         map_settle_tolerance_px=config.planner.map_settle_tolerance_px,
         map_settle_max_frames=config.planner.map_settle_max_frames,
         bottom_exclusion_px=config.planner.bottom_exclusion_px,
+        exclusion_zones=config.planner.exclusion_zones,
         action_cooldowns_ms=config.planner.action_cooldowns_ms,
     )
     action = AdbActionDriver(adb)

@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+from .models import ExclusionZone
+
 
 class ConfigError(ValueError):
     pass
@@ -102,6 +104,7 @@ class PlannerConfig:
     map_settle_tolerance_px: float = 20.0
     map_settle_max_frames: int = 12
     bottom_exclusion_px: int = 180
+    exclusion_zones: tuple[ExclusionZone, ...] = ()
     action_cooldowns_ms: dict[str, int] = field(default_factory=dict)
 
 
@@ -187,6 +190,60 @@ def _section(data: dict[str, Any], name: str) -> dict[str, Any]:
 def _path_from(root: Path, raw: str) -> Path:
     path = Path(raw)
     return path if path.is_absolute() else root / path
+
+
+def _exclusion_zones(data: dict[str, Any]) -> tuple[ExclusionZone, ...]:
+    raw = data.get("exclusion_zones", [])
+    if not isinstance(raw, list):
+        raise ConfigError("planner.exclusion_zones must be a JSON array")
+    zones: list[ExclusionZone] = []
+    for index, entry in enumerate(raw):
+        if not isinstance(entry, dict):
+            raise ConfigError(
+                f"planner.exclusion_zones[{index}] must be a JSON object"
+            )
+        name = str(entry.get("name") or f"zone_{index}")
+        reference_width = float(entry.get("reference_width", 900))
+        if reference_width <= 0:
+            raise ConfigError(
+                f"planner.exclusion_zones[{index}].reference_width must be "
+                "greater than zero"
+            )
+        bounds: list[float] = []
+        for axis in ("x", "y"):
+            pair = entry.get(axis)
+            if not isinstance(pair, list) or len(pair) != 2:
+                raise ConfigError(
+                    f"planner.exclusion_zones[{index}].{axis} must be [start, end]"
+                )
+            try:
+                low, high = (float(value) for value in pair)
+            except (TypeError, ValueError) as exc:
+                raise ConfigError(
+                    f"planner.exclusion_zones[{index}].{axis} must contain numbers"
+                ) from exc
+            if low < 0:
+                raise ConfigError(
+                    f"planner.exclusion_zones[{index}].{axis} cannot be negative"
+                )
+            if low >= high:
+                raise ConfigError(
+                    f"planner.exclusion_zones[{index}].{axis} start must be "
+                    "smaller than end"
+                )
+            bounds.extend((low, high))
+        x0, x1, y0, y1 = bounds
+        zones.append(
+            ExclusionZone(
+                name=name,
+                x0=x0,
+                y0=y0,
+                x1=x1,
+                y1=y1,
+                reference_width=reference_width,
+            )
+        )
+    return tuple(zones)
 
 
 def load_config(path: str | Path = "config.json") -> AppConfig:
@@ -339,6 +396,7 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
                 planner_data.get("map_settle_max_frames", 12)
             ),
             bottom_exclusion_px=int(planner_data.get("bottom_exclusion_px", 180)),
+            exclusion_zones=_exclusion_zones(planner_data),
             action_cooldowns_ms={
                 str(target_type): int(delay)
                 for target_type, delay in _section(

@@ -106,6 +106,14 @@
     "map_settle_tolerance_px": 20,
     "map_settle_max_frames": 12,
     "bottom_exclusion_px": 180,
+    "exclusion_zones": [
+      {
+        "name": "left_buff_stack",
+        "reference_width": 900,
+        "x": [0, 115],
+        "y": [445, 800]
+      }
+    ],
     "action_cooldowns_ms": {
       "target_too_strong": 300000
     }

@@ -36,6 +36,7 @@ def _default_planner() -> Planner:
         capacity_wait_seconds=config.planner.capacity_wait_seconds,
         ring_width=config.planner.ring_width,
         own_path_angle_degrees=config.planner.own_path_angle_degrees,
+        exclusion_zones=config.planner.exclusion_zones,
     )
 
 

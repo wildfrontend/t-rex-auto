@@ -9,7 +9,7 @@ from math import atan2, degrees, hypot
 from pathlib import Path
 from typing import Any
 
-from .models import Detection, Frame, Target
+from .models import Detection, ExclusionZone, Frame, Target
 
 
 class TargetPlanner:
@@ -167,6 +167,7 @@ class HuntPlanner(TargetPlanner):
         map_settle_max_frames: int = 12,
         safe_margin: int = 80,
         bottom_exclusion_px: int = 180,
+        exclusion_zones: Sequence[ExclusionZone] = (),
         action_cooldowns_ms: dict[str, int] | None = None,
         await_hunt_frames: int = 5,
         **kwargs: Any,
@@ -209,6 +210,7 @@ class HuntPlanner(TargetPlanner):
         )
         self.safe_margin = max(0, safe_margin)
         self.bottom_exclusion_px = max(0, bottom_exclusion_px)
+        self.exclusion_zones = tuple(exclusion_zones)
         self.action_cooldowns_ms = dict(action_cooldowns_ms or {})
         self.await_hunt_frames = max(1, await_hunt_frames)
         self._awaiting_hunt_button = False
@@ -443,6 +445,12 @@ class HuntPlanner(TargetPlanner):
     def _angle_distance(left: float, right: float) -> float:
         difference = abs(left - right) % 360.0
         return min(difference, 360.0 - difference)
+
+    def _in_exclusion_zone(self, frame: Frame, item: Detection) -> bool:
+        return any(
+            zone.contains(item.x, item.y, frame.width)
+            for zone in self.exclusion_zones
+        )
 
     def _established_path_angles(
         self,
@@ -800,7 +808,18 @@ class HuntPlanner(TargetPlanner):
             self.mail_close_type,
             *self.recovery_button_types,
         }
-        actionable = [item for item in detections if item.type not in navigation_types]
+        # Fixed overlays such as the left buff stack sit on top of the map and
+        # keep scrolling dinosaurs behind them. Drop those candidates before any
+        # anchor logic so both the anchored and the fallback path stay covered.
+        actionable = [
+            item
+            for item in detections
+            if item.type not in navigation_types
+            and not (
+                item.type == self.dinosaur_type
+                and self._in_exclusion_zone(frame, item)
+            )
+        ]
         anchor_position = self._last_anchor
         self._failed_dinosaur_positions = [
             entry
