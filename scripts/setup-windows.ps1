@@ -33,4 +33,4 @@ Invoke-Python "dependency install" @(
 )
 
 Write-Host "Windows environment ready: $PythonExecutable"
-Write-Host "Enable Android Debug Bridge in BlueStacks, then run doctor-windows.ps1."
+Write-Host "Start MuMu/BlueStacks, verify its ADB port in config.json, then run doctor-windows.ps1."

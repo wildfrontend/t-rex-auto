@@ -9,7 +9,7 @@ import time
 from dataclasses import dataclass
 
 from .actions import AdbClient
-from .capture import AdbScreencapCapture, BlueStacksWindowFinder, MssBlueStacksCapture
+from .capture import AdbScreencapCapture, EmulatorWindowFinder, MssEmulatorCapture
 from .config import AppConfig
 from .detection import OpenCvDetector
 
@@ -22,16 +22,30 @@ class Check:
     required: bool = True
 
 
+def platform_supports_capture(config: AppConfig, system: str | None = None) -> bool:
+    """Return whether the configured capture backend is supported on this OS."""
+
+    operating_system = system or platform.system()
+    return operating_system == "Windows" or (
+        operating_system == "Darwin" and config.capture.backend == "adb"
+    )
+
+
 def run_checks(config: AppConfig) -> list[Check]:
+    operating_system = platform.system()
     checks = [
         Check("Python", sys.version_info >= (3, 12), platform.python_version()),
-        Check("Operating system", platform.system() == "Windows", platform.platform()),
+        Check(
+            "Operating system and capture backend",
+            platform_supports_capture(config, operating_system),
+            f"{platform.platform()} | capture={config.capture.backend}",
+        ),
     ]
     for module in ("numpy", "cv2", "mss"):
         checks.append(
             Check(f"Dependency {module}", importlib.util.find_spec(module) is not None, "installed")
         )
-    if platform.system() == "Windows":
+    if operating_system == "Windows" and config.capture.backend == "mss":
         checks.append(
             Check(
                 "Dependency win32gui",
@@ -58,22 +72,23 @@ def run_checks(config: AppConfig) -> list[Check]:
     try:
         adb = AdbClient(config.adb)
         checks.append(Check("ADB executable", True, adb.executable))
-        devices = adb.devices()
-        ready = [item for item in devices if item.state == "device"]
-        checks.append(
-            Check("ADB device", bool(ready), ", ".join(item.serial for item in ready) or "none")
-        )
     except Exception as exc:
-        checks.append(Check("ADB", False, str(exc)))
-    if platform.system() == "Windows":
+        checks.append(Check("ADB executable", False, str(exc)))
+    else:
         try:
-            hwnd = BlueStacksWindowFinder(
+            device = adb.ensure_ready()
+            checks.append(Check("ADB device", True, device.serial))
+        except Exception as exc:
+            checks.append(Check("ADB device", False, str(exc)))
+    if operating_system == "Windows" and config.capture.backend == "mss":
+        try:
+            hwnd = EmulatorWindowFinder(
                 config.capture.window_titles,
                 config.capture.process_names,
             ).find()
-            checks.append(Check("BlueStacks window", True, f"HWND={hwnd}"))
+            checks.append(Check(f"{config.emulator} window", True, f"HWND={hwnd}"))
         except Exception as exc:
-            checks.append(Check("BlueStacks window", False, str(exc)))
+            checks.append(Check(f"{config.emulator} window", False, str(exc)))
     return checks
 
 
@@ -83,7 +98,7 @@ def benchmark_capture(config: AppConfig, frame_count: int = 100) -> tuple[float,
         adb.ensure_ready()
         capture = AdbScreencapCapture(adb)
     else:
-        capture = MssBlueStacksCapture(
+        capture = MssEmulatorCapture(
             config.capture.window_titles,
             config.capture.process_names,
             config.capture.viewport,
