@@ -29,6 +29,15 @@ class TargetChangedVerifier:
         }
         self.black_mean_threshold = black_mean_threshold
 
+    def relevant_detection_types(self, target_type: str) -> frozenset[str]:
+        expected = self.success_transitions.get(target_type)
+        return frozenset(
+            {
+                *(expected or (target_type,)),
+                *self.failure_types,
+            }
+        )
+
     def verify(
         self,
         before: Frame,
@@ -84,6 +93,7 @@ class TargetChangedVerifier:
                 success=True,
                 reason=f"target disappeared; pixel_change={change:.3f}",
                 confidence=max(0.75, min(0.99, 0.75 + change)),
+                pixel_change=change,
             )
         if change >= self.pixel_change_threshold:
             return VerificationResult(
@@ -93,6 +103,7 @@ class TargetChangedVerifier:
                     f">= {self.pixel_change_threshold:.3f}"
                 ),
                 confidence=min(0.95, 0.65 + change),
+                pixel_change=change,
             )
         best = max(nearby, key=lambda item: item.confidence)
         return VerificationResult(
@@ -102,6 +113,7 @@ class TargetChangedVerifier:
                 f"confidence={best.confidence:.3f}; pixel_change={change:.3f}"
             ),
             confidence=best.confidence,
+            pixel_change=change,
         )
 
     def _target_region_change(self, before: Frame, after: Frame, target: Target) -> float:

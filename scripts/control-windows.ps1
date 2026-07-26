@@ -119,7 +119,8 @@ function Start-BotLauncher {
         "-ExecutionPolicy", "Bypass",
         "-File", "`"$LauncherScript`"",
         "-Speed", $Speed,
-        "-StatusPort", [string]$StatusPort
+        "-StatusPort", [string]$StatusPort,
+        "-SkipEmulatorPrompt"
     )
     $Process = Start-Process powershell.exe `
         -ArgumentList $Arguments `

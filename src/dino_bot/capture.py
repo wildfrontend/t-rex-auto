@@ -1,4 +1,4 @@
-"""RAM-only BlueStacks capture backends."""
+"""RAM-only Android emulator capture backends."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ class CaptureError(RuntimeError):
     pass
 
 
-class BlueStacksWindowFinder:
+class EmulatorWindowFinder:
     def __init__(
         self,
         title_fragments: Sequence[str],
@@ -53,7 +53,7 @@ class BlueStacksWindowFinder:
 
     def find(self) -> int:
         if sys.platform != "win32":
-            raise CaptureError("BlueStacks window capture requires Windows Python")
+            raise CaptureError("Emulator window capture requires Windows Python")
         try:
             import win32gui
         except ImportError as exc:
@@ -79,7 +79,7 @@ class BlueStacksWindowFinder:
         win32gui.EnumWindows(visit, None)
         if not candidates:
             expected = ", ".join(self.title_fragments)
-            raise CaptureError(f"No visible BlueStacks window found (expected title: {expected})")
+            raise CaptureError(f"No visible emulator window found (expected title: {expected})")
         return max(candidates)[1]
 
     @staticmethod
@@ -108,11 +108,11 @@ class BlueStacksWindowFinder:
         screen_left, screen_top = win32gui.ClientToScreen(hwnd, (left, top))
         width, height = right - left, bottom - top
         if width <= 0 or height <= 0:
-            raise CaptureError("BlueStacks window has an empty client area")
+            raise CaptureError("Emulator window has an empty client area")
         return {"left": screen_left, "top": screen_top, "width": width, "height": height}
 
 
-class MssBlueStacksCapture:
+class MssEmulatorCapture:
     def __init__(
         self,
         window_titles: Sequence[str],
@@ -124,7 +124,7 @@ class MssBlueStacksCapture:
         if sys.platform == "win32":
             with suppress(AttributeError, OSError):
                 ctypes.windll.shcore.SetProcessDpiAwareness(2)
-        self.finder = BlueStacksWindowFinder(window_titles, process_names)
+        self.finder = EmulatorWindowFinder(window_titles, process_names)
         self.viewport = viewport
         self.auto_viewport = auto_viewport
         self.chrome_insets = chrome_insets
@@ -166,7 +166,7 @@ class MssBlueStacksCapture:
         raw = self._sct.grab(region)
         image = np.asarray(raw, dtype=np.uint8)[..., :3].copy()
         self._sequence += 1
-        return Frame(image=image, source="bluestacks:mss", sequence=self._sequence)
+        return Frame(image=image, source="emulator:mss", sequence=self._sequence)
 
     def close(self) -> None:
         self._sct.close()
@@ -186,7 +186,13 @@ class AdbScreencapCapture:
         if image is None:
             raise CaptureError("ADB returned an invalid PNG screenshot")
         self._sequence += 1
-        return Frame(image=image, source="bluestacks:adb", sequence=self._sequence)
+        return Frame(image=image, source="emulator:adb", sequence=self._sequence)
 
     def close(self) -> None:
         pass
+
+
+# Backwards-compatible names for integrations that imported the original
+# BlueStacks-specific classes.
+BlueStacksWindowFinder = EmulatorWindowFinder
+MssBlueStacksCapture = MssEmulatorCapture

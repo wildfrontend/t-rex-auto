@@ -54,3 +54,17 @@ class ModeObserver(Protocol):
 
 class RuntimeRecovery(Protocol):
     def observe(self, frame: Frame) -> bool: ...
+
+
+class HuntProgressRecovery(Protocol):
+    def observe(
+        self,
+        detections: Sequence[Detection],
+        target: Target | None,
+        *,
+        cooldown_ms: int = 0,
+    ) -> bool: ...
+
+    def reset(self) -> None: ...
+
+    def on_hunt_completed(self) -> None: ...

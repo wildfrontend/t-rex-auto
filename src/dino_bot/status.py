@@ -11,12 +11,23 @@ _LOG_LINE = re.compile(
     r"^(?P<time>\d{2}:\d{2}:\d{2}) \| (?P<level>[^|]+) \| (?P<message>.*)$"
 )
 _TIMING = re.compile(
-    r"Timing \| click=(?P<click>\d+)ms \| dinosaur=(?P<dinosaur>\d+)ms"
+    r"Timing \| (?:poll=(?P<poll>\d+)ms \| )?"
+    r"click=(?P<click>\d+)ms \| dinosaur=(?P<dinosaur>\d+)ms"
     r" \| hunt=(?P<hunt>\d+)ms \| confirm=(?P<confirm>\d+)ms"
     r" \| idle=(?P<idle>\d+)ms"
 )
-_PLANNING = re.compile(r"Planning \| (?P<target>\S+) at \(")
+_PLANNING = re.compile(
+    r"Planning \| (?P<target>\S+) at \((?P<x>-?\d+),(?P<y>-?\d+)\)"
+)
 _ACTION = re.compile(r"Action \| (?P<action>.+?) \| attempt=(?P<attempt>\d+)$")
+# Every consumer below reads INFO-and-above messages: session markers, planning,
+# actions and verification results. Debug lines - per-detection confidences and
+# per-poll timings - are 94% of a day's log and none of them are ever read, so
+# they are dropped before the regex rather than after it. Matching all of them
+# pushed a seven-hour log past the two-second timeout the control window allows,
+# which is what makes it fall back to printing raw log lines instead of counts.
+_LEVEL_SPAN = slice(11, 16)
+_DEBUG_LEVEL = "DEBUG"
 
 
 def _timestamp(log_file: Path, time_text: str) -> str:
@@ -36,6 +47,8 @@ def _read_recent_entries(logs_dir: Path) -> list[dict[str, str]]:
         except OSError:
             continue
         for line in lines:
+            if line[_LEVEL_SPAN] == _DEBUG_LEVEL:
+                continue
             match = _LOG_LINE.match(line)
             if match is None:
                 continue
@@ -68,8 +81,123 @@ def _latest_session(entries: list[dict[str, str]]) -> tuple[list[dict[str, str]]
                 "hunt_confirm_delay_ms": int(match.group("confirm")),
                 "idle_delay_ms": int(match.group("idle")),
             }
+            if match.group("poll") is not None:
+                timing["poll_interval_ms"] = int(match.group("poll"))
             break
     return (entries[start_index:] if start_index >= 0 else entries), timing
+
+
+def _parse_timestamp(value: str) -> datetime | None:
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def summarize_log_window(entries: list[dict[str, str]]) -> dict[str, Any]:
+    """Summarize every retained log line, not just the newest session.
+
+    ``build_runtime_status`` reports the session after the last ``Bot started``.
+    A bundle exported moments after a restart therefore shows zeroed counters
+    and reads as healthy while the very log it ships records the failure. These
+    window-wide figures are what the diagnostic summary judges.
+    """
+
+    confirmed_hunts = 0
+    actions = 0
+    sessions = 0
+    first_time: datetime | None = None
+    last_time: datetime | None = None
+    last_hunt_time: datetime | None = None
+    longest_stall = 0.0
+    planned_type: str | None = None
+    repeat_key: tuple[str, int, int] | None = None
+    repeat_count = 0
+    worst_repeat = 0
+    worst_target: tuple[str, int, int] | None = None
+
+    for entry in entries:
+        message = entry["message"]
+        stamp = _parse_timestamp(entry["timestamp"])
+        if stamp is not None:
+            if first_time is None:
+                first_time = stamp
+                last_hunt_time = stamp
+            last_time = stamp
+
+        if message.startswith("Bot started |"):
+            sessions += 1
+            last_hunt_time = stamp
+            continue
+
+        if message.startswith("Bot stopped |"):
+            # Time between sessions is the operator's, not a stall. Close the
+            # current interval and stop accumulating until the bot runs again.
+            if stamp is not None and last_hunt_time is not None:
+                longest_stall = max(
+                    longest_stall,
+                    (stamp - last_hunt_time).total_seconds(),
+                )
+            last_hunt_time = None
+            continue
+
+        planning = _PLANNING.search(message)
+        if planning is not None:
+            planned_type = planning.group("target")
+            key = (
+                planned_type,
+                int(planning.group("x")),
+                int(planning.group("y")),
+            )
+            repeat_count = repeat_count + 1 if key == repeat_key else 1
+            repeat_key = key
+            if repeat_count > worst_repeat:
+                worst_repeat = repeat_count
+                worst_target = key
+            continue
+
+        if _ACTION.search(message) is not None:
+            actions += 1
+            continue
+
+        if message.startswith("Verify | Success |"):
+            # A confirmed transition breaks a repeat run: the bot is moving
+            # through the workflow rather than re-picking a dead target.
+            repeat_count = 0
+            repeat_key = None
+            if planned_type == "hunt_confirm_button":
+                confirmed_hunts += 1
+                if stamp is not None:
+                    if last_hunt_time is not None:
+                        longest_stall = max(
+                            longest_stall,
+                            (stamp - last_hunt_time).total_seconds(),
+                        )
+                    last_hunt_time = stamp
+            planned_type = None
+            continue
+
+    if last_time is not None and last_hunt_time is not None:
+        longest_stall = max(longest_stall, (last_time - last_hunt_time).total_seconds())
+
+    return {
+        "sessions": sessions,
+        "first_log_time": first_time.isoformat() if first_time else None,
+        "last_log_time": last_time.isoformat() if last_time else None,
+        "total_actions": actions,
+        "confirmed_hunts": confirmed_hunts,
+        "longest_stall_seconds": round(longest_stall, 1),
+        "repeated_target": (
+            {
+                "target": worst_target[0],
+                "x": worst_target[1],
+                "y": worst_target[2],
+                "count": worst_repeat,
+            }
+            if worst_target is not None and worst_repeat > 1
+            else None
+        ),
+    }
 
 
 def _stage_from_message(message: str, running: bool) -> str:
@@ -97,7 +225,9 @@ def _stage_from_message(message: str, running: bool) -> str:
 def build_runtime_status(logs_dir: Path, recent_action_limit: int = 10) -> dict[str, Any]:
     """Return statistics for the most recent Bot session."""
 
-    entries, timing = _latest_session(_read_recent_entries(logs_dir))
+    all_entries = _read_recent_entries(logs_dir)
+    window = summarize_log_window(all_entries)
+    entries, timing = _latest_session(all_entries)
     if not entries:
         return {
             "running": False,
@@ -117,6 +247,7 @@ def build_runtime_status(logs_dir: Path, recent_action_limit: int = 10) -> dict[
             "timing": timing,
             "recent_actions": [],
             "log_file": None,
+            "log_window": window,
             "generated_at": datetime.now().astimezone().isoformat(),
         }
 
@@ -199,5 +330,6 @@ def build_runtime_status(logs_dir: Path, recent_action_limit: int = 10) -> dict[
         "timing": timing,
         "recent_actions": actions[-limit:] if limit else [],
         "log_file": last_entry["log_file"],
+        "log_window": window,
         "generated_at": datetime.now().astimezone().isoformat(),
     }

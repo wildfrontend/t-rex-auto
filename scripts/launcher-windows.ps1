@@ -9,6 +9,7 @@ param(
     [ValidateRange(1, 65535)]
     [int]$StatusPort = 8765,
     [switch]$SkipDoctor,
+    [switch]$SkipEmulatorPrompt,
     [switch]$DryRun
 )
 
@@ -21,7 +22,191 @@ $AppRoot = Split-Path -Parent $PSScriptRoot
 $RuntimeRoot = Split-Path -Parent $AppRoot
 $RunnerScript = Join-Path $PSScriptRoot "run-windows.ps1"
 $LogRoot = Join-Path $AppRoot "logs"
+$ConfigPath = Join-Path $AppRoot "config.json"
+$UserSettingsPath = Join-Path $RuntimeRoot "user-settings.json"
 $Host.UI.RawUI.WindowTitle = "Dino Mutant Bot - 互動控制台"
+
+function Get-EmulatorConfiguration {
+    if (-not (Test-Path -LiteralPath $ConfigPath)) {
+        throw "找不到設定檔：$ConfigPath"
+    }
+    try {
+        $Config = Get-Content -LiteralPath $ConfigPath -Raw -Encoding UTF8 |
+            ConvertFrom-Json
+    } catch {
+        throw "無法讀取 config.json：$($_.Exception.Message)"
+    }
+    $Profile = [string]$Config.emulator
+    if ([string]::IsNullOrWhiteSpace($Profile)) {
+        $Profile = "bluestacks"
+    }
+    $ExplicitSerial = ""
+    if ($null -ne $Config.adb -and $null -ne $Config.adb.serial) {
+        $ExplicitSerial = [string]$Config.adb.serial
+    }
+    if (Test-Path -LiteralPath $UserSettingsPath) {
+        try {
+            $UserSettings = Get-Content `
+                -LiteralPath $UserSettingsPath `
+                -Raw `
+                -Encoding UTF8 |
+                ConvertFrom-Json
+            $SavedSerial = [string]$UserSettings.adb_serial
+            if (-not [string]::IsNullOrWhiteSpace($SavedSerial)) {
+                $Profile = "custom"
+                $ExplicitSerial = $SavedSerial
+                Save-EmulatorConfiguration `
+                    -Config $Config `
+                    -Profile $Profile `
+                    -ExplicitSerial $ExplicitSerial `
+                    -SkipUserSettings
+            }
+        } catch {
+            Write-Host "已忽略無法讀取的 user-settings.json。" -ForegroundColor Yellow
+        }
+    }
+    $DefaultSerial = if ($Profile -eq "mumu") {
+        "127.0.0.1:7555"
+    } elseif ($Profile -eq "bluestacks") {
+        "127.0.0.1:5555"
+    } else {
+        ""
+    }
+    $EffectiveSerial = if ([string]::IsNullOrWhiteSpace($ExplicitSerial)) {
+        $DefaultSerial
+    } else {
+        $ExplicitSerial
+    }
+    return [pscustomobject]@{
+        Config = $Config
+        Profile = $Profile
+        ExplicitSerial = $ExplicitSerial
+        EffectiveSerial = $EffectiveSerial
+    }
+}
+
+function Get-EmulatorDisplayName {
+    param([string]$Profile)
+    if ($Profile -eq "mumu") { return "MuMu Player" }
+    if ($Profile -eq "bluestacks") { return "BlueStacks" }
+    if ($Profile -eq "custom") { return "通用 ADB Port" }
+    return $Profile
+}
+
+function Resolve-AdbSerial {
+    param(
+        [string]$RawValue,
+        [string]$DefaultValue,
+        [switch]$Required
+    )
+    $Value = $RawValue.Trim()
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        if ($Required -and [string]::IsNullOrWhiteSpace($DefaultValue)) {
+            throw "自訂模擬器必須輸入 ADB 裝置序號、位址或 Port。"
+        }
+        return $DefaultValue
+    }
+    $ParsedPort = 0
+    if ([int]::TryParse($Value, [ref]$ParsedPort)) {
+        if ($ParsedPort -lt 1 -or $ParsedPort -gt 65535) {
+            throw "ADB Port 必須是 1 到 65535 的整數。"
+        }
+        return "127.0.0.1:$ParsedPort"
+    }
+    if ($Value -match "^(.+):(\d+)$") {
+        $EndpointPort = [int]$Matches[2]
+        if ($EndpointPort -lt 1 -or $EndpointPort -gt 65535) {
+            throw "ADB Port 必須是 1 到 65535 的整數。"
+        }
+    }
+    return $Value
+}
+
+function Save-EmulatorConfiguration {
+    param(
+        [pscustomobject]$Config,
+        [string]$Profile,
+        [string]$ExplicitSerial,
+        [switch]$SkipUserSettings
+    )
+    if ($Config.PSObject.Properties.Name -contains "emulator") {
+        $Config.emulator = $Profile
+    } else {
+        $Config | Add-Member -NotePropertyName "emulator" -NotePropertyValue $Profile
+    }
+    if ($null -eq $Config.adb) {
+        $Config | Add-Member -NotePropertyName "adb" -NotePropertyValue ([pscustomobject]@{})
+    }
+    if ([string]::IsNullOrWhiteSpace($ExplicitSerial)) {
+        $Config.adb.PSObject.Properties.Remove("serial")
+    } elseif ($Config.adb.PSObject.Properties.Name -contains "serial") {
+        $Config.adb.serial = $ExplicitSerial
+    } else {
+        $Config.adb | Add-Member -NotePropertyName "serial" -NotePropertyValue $ExplicitSerial
+    }
+    $Json = $Config | ConvertTo-Json -Depth 32
+    [System.IO.File]::WriteAllText($ConfigPath, $Json + [Environment]::NewLine, $Utf8Encoding)
+    if (-not $SkipUserSettings -and -not [string]::IsNullOrWhiteSpace($ExplicitSerial)) {
+        $UserSettings = [ordered]@{
+            schema_version = 1
+            adb_serial = $ExplicitSerial
+        }
+        $UserSettingsJson = $UserSettings | ConvertTo-Json
+        [System.IO.File]::WriteAllText(
+            $UserSettingsPath,
+            $UserSettingsJson + [Environment]::NewLine,
+            $Utf8Encoding
+        )
+    }
+}
+
+function Select-EmulatorConfiguration {
+    $Current = Get-EmulatorConfiguration
+    $CurrentSerial = if ([string]::IsNullOrWhiteSpace($Current.EffectiveSerial)) {
+        "未設定"
+    } else {
+        $Current.EffectiveSerial
+    }
+    while ($true) {
+        Write-Host ""
+        Write-Host "請先到模擬器設定／診斷頁面查看 ADB Port。" -ForegroundColor Cyan
+        Write-Host "MuMu、BlueStacks 與其他模擬器都只需輸入顯示的 Port。"
+        $RawSerial = Read-Host "ADB Port [$CurrentSerial]"
+        if ([string]::IsNullOrWhiteSpace($RawSerial)) {
+            if ([string]::IsNullOrWhiteSpace($Current.EffectiveSerial)) {
+                Write-Host "第一次啟動必須輸入 ADB Port。" -ForegroundColor Yellow
+                continue
+            }
+            return [pscustomobject]@{
+                Changed = $false
+                Profile = $Current.Profile
+                Serial = $Current.EffectiveSerial
+            }
+        }
+        try {
+            $EffectiveSerial = Resolve-AdbSerial `
+                -RawValue $RawSerial `
+                -DefaultValue "" `
+                -Required
+        } catch {
+            Write-Host $_.Exception.Message -ForegroundColor Yellow
+            continue
+        }
+        Save-EmulatorConfiguration `
+            -Config $Current.Config `
+            -Profile "custom" `
+            -ExplicitSerial $EffectiveSerial
+        Write-Host "ADB 已保存：$EffectiveSerial" -ForegroundColor Green
+        return [pscustomobject]@{
+            Changed = (
+                $Current.Profile -ne "custom" -or
+                $Current.ExplicitSerial -ne $EffectiveSerial
+            )
+            Profile = "custom"
+            Serial = $EffectiveSerial
+        }
+    }
+}
 
 function Test-StatusPortAvailable {
     param([int]$Port)
@@ -301,10 +486,10 @@ function Resolve-SpeedSettings {
         IdleDelayMs = $IdleDelayMs
     }
     if ($SelectedSpeed -eq "custom") {
-        $Settings.ClickDelayMs = Read-PositiveTiming "一般點擊等待時間" 500
-        $Settings.DinosaurDelayMs = Read-PositiveTiming "選擇恐龍等待時間" 500
-        $Settings.HuntButtonDelayMs = Read-PositiveTiming "點擊狩獵後等待時間" 1500
-        $Settings.HuntConfirmDelayMs = Read-PositiveTiming "確認狩獵後等待時間" 2000
+        $Settings.ClickDelayMs = Read-PositiveTiming "一般點擊等待時間" 300
+        $Settings.DinosaurDelayMs = Read-PositiveTiming "選擇恐龍等待時間" 300
+        $Settings.HuntButtonDelayMs = Read-PositiveTiming "點擊狩獵後等待時間" 900
+        $Settings.HuntConfirmDelayMs = Read-PositiveTiming "確認狩獵後等待時間" 1200
         $Settings.IdleDelayMs = Read-PositiveTiming "無目標時掃描間隔" 250
     }
     return [pscustomobject]$Settings
@@ -627,15 +812,22 @@ Write-Host "執行位置：$RuntimeRoot"
 Write-Host "AI 狀態接口：http://127.0.0.1:$StatusPort/status（僅限本機）"
 
 try {
-    if (-not $SkipDoctor) {
-        Invoke-EnvironmentCheck
-    }
-    $StatusPort = Read-AvailableStatusPort -DefaultPort $StatusPort
     $ExistingBots = Find-RunningBot
     if ($ExistingBots.Count -gt 0) {
         $ProcessIds = ($ExistingBots | ForEach-Object { $_.ProcessId }) -join ", "
         throw "已有另一個 Bot 正在執行（PID：$ProcessIds）。請先停止它再啟動新版。"
     }
+    if (-not $SkipEmulatorPrompt) {
+        [void](Select-EmulatorConfiguration)
+    } else {
+        $CurrentEmulator = Get-EmulatorConfiguration
+        $CurrentEmulatorName = Get-EmulatorDisplayName $CurrentEmulator.Profile
+        Write-Host "目前模擬器：$CurrentEmulatorName｜ADB：$($CurrentEmulator.EffectiveSerial)"
+    }
+    if (-not $SkipDoctor) {
+        Invoke-EnvironmentCheck
+    }
+    $StatusPort = Read-AvailableStatusPort -DefaultPort $StatusPort
 
     $Settings = Resolve-SpeedSettings -RequestedSpeed $Speed
     $SelectedSpeedName = if ($Settings.DisplaySpeed -eq "safe") { "安全" } elseif ($Settings.DisplaySpeed -eq "custom") { "自訂" } else { "快速" }
@@ -649,10 +841,28 @@ try {
     try {
         while ($true) {
             Write-Host ""
-            Write-Host "操作：[S]狀態 [E]診斷包 [T]調整速度 [P]切換 Port [D]診斷 [A]AI 接口 [R]重啟 [Q]停止" -ForegroundColor Cyan
+            Write-Host "操作：[S]狀態 [M]ADB Port [T]速度 [P]接口 Port [D]診斷 [E]診斷包 [A]AI 接口 [R]重啟 [Q]停止" -ForegroundColor Cyan
             $Command = (Read-Host "請輸入指令 [S]").Trim().ToUpperInvariant()
             if ([string]::IsNullOrWhiteSpace($Command) -or $Command -eq "S") {
                 Show-BotStatus $BotProcess
+            } elseif ($Command -eq "M") {
+                $OriginalConfigJson = Get-Content -LiteralPath $ConfigPath -Raw -Encoding UTF8
+                $NewEmulator = Select-EmulatorConfiguration
+                if ($NewEmulator.Changed) {
+                    try {
+                        Invoke-EnvironmentCheck
+                    } catch {
+                        [System.IO.File]::WriteAllText(
+                            $ConfigPath,
+                            $OriginalConfigJson,
+                            $Utf8Encoding
+                        )
+                        Write-Host "新模擬器檢查失敗，已還原原設定；目前 Bot 繼續執行。" -ForegroundColor Red
+                        continue
+                    }
+                    Stop-BotLogWindow $BotProcess
+                    $BotProcess = Start-BotLogWindow $Settings
+                }
             } elseif ($Command -eq "T") {
                 $NewSettings = Resolve-SpeedSettings -RequestedSpeed ""
                 Stop-BotLogWindow $BotProcess

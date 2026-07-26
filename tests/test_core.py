@@ -79,11 +79,11 @@ def test_cli_fast_speed_profile_reduces_hunt_delays() -> None:
 
     result = apply_run_timing(config, speed="fast")
 
-    assert result.click_delay == 500
+    assert result.click_delay == 300
     assert result.idle_delay == 250
-    assert result.post_action_delays["dinosaur"] == 500
-    assert result.post_action_delays["hunt_button"] == 1500
-    assert result.post_action_delays["hunt_confirm_button"] == 2000
+    assert result.post_action_delays["dinosaur"] == 300
+    assert result.post_action_delays["hunt_button"] == 900
+    assert result.post_action_delays["hunt_confirm_button"] == 1200
 
 
 def test_cli_explicit_timing_overrides_profile() -> None:
@@ -265,6 +265,7 @@ def test_hunt_planner_uses_egg_anchor_and_recenters_after_batch() -> None:
         deduplicate_types=("dinosaur",),
         dedup_radius=25,
         recenter_every=2,
+        map_settle_frames=1,
         safe_margin=80,
     )
 
@@ -440,6 +441,7 @@ def test_hunt_planner_collects_mail_after_hunt_threshold() -> None:
         ),
         recenter_every=1,
         mail_after_hunts=1,
+        map_settle_frames=1,
         safe_margin=80,
     )
     anchor = Detection("map_center_egg", 450, 800, 1.0)
@@ -482,6 +484,72 @@ def test_hunt_planner_collects_mail_after_hunt_threshold() -> None:
     assert planner.choose(frame, [anchor, exit_button]) is None
 
 
+def test_hunt_planner_recovers_when_full_mailbox_blocks_confirmation() -> None:
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(
+        (
+            "hunt_confirm_button",
+            "hunt_dialog_close_button",
+            "mailbox_button",
+            "mail_collect_all_button",
+            "mail_reward_collect_button",
+            "mail_close_button",
+            "dinosaur",
+        ),
+        safe_margin=80,
+    )
+    confirm = Detection("hunt_confirm_button", 451, 1412, 1.0)
+    dialog_close = Detection("hunt_dialog_close_button", 628, 1409, 1.0)
+    mailbox = Detection("mailbox_button", 841, 1210, 1.0)
+    collect_all = Detection("mail_collect_all_button", 636, 1165, 1.0)
+    reward = Detection("mail_reward_collect_button", 450, 910, 1.0)
+    mail_close = Detection("mail_close_button", 450, 1380, 1.0)
+
+    # The ordinary hunt dialog is unchanged: confirmation still wins while
+    # retries remain, even though its close button is also visible.
+    chosen = planner.choose(frame, [confirm, dialog_close])
+    assert chosen is not None and chosen.type == "hunt_confirm_button"
+
+    failed_target = Target(
+        type=confirm.type,
+        x=confirm.x,
+        y=confirm.y,
+        confidence=confirm.confidence,
+        detection=confirm,
+    )
+    planner.on_retry_exhausted(failed_target)
+    assert planner.on_retry_exhausted_context(
+        failed_target,
+        [confirm, dialog_close],
+    )
+
+    recovery = planner.choose(frame, [confirm, dialog_close])
+    assert recovery is not None and recovery.type == "hunt_dialog_close_button"
+    planner.on_action_success("hunt_dialog_close_button")
+
+    assert planner.choose(frame, [mailbox]).type == "mailbox_button"  # type: ignore[union-attr]
+    assert planner.choose(frame, [collect_all]).type == "mail_collect_all_button"  # type: ignore[union-attr]
+    assert planner.choose(frame, [reward]).type == "mail_reward_collect_button"  # type: ignore[union-attr]
+    assert planner.choose(frame, [mail_close]).type == "mail_close_button"  # type: ignore[union-attr]
+
+
+def test_hunt_planner_does_not_assume_mailbox_full_without_dialog_close() -> None:
+    planner = HuntPlanner(("hunt_confirm_button", "hunt_dialog_close_button"))
+    confirm = Detection("hunt_confirm_button", 451, 1412, 1.0)
+    failed_target = Target(
+        type=confirm.type,
+        x=confirm.x,
+        y=confirm.y,
+        confidence=confirm.confidence,
+        detection=confirm,
+    )
+
+    assert not planner.on_retry_exhausted_context(failed_target, [confirm])
+    assert "hunt_dialog_close_button" in planner.verification_detection_types(
+        "hunt_confirm_button"
+    )
+
+
 def test_hunt_planner_taps_egg_until_map_is_centered() -> None:
     frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
     planner = HuntPlanner(
@@ -493,6 +561,7 @@ def test_hunt_planner_taps_egg_until_map_is_centered() -> None:
             "dinosaur",
         ),
         recenter_every=1,
+        map_settle_frames=1,
         safe_margin=80,
     )
     centered_anchor = Detection("map_center_egg", 450, 800, 1.0)
@@ -530,6 +599,7 @@ def test_hunt_planner_counts_return_when_animated_map_landmarks_are_missing() ->
     planner = HuntPlanner(
         ("map_exit_nest_button", "hunt_confirm_button", "dinosaur"),
         recenter_every=2,
+        map_settle_frames=1,
         safe_margin=80,
     )
     anchor = Detection("map_center_egg", 450, 800, 1.0)
@@ -552,7 +622,7 @@ def test_hunt_planner_counts_return_when_animated_map_landmarks_are_missing() ->
     assert exit_target is not None and exit_target.type == "map_exit_nest_button"
 
 
-def test_hunt_planner_prioritizes_no_available_dinosaurs_exception() -> None:
+def test_hunt_planner_finishes_visible_hunt_control_before_no_available_warning() -> None:
     frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
     planner = HuntPlanner(
         ("no_available_dinosaurs", "hunt_button", "dinosaur"),
@@ -560,7 +630,7 @@ def test_hunt_planner_prioritizes_no_available_dinosaurs_exception() -> None:
     unavailable = Detection("no_available_dinosaurs", 450, 900, 1.0)
     hunt_button = Detection("hunt_button", 450, 1200, 1.0)
     target = planner.choose(frame, [unavailable, hunt_button])
-    assert target is not None and target.type == "no_available_dinosaurs"
+    assert target is not None and target.type == "hunt_button"
 
 
 def test_hunt_planner_spreads_targets_away_from_existing_blue_ray() -> None:
@@ -677,7 +747,7 @@ def test_hunt_team_availability_detector_only_matches_zero_of_eleven() -> None:
 
 def test_hunt_capacity_detector_only_matches_ten_at_egg_nest() -> None:
     detector = HuntCapacityDetector()
-    egg = cv2.imread(str(Path("assets/templates/map-center-egg.png")))
+    egg = cv2.imread(str(Path("assets/templates/map-center-egg-anchor.png")))
     assert egg is not None
 
     def capacity_screen(label: str, *, show_nest: bool = True) -> Frame:
@@ -900,9 +970,9 @@ def test_engine_uses_target_specific_post_action_delay() -> None:
         max_cycles=1,
         cycle_complete_targets=("hunt_confirm_button",),
     )
-    with patch("dino_bot.engine.time.sleep") as sleep:
+    with patch.object(context.stop_event, "wait", return_value=False) as wait:
         BotEngine(context).run()
-    sleep.assert_called_once_with(10.0)
+    wait.assert_called_once_with(0.25)
     assert context.cycle_count == 1
     assert context.action_count == 1
 

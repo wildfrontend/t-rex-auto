@@ -7,7 +7,12 @@ from pathlib import Path
 from numpy.typing import NDArray
 
 from dino_bot.actions import AdbClient
-from dino_bot.capture import AdbScreencapCapture, CaptureError, MssBlueStacksCapture
+from dino_bot.capture import (
+    AdbScreencapCapture,
+    CaptureError,
+    MssBlueStacksCapture,
+    MssEmulatorCapture,
+)
 from dino_bot.config import load_config
 from dino_bot.interfaces import CaptureProvider
 from dino_bot.models import Frame
@@ -27,7 +32,7 @@ def _default_provider() -> CaptureProvider:
         client = AdbClient(config.adb)
         client.ensure_ready()
         return AdbScreencapCapture(client)
-    return MssBlueStacksCapture(
+    return MssEmulatorCapture(
         config.capture.window_titles,
         config.capture.process_names,
         config.capture.viewport,
@@ -44,7 +49,7 @@ def capture_frame() -> Frame:
 
 
 def capture() -> NDArray:
-    """Capture BlueStacks and return the BGR numpy image kept in RAM."""
+    """Capture the configured emulator and return the BGR numpy image kept in RAM."""
     return capture_frame().image
 
 
@@ -58,6 +63,7 @@ __all__ = [
     "AdbScreencapCapture",
     "CaptureError",
     "MssBlueStacksCapture",
+    "MssEmulatorCapture",
     "capture",
     "capture_frame",
     "close",

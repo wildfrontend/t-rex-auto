@@ -7,9 +7,53 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+from .models import ExclusionZone
+
 
 class ConfigError(ValueError):
     pass
+
+
+DEFAULT_SPEED_PROFILES: dict[str, dict[str, int]] = {
+    "safe": {
+        "click_delay_ms": 1500,
+        "dinosaur_delay_ms": 1500,
+        "hunt_button_delay_ms": 5000,
+        "hunt_confirm_delay_ms": 3000,
+        "idle_delay_ms": 500,
+        "poll_interval_ms": 250,
+    },
+    "fast": {
+        "click_delay_ms": 300,
+        "dinosaur_delay_ms": 300,
+        "hunt_button_delay_ms": 900,
+        "hunt_confirm_delay_ms": 1200,
+        "idle_delay_ms": 250,
+        "poll_interval_ms": 100,
+    },
+}
+
+EMULATOR_PROFILES: dict[str, dict[str, object]] = {
+    "bluestacks": {
+        "serial": "127.0.0.1:5555",
+        "window_titles": ("BlueStacks App Player", "BlueStacks"),
+        "process_names": ("HD-Player.exe",),
+    },
+    "mumu": {
+        "serial": "127.0.0.1:7555",
+        "window_titles": ("MuMuPlayer", "MuMu Player", "MuMu模擬器", "MuMu模拟器"),
+        "process_names": ("MuMuPlayer.exe", "NemuPlayer.exe", "MuMuNxDevice.exe"),
+    },
+    "custom": {
+        "serial": None,
+        "window_titles": (),
+        "process_names": (),
+    },
+}
+
+
+def _default_speed_profiles() -> dict[str, dict[str, int]]:
+    return {name: dict(values) for name, values in DEFAULT_SPEED_PROFILES.items()}
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,12 +92,23 @@ class PlannerConfig:
     history_limit: int = 500
     recenter_every: int = 10
     own_path_radius: float = 90.0
+    anchor_exclusion_radius: float = 50.0
+    dinosaur_failure_cooldown_ms: int = 5_000
+    dinosaur_failure_radius: float = 80.0
     mail_after_hunts: int = 30
+    mail_failure_limit: int = 3
     capacity_wait_seconds: float = 300.0
     ring_width: float = 150.0
     own_path_angle_degrees: float = 7.0
     stalled_recenter_frames: int = 8
+    map_settle_frames: int = 2
+    map_settle_tolerance_px: float = 20.0
+    map_settle_max_frames: int = 12
     bottom_exclusion_px: int = 180
+    exclusion_zones: tuple[ExclusionZone, ...] = ()
+    retry_exhausted_cooldown_ms: int = 60_000
+    suppression_radius: float = 60.0
+    action_cooldowns_ms: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,10 +132,25 @@ class WorkflowConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class EventLogConfig:
+    """Machine-readable event stream settings.
+
+    On by default: the text log alone could not explain any of the failures it
+    recorded, and a stream nobody switched on is a stream nobody has when it
+    matters.
+    """
+
+    enabled: bool = True
+    max_bytes: int = 16 * 1024 * 1024
+
+
+@dataclass(frozen=True, slots=True)
 class RecoveryConfig:
     enabled: bool = True
     black_screen_timeout_seconds: float = 45.0
     black_mean_threshold: float = 2.0
+    no_hunt_progress_timeout_seconds: float = 180.0
+    hunt_progress_suspend_budget_seconds: float = 120.0
     restart_cooldown_seconds: float = 90.0
     launch_wait_seconds: float = 15.0
     package: str = "com.mondayoff.dinomutant"
@@ -90,6 +160,7 @@ class RecoveryConfig:
 @dataclass(frozen=True, slots=True)
 class AppConfig:
     root: Path
+    emulator: Literal["bluestacks", "mumu", "custom"] = "bluestacks"
     mode: Literal["runtime", "debug", "training"] = "runtime"
     debug: bool = False
     capture_fps: float = 10.0
@@ -99,6 +170,13 @@ class AppConfig:
     verify_retry: int = 3
     save_debug_image: bool = False
     idle_delay: int = 500
+    # The text log is read back by the control window and the diagnostic
+    # bundle, so its size is a latency budget, not just disk.
+    log_max_bytes: int = 32 * 1024 * 1024
+    transition_poll_interval: int = 250
+    speed_profiles: dict[str, dict[str, int]] = field(
+        default_factory=_default_speed_profiles
+    )
     max_actions: int = 0
     capture: CaptureConfig = field(default_factory=CaptureConfig)
     adb: AdbConfig = field(default_factory=AdbConfig)
@@ -108,6 +186,7 @@ class AppConfig:
     training: TrainingConfig = field(default_factory=TrainingConfig)
     workflow: WorkflowConfig = field(default_factory=WorkflowConfig)
     recovery: RecoveryConfig = field(default_factory=RecoveryConfig)
+    event_log: EventLogConfig = field(default_factory=EventLogConfig)
 
     @property
     def logs_dir(self) -> Path:
@@ -134,6 +213,60 @@ def _path_from(root: Path, raw: str) -> Path:
     return path if path.is_absolute() else root / path
 
 
+def _exclusion_zones(data: dict[str, Any]) -> tuple[ExclusionZone, ...]:
+    raw = data.get("exclusion_zones", [])
+    if not isinstance(raw, list):
+        raise ConfigError("planner.exclusion_zones must be a JSON array")
+    zones: list[ExclusionZone] = []
+    for index, entry in enumerate(raw):
+        if not isinstance(entry, dict):
+            raise ConfigError(
+                f"planner.exclusion_zones[{index}] must be a JSON object"
+            )
+        name = str(entry.get("name") or f"zone_{index}")
+        reference_width = float(entry.get("reference_width", 900))
+        if reference_width <= 0:
+            raise ConfigError(
+                f"planner.exclusion_zones[{index}].reference_width must be "
+                "greater than zero"
+            )
+        bounds: list[float] = []
+        for axis in ("x", "y"):
+            pair = entry.get(axis)
+            if not isinstance(pair, list) or len(pair) != 2:
+                raise ConfigError(
+                    f"planner.exclusion_zones[{index}].{axis} must be [start, end]"
+                )
+            try:
+                low, high = (float(value) for value in pair)
+            except (TypeError, ValueError) as exc:
+                raise ConfigError(
+                    f"planner.exclusion_zones[{index}].{axis} must contain numbers"
+                ) from exc
+            if low < 0:
+                raise ConfigError(
+                    f"planner.exclusion_zones[{index}].{axis} cannot be negative"
+                )
+            if low >= high:
+                raise ConfigError(
+                    f"planner.exclusion_zones[{index}].{axis} start must be "
+                    "smaller than end"
+                )
+            bounds.extend((low, high))
+        x0, x1, y0, y1 = bounds
+        zones.append(
+            ExclusionZone(
+                name=name,
+                x0=x0,
+                y0=y0,
+                x1=x1,
+                y1=y1,
+                reference_width=reference_width,
+            )
+        )
+    return tuple(zones)
+
+
 def load_config(path: str | Path = "config.json") -> AppConfig:
     config_path = Path(path).expanduser().resolve()
     try:
@@ -146,6 +279,11 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
         raise ConfigError("Config root must be a JSON object")
 
     root = config_path.parent
+    emulator = str(data.get("emulator", "bluestacks")).lower()
+    if emulator not in EMULATOR_PROFILES:
+        supported = ", ".join(EMULATOR_PROFILES)
+        raise ConfigError(f"emulator must be one of: {supported}")
+    emulator_profile = EMULATOR_PROFILES[emulator]
     capture_data = _section(data, "capture")
     adb_data = _section(data, "adb")
     detector_data = _section(data, "detector")
@@ -154,6 +292,18 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
     training_data = _section(data, "training")
     workflow_data = _section(data, "workflow")
     recovery_data = _section(data, "recovery")
+    event_log_data = _section(data, "event_log")
+    speed_profiles_data = _section(data, "speed_profiles")
+
+    speed_profiles = _default_speed_profiles()
+    for profile_name, raw_profile in speed_profiles_data.items():
+        if profile_name not in DEFAULT_SPEED_PROFILES:
+            raise ConfigError(f"unknown speed profile: {profile_name}")
+        if not isinstance(raw_profile, dict):
+            raise ConfigError(f"speed_profiles.{profile_name} must be a JSON object")
+        speed_profiles[profile_name].update(
+            {str(key): int(value) for key, value in raw_profile.items()}
+        )
 
     viewport_raw = capture_data.get("viewport")
     auto_viewport = isinstance(viewport_raw, str) and viewport_raw.lower() == "auto"
@@ -184,6 +334,7 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
 
     config = AppConfig(
         root=root,
+        emulator=emulator,  # type: ignore[arg-type]
         mode=mode,  # type: ignore[arg-type]
         debug=bool(data.get("debug", False)),
         capture_fps=float(data.get("capture_fps", 10)),
@@ -199,18 +350,25 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
         verify_retry=int(data.get("verify_retry", 3)),
         save_debug_image=bool(data.get("save_debug_image", False)),
         idle_delay=int(data.get("idle_delay", 500)),
+        log_max_bytes=int(data.get("log_max_bytes", 32 * 1024 * 1024)),
+        transition_poll_interval=int(data.get("transition_poll_interval", 250)),
+        speed_profiles=speed_profiles,
         max_actions=int(data.get("max_actions", 0)),
         capture=CaptureConfig(
             backend=backend,  # type: ignore[arg-type]
-            window_titles=tuple(capture_data.get("window_titles", ["BlueStacks"])),
-            process_names=tuple(capture_data.get("process_names", ["HD-Player.exe"])),
+            window_titles=tuple(
+                capture_data.get("window_titles", emulator_profile["window_titles"])
+            ),
+            process_names=tuple(
+                capture_data.get("process_names", emulator_profile["process_names"])
+            ),
             viewport=viewport,  # type: ignore[arg-type]
             auto_viewport=auto_viewport,
             chrome_insets=chrome_insets,  # type: ignore[arg-type]
         ),
         adb=AdbConfig(
             executable=adb_data.get("executable"),
-            serial=adb_data.get("serial"),
+            serial=adb_data.get("serial", emulator_profile["serial"]),
             connect_on_start=bool(adb_data.get("connect_on_start", True)),
             timeout=float(adb_data.get("timeout", 5.0)),
         ),
@@ -233,7 +391,17 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
             history_limit=int(planner_data.get("history_limit", 500)),
             recenter_every=int(planner_data.get("recenter_every", 10)),
             own_path_radius=float(planner_data.get("own_path_radius", 90)),
+            anchor_exclusion_radius=float(
+                planner_data.get("anchor_exclusion_radius", 50)
+            ),
+            dinosaur_failure_cooldown_ms=int(
+                planner_data.get("dinosaur_failure_cooldown_ms", 5_000)
+            ),
+            dinosaur_failure_radius=float(
+                planner_data.get("dinosaur_failure_radius", 80)
+            ),
             mail_after_hunts=int(planner_data.get("mail_after_hunts", 30)),
+            mail_failure_limit=int(planner_data.get("mail_failure_limit", 3)),
             capacity_wait_seconds=float(
                 planner_data.get("capacity_wait_seconds", 300)
             ),
@@ -244,7 +412,25 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
             stalled_recenter_frames=int(
                 planner_data.get("stalled_recenter_frames", 8)
             ),
+            map_settle_frames=int(planner_data.get("map_settle_frames", 2)),
+            map_settle_tolerance_px=float(
+                planner_data.get("map_settle_tolerance_px", 20)
+            ),
+            map_settle_max_frames=int(
+                planner_data.get("map_settle_max_frames", 12)
+            ),
             bottom_exclusion_px=int(planner_data.get("bottom_exclusion_px", 180)),
+            exclusion_zones=_exclusion_zones(planner_data),
+            retry_exhausted_cooldown_ms=int(
+                planner_data.get("retry_exhausted_cooldown_ms", 60_000)
+            ),
+            suppression_radius=float(planner_data.get("suppression_radius", 60)),
+            action_cooldowns_ms={
+                str(target_type): int(delay)
+                for target_type, delay in _section(
+                    planner_data, "action_cooldowns_ms"
+                ).items()
+            },
         ),
         verify=VerifyConfig(
             max_distance=float(verify_data.get("max_distance", 35)),
@@ -273,6 +459,12 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
             black_mean_threshold=float(
                 recovery_data.get("black_mean_threshold", 2)
             ),
+            no_hunt_progress_timeout_seconds=float(
+                recovery_data.get("no_hunt_progress_timeout_seconds", 180)
+            ),
+            hunt_progress_suspend_budget_seconds=float(
+                recovery_data.get("hunt_progress_suspend_budget_seconds", 120)
+            ),
             restart_cooldown_seconds=float(
                 recovery_data.get("restart_cooldown_seconds", 90)
             ),
@@ -288,6 +480,10 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
                 )
             ),
         ),
+        event_log=EventLogConfig(
+            enabled=bool(event_log_data.get("enabled", True)),
+            max_bytes=int(event_log_data.get("max_bytes", 16 * 1024 * 1024)),
+        ),
     )
     _validate(config)
     return config
@@ -297,9 +493,30 @@ def _validate(config: AppConfig) -> None:
     if config.capture_fps <= 0:
         raise ConfigError("capture_fps must be greater than zero")
     if config.click_delay < 0 or config.idle_delay < 0:
-        raise ConfigError("delays cannot be negative")
+        raise ConfigError("click_delay and idle_delay cannot be negative")
+    if config.transition_poll_interval <= 0:
+        raise ConfigError("transition_poll_interval must be greater than zero")
     if any(delay < 0 for delay in config.post_action_delays.values()):
         raise ConfigError("post_action_delays cannot be negative")
+    required_profile_keys = frozenset(DEFAULT_SPEED_PROFILES["fast"])
+    for profile_name, profile in config.speed_profiles.items():
+        unknown = profile.keys() - required_profile_keys
+        if unknown:
+            raise ConfigError(
+                f"speed_profiles.{profile_name} contains unknown keys: "
+                f"{', '.join(sorted(unknown))}"
+            )
+        missing = required_profile_keys - profile.keys()
+        if missing:
+            raise ConfigError(
+                f"speed_profiles.{profile_name} is missing: {', '.join(sorted(missing))}"
+            )
+        if any(value < 0 for value in profile.values()):
+            raise ConfigError(f"speed_profiles.{profile_name} cannot contain negative values")
+        if profile["poll_interval_ms"] <= 0:
+            raise ConfigError(
+                f"speed_profiles.{profile_name}.poll_interval_ms must be greater than zero"
+            )
     if any(action not in {"tap", "back"} for action in config.target_actions.values()):
         raise ConfigError("target_actions values must be tap or back")
     if config.verify_retry < 0:
@@ -318,6 +535,10 @@ def _validate(config: AppConfig) -> None:
         raise ConfigError("recovery.black_screen_timeout_seconds must be greater than zero")
     if not 0 <= config.recovery.black_mean_threshold <= 255:
         raise ConfigError("recovery.black_mean_threshold must be between 0 and 255")
+    if config.recovery.no_hunt_progress_timeout_seconds < 0:
+        raise ConfigError(
+            "recovery.no_hunt_progress_timeout_seconds cannot be negative"
+        )
     if config.recovery.restart_cooldown_seconds < 0:
         raise ConfigError("recovery.restart_cooldown_seconds cannot be negative")
     if config.recovery.launch_wait_seconds < 0:
@@ -326,18 +547,46 @@ def _validate(config: AppConfig) -> None:
         raise ConfigError("recovery package/activity cannot be empty")
     if config.planner.own_path_radius < 0:
         raise ConfigError("planner.own_path_radius cannot be negative")
+    if config.planner.anchor_exclusion_radius < 0:
+        raise ConfigError("planner.anchor_exclusion_radius cannot be negative")
+    if config.planner.dinosaur_failure_cooldown_ms < 0:
+        raise ConfigError("planner.dinosaur_failure_cooldown_ms cannot be negative")
+    if config.planner.dinosaur_failure_radius < 0:
+        raise ConfigError("planner.dinosaur_failure_radius cannot be negative")
     if config.planner.mail_after_hunts <= 0:
         raise ConfigError("planner.mail_after_hunts must be greater than zero")
+    if config.planner.mail_failure_limit <= 0:
+        raise ConfigError("planner.mail_failure_limit must be greater than zero")
     if config.planner.capacity_wait_seconds < 0:
         raise ConfigError("planner.capacity_wait_seconds cannot be negative")
+    if any(delay < 0 for delay in config.planner.action_cooldowns_ms.values()):
+        raise ConfigError("planner.action_cooldowns_ms cannot be negative")
     if config.planner.ring_width <= 0:
         raise ConfigError("planner.ring_width must be greater than zero")
     if not 0 <= config.planner.own_path_angle_degrees <= 180:
         raise ConfigError("planner.own_path_angle_degrees must be between 0 and 180")
     if config.planner.stalled_recenter_frames <= 0:
         raise ConfigError("planner.stalled_recenter_frames must be greater than zero")
+    if config.planner.map_settle_frames <= 0:
+        raise ConfigError("planner.map_settle_frames must be greater than zero")
+    if config.planner.map_settle_tolerance_px < 0:
+        raise ConfigError("planner.map_settle_tolerance_px cannot be negative")
+    if config.planner.map_settle_max_frames < config.planner.map_settle_frames:
+        raise ConfigError(
+            "planner.map_settle_max_frames must be at least map_settle_frames"
+        )
     if config.planner.bottom_exclusion_px < 0:
         raise ConfigError("planner.bottom_exclusion_px cannot be negative")
+    if config.planner.retry_exhausted_cooldown_ms < 0:
+        raise ConfigError("planner.retry_exhausted_cooldown_ms cannot be negative")
+    if config.planner.suppression_radius < 0:
+        raise ConfigError("planner.suppression_radius cannot be negative")
+    if config.recovery.hunt_progress_suspend_budget_seconds < 0:
+        raise ConfigError(
+            "recovery.hunt_progress_suspend_budget_seconds cannot be negative"
+        )
+    if config.event_log.max_bytes < 0:
+        raise ConfigError("event_log.max_bytes cannot be negative")
     if not 0 <= config.detector.default_threshold <= 1:
         raise ConfigError("detector.default_threshold must be between zero and one")
     if not 0 <= config.detector.nms_iou <= 1:

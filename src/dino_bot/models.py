@@ -50,6 +50,32 @@ class Frame:
 
 
 @dataclass(frozen=True, slots=True)
+class ExclusionZone:
+    """A fixed screen region that must never receive a tap.
+
+    Bounds are pixels in the manifest reference space. The game anchors its UI
+    to the top-left and scales it uniformly with frame *width*, so a zone only
+    needs rescaling by ``frame.width / reference_width``; frame height plays no
+    part. Measuring the vertical bounds against height instead slides the zone
+    off the UI as soon as the aspect ratio changes.
+    """
+
+    name: str
+    x0: float
+    y0: float
+    x1: float
+    y1: float
+    reference_width: float = 900.0
+
+    def contains(self, x: float, y: float, width: int) -> bool:
+        scale = width / self.reference_width
+        return (
+            self.x0 * scale <= x <= self.x1 * scale
+            and self.y0 * scale <= y <= self.y1 * scale
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class Detection:
     type: str
     x: int
@@ -128,6 +154,10 @@ class VerificationResult:
     success: bool
     reason: str
     confidence: float = 0.0
+    # Mean absolute difference over the target region, 0..1. ``None`` when the
+    # verdict was reached without comparing pixels. A run of exact zeros means
+    # the tap landed on something inert, which the engine escalates away from.
+    pixel_change: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
