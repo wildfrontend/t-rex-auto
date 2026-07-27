@@ -461,8 +461,8 @@ function Resolve-SpeedSettings {
     while ($SelectedSpeed -notin @("fast", "safe", "custom")) {
         Write-Host ""
         Write-Host "請選擇 Bot 執行速度：" -ForegroundColor Cyan
-        Write-Host "  1. 快速（建議）"
-        Write-Host "  2. 安全（轉場等待較久）"
+        Write-Host "  1. 快速（預設）"
+        Write-Host "  2. 安全（慢速電腦建議）"
         Write-Host "  3. 自訂（手動輸入毫秒）"
         $Choice = Read-Host "請選擇 [1]"
         if ([string]::IsNullOrWhiteSpace($Choice) -or $Choice -eq "1") {

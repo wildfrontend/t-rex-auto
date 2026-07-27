@@ -100,7 +100,15 @@ class PlannerConfig:
     capacity_wait_seconds: float = 300.0
     ring_width: float = 150.0
     own_path_angle_degrees: float = 7.0
-    stalled_recenter_frames: int = 8
+    stalled_recenter_seconds: float = 10.0
+    # Recentering restores the supply of reachable dinosaurs; it is not about
+    # where the egg sits. Reset once fewer than this many candidates survive.
+    recenter_min_candidates: int = 1
+    # Every other stall guard is written as "leave once the expected control
+    # appears", so none of them fire on a screen showing no known control at
+    # all. This one is measured from the planner alone.
+    blind_idle_seconds: float = 20.0
+    mail_stage_timeout_seconds: float = 20.0
     map_settle_frames: int = 2
     map_settle_tolerance_px: float = 20.0
     map_settle_max_frames: int = 12
@@ -109,14 +117,19 @@ class PlannerConfig:
     retry_exhausted_cooldown_ms: int = 60_000
     suppression_radius: float = 60.0
     action_cooldowns_ms: dict[str, int] = field(default_factory=dict)
+    stage_scoped_scan: bool = True
+    full_scan_interval_seconds: float = 30.0
+    full_scan_after_idle_cycles: int = 2
 
 
 @dataclass(frozen=True, slots=True)
 class VerifyConfig:
     max_distance: float = 35.0
     pixel_change_threshold: float = 0.08
+    minimum_checks: int = 2
     failure_types: tuple[str, ...] = ()
     success_transitions: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    success_requires_target_absence: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,11 +158,30 @@ class EventLogConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class StallConfig:
+    """Evidence written when the planner stalls on an unrecognised screen.
+
+    The planner owns the timer (``planner.blind_idle_seconds``); this owns what
+    happens once it fires. On by default, because these episodes are rare
+    enough that nobody will have switched it on before the one that matters.
+    """
+
+    snapshots_enabled: bool = True
+    snapshot_limit: int = 10
+    snapshot_min_interval_seconds: float = 60.0
+
+
+@dataclass(frozen=True, slots=True)
 class RecoveryConfig:
     enabled: bool = True
     black_screen_timeout_seconds: float = 45.0
     black_mean_threshold: float = 2.0
-    no_hunt_progress_timeout_seconds: float = 180.0
+    # Restarting the app is the most expensive escape there is - force-stop,
+    # relaunch, a launch wait and the whole startup dialog sequence - and a
+    # measured run needed two of them to leave one stall. Now that the planner
+    # releases its own stages first, this is the backstop rather than the only
+    # way out, so it can fire sooner.
+    no_hunt_progress_timeout_seconds: float = 90.0
     hunt_progress_suspend_budget_seconds: float = 120.0
     restart_cooldown_seconds: float = 90.0
     launch_wait_seconds: float = 15.0
@@ -187,10 +219,15 @@ class AppConfig:
     workflow: WorkflowConfig = field(default_factory=WorkflowConfig)
     recovery: RecoveryConfig = field(default_factory=RecoveryConfig)
     event_log: EventLogConfig = field(default_factory=EventLogConfig)
+    stalls: StallConfig = field(default_factory=StallConfig)
 
     @property
     def logs_dir(self) -> Path:
         return self.root / "logs"
+
+    @property
+    def stalls_dir(self) -> Path:
+        return self.root / "logs" / "stalls"
 
     @property
     def debug_dir(self) -> Path:
@@ -293,6 +330,7 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
     workflow_data = _section(data, "workflow")
     recovery_data = _section(data, "recovery")
     event_log_data = _section(data, "event_log")
+    stalls_data = _section(data, "stalls")
     speed_profiles_data = _section(data, "speed_profiles")
 
     speed_profiles = _default_speed_profiles()
@@ -409,8 +447,15 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
             own_path_angle_degrees=float(
                 planner_data.get("own_path_angle_degrees", 7)
             ),
-            stalled_recenter_frames=int(
-                planner_data.get("stalled_recenter_frames", 8)
+            stalled_recenter_seconds=float(
+                planner_data.get("stalled_recenter_seconds", 10)
+            ),
+            recenter_min_candidates=int(
+                planner_data.get("recenter_min_candidates", 1)
+            ),
+            blind_idle_seconds=float(planner_data.get("blind_idle_seconds", 20)),
+            mail_stage_timeout_seconds=float(
+                planner_data.get("mail_stage_timeout_seconds", 20)
             ),
             map_settle_frames=int(planner_data.get("map_settle_frames", 2)),
             map_settle_tolerance_px=float(
@@ -431,10 +476,18 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
                     planner_data, "action_cooldowns_ms"
                 ).items()
             },
+            stage_scoped_scan=bool(planner_data.get("stage_scoped_scan", True)),
+            full_scan_interval_seconds=float(
+                planner_data.get("full_scan_interval_seconds", 30)
+            ),
+            full_scan_after_idle_cycles=int(
+                planner_data.get("full_scan_after_idle_cycles", 2)
+            ),
         ),
         verify=VerifyConfig(
             max_distance=float(verify_data.get("max_distance", 35)),
             pixel_change_threshold=float(verify_data.get("pixel_change_threshold", 0.08)),
+            minimum_checks=int(verify_data.get("minimum_checks", 2)),
             failure_types=tuple(verify_data.get("failure_types", [])),
             success_transitions={
                 str(target_type): tuple(str(item) for item in successors)
@@ -442,6 +495,13 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
                     "success_transitions", {}
                 ).items()
             },
+            success_requires_target_absence=tuple(
+                str(item)
+                for item in verify_data.get(
+                    "success_requires_target_absence",
+                    [],
+                )
+            ),
         ),
         training=TrainingConfig(
             fps=float(training_data.get("fps", 2)),
@@ -460,7 +520,7 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
                 recovery_data.get("black_mean_threshold", 2)
             ),
             no_hunt_progress_timeout_seconds=float(
-                recovery_data.get("no_hunt_progress_timeout_seconds", 180)
+                recovery_data.get("no_hunt_progress_timeout_seconds", 90)
             ),
             hunt_progress_suspend_budget_seconds=float(
                 recovery_data.get("hunt_progress_suspend_budget_seconds", 120)
@@ -483,6 +543,13 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
         event_log=EventLogConfig(
             enabled=bool(event_log_data.get("enabled", True)),
             max_bytes=int(event_log_data.get("max_bytes", 16 * 1024 * 1024)),
+        ),
+        stalls=StallConfig(
+            snapshots_enabled=bool(stalls_data.get("snapshots_enabled", True)),
+            snapshot_limit=int(stalls_data.get("snapshot_limit", 10)),
+            snapshot_min_interval_seconds=float(
+                stalls_data.get("snapshot_min_interval_seconds", 60)
+            ),
         ),
     )
     _validate(config)
@@ -521,6 +588,8 @@ def _validate(config: AppConfig) -> None:
         raise ConfigError("target_actions values must be tap or back")
     if config.verify_retry < 0:
         raise ConfigError("verify_retry cannot be negative")
+    if config.verify.minimum_checks <= 0:
+        raise ConfigError("verify.minimum_checks must be greater than zero")
     if not 1 <= config.training.fps <= 5:
         raise ConfigError("training.fps must be between 1 and 5")
     if not 1 <= config.training.max_images <= 500:
@@ -565,8 +634,26 @@ def _validate(config: AppConfig) -> None:
         raise ConfigError("planner.ring_width must be greater than zero")
     if not 0 <= config.planner.own_path_angle_degrees <= 180:
         raise ConfigError("planner.own_path_angle_degrees must be between 0 and 180")
-    if config.planner.stalled_recenter_frames <= 0:
-        raise ConfigError("planner.stalled_recenter_frames must be greater than zero")
+    if config.planner.stalled_recenter_seconds <= 0:
+        raise ConfigError("planner.stalled_recenter_seconds must be greater than zero")
+    if config.planner.recenter_min_candidates <= 0:
+        raise ConfigError("planner.recenter_min_candidates must be greater than zero")
+    if config.planner.blind_idle_seconds <= 0:
+        raise ConfigError("planner.blind_idle_seconds must be greater than zero")
+    if config.planner.mail_stage_timeout_seconds <= 0:
+        raise ConfigError(
+            "planner.mail_stage_timeout_seconds must be greater than zero"
+        )
+    if config.stalls.snapshot_limit <= 0:
+        raise ConfigError("stalls.snapshot_limit must be greater than zero")
+    if config.stalls.snapshot_min_interval_seconds < 0:
+        raise ConfigError("stalls.snapshot_min_interval_seconds cannot be negative")
+    if config.planner.full_scan_interval_seconds < 0:
+        raise ConfigError("planner.full_scan_interval_seconds cannot be negative")
+    if config.planner.full_scan_after_idle_cycles <= 0:
+        raise ConfigError(
+            "planner.full_scan_after_idle_cycles must be greater than zero"
+        )
     if config.planner.map_settle_frames <= 0:
         raise ConfigError("planner.map_settle_frames must be greater than zero")
     if config.planner.map_settle_tolerance_px < 0:

@@ -6,7 +6,7 @@
 目前完成 Auto Hunt MVP：辨識恐龍、選擇最大隊伍、發動狩獵並驗證結果。後續功能以
 Feature 方式加入，不需要修改核心狀態機。
 
-目前版本：`v0.2.15`。這一版補上狩獵被信箱容量擋住時的自動恢復流程，
+目前版本：`v0.2.18`。這一版根據 v0.2.17 的實際執行 log，縮短狩獵被信箱容量擋住時的自動恢復流程，
 並保留雙視窗啟動器、可調整狩獵速度及本機 AI 狀態接口：
 
 - 使用者只需雙擊 `start-bot.cmd`；啟動器會先檢查 Python、ADB、素材及畫面擷取。
@@ -371,7 +371,7 @@ D:\DinoMutantBot\python\python.exe `
 ## 設定重點
 
 - `capture.backend`: `adb` 不搶 focus；`mss` 較快但會把 BlueStacks 拉到前景。
-- `planner.stalled_recenter_frames`: 連續多少幀沒有安全目標後重置視野，預設 8。
+- `planner.stalled_recenter_seconds`: 持續多少秒沒有安全目標後重置視野，預設 10 秒。
 - `capture.viewport`: Android 畫面在 BlueStacks client 內的 `[x,y,width,height]`；
   若含有 BlueStacks 側欄，應設定此值以確保 ADB 座標精準。
 - `click_delay`: 點擊到驗證畫面的等待毫秒數。

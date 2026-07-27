@@ -27,6 +27,7 @@ from .interfaces import (
     ModeObserver,
     Planner,
     RuntimeRecovery,
+    StallRecorder,
     Verifier,
 )
 from .models import (
@@ -66,12 +67,14 @@ class BotContext:
     target_action_kinds: dict[str, ActionKind] = field(default_factory=dict)
     idle_delay_ms: int = 500
     transition_poll_interval_ms: int = 250
+    verification_minimum_checks: int = 2
     verify_retries: int = 3
     max_actions: int = 0
     max_cycles: int = 0
     cycle_complete_targets: tuple[str, ...] = ()
     runtime_recovery: RuntimeRecovery | None = None
     hunt_progress_recovery: HuntProgressRecovery | None = None
+    stall_snapshots: StallRecorder | None = None
     event_log: EventLog = field(default_factory=NullEventLog, repr=False)
     state: BotState = BotState.IDLE
     stop_requested: bool = False
@@ -92,6 +95,8 @@ class BotContext:
     cycle_count: int = 0
     verification_timeout_ms: int = 0
     verification_deadline: float | None = None
+    verification_started_at: float | None = None
+    verification_checks: int = 0
     reuse_verified_detections: bool = False
     inert_taps: int = 0
     inert_target: tuple[str, int, int] | None = None
@@ -164,8 +169,20 @@ class DetectState:
     def execute(self, context: BotContext) -> BotState:
         if context.frame is None:
             raise RuntimeError("Detect state entered without a frame")
+        # Most of a planning scan is spent on screens the current stage cannot
+        # reach - the launch dialogs alone are a quarter of the bill. When the
+        # planner can name what it is able to act on, scan only that; it widens
+        # the request itself whenever the narrow view stops paying off.
+        scoped_types: frozenset[str] | None = None
+        detect_types = getattr(context.detector, "detect_types", None)
+        planning_types = getattr(context.planner, "planning_detection_types", None)
+        if callable(detect_types) and callable(planning_types):
+            scoped_types = planning_types()
         started = time.perf_counter()
-        context.detections = context.detector.detect(context.frame)
+        if scoped_types is None:
+            context.detections = context.detector.detect(context.frame)
+        else:
+            context.detections = detect_types(context.frame, scoped_types)
         detect_ms = round((time.perf_counter() - started) * 1000)
         counts: dict[str, int] = {}
         for item in context.detections:
@@ -175,12 +192,14 @@ class DetectState:
             "detect",
             ms=detect_ms,
             n=len(context.detections),
+            scoped=len(scoped_types) if scoped_types is not None else None,
             det=detection_payload(context.detections),
         )
         context.logger.info(
-            "Detect | %s | %dms",
+            "Detect | %s | %dms | %s",
             summary or "no targets",
             detect_ms,
+            f"scoped={len(scoped_types)}" if scoped_types is not None else "full scan",
         )
         # Layout detectors decide from a handful of ratios that never reach the
         # log, so a misfire can only be diagnosed by reverse-engineering the
@@ -225,13 +244,42 @@ class PlanningState:
         last_stage = getattr(context.planner, "last_stage", None)
         if callable(last_stage):
             stage = str(last_stage())
+        idle_ms = 0
+        last_idle_seconds = getattr(context.planner, "last_idle_seconds", None)
+        if callable(last_idle_seconds):
+            idle_ms = round(float(last_idle_seconds()) * 1000)
+        recenter_reason = None
+        last_recenter_reason = getattr(context.planner, "last_recenter_reason", None)
+        if callable(last_recenter_reason):
+            recenter_reason = last_recenter_reason()
+        blind_ms = 0
+        last_blind_seconds = getattr(context.planner, "last_blind_seconds", None)
+        if callable(last_blind_seconds):
+            blind_ms = round(float(last_blind_seconds()) * 1000)
+        # Supply is what recentering exists to restore, and whether the anchor
+        # was measured decides which rejection rules were even allowed to run.
+        # Neither is recoverable from the rejection counts afterwards.
+        supply = None
+        last_supply = getattr(context.planner, "last_supply", None)
+        if callable(last_supply):
+            supply = int(last_supply())
+        anchor = None
+        anchor_measured = getattr(context.planner, "anchor_measured", None)
+        if callable(anchor_measured):
+            anchor = "measured" if anchor_measured() else "predicted"
         context.event_log.emit(
             "plan",
             stage=stage or None,
             target=target_payload(context.target),
             reject=rejections or None,
             cooldown_ms=cooldown_ms or None,
+            idle_ms=idle_ms or None,
+            blind_ms=blind_ms or None,
+            supply=supply,
+            anchor=anchor,
+            recenter_reason=recenter_reason,
         )
+        _report_blind_stall(context, stage)
         if (
             context.hunt_progress_recovery is not None
             and context.hunt_progress_recovery.observe(
@@ -337,14 +385,16 @@ class ActionState:
             context.click_delay_ms,
         )
         context.verification_timeout_ms = max(0, delay_ms)
+        context.verification_started_at = context.clock()
         context.verification_deadline = None
+        context.verification_checks = 0
         initial_poll_ms = min(
             max(0, delay_ms),
             max(1, context.transition_poll_interval_ms),
         )
         if initial_poll_ms:
             context.logger.debug(
-                "Action | poll in %dms; transition timeout=%dms | target=%s",
+                "Action | adaptive verify in %dms; max timeout=%dms | target=%s",
                 initial_poll_ms,
                 max(0, delay_ms),
                 context.target.type,
@@ -411,8 +461,45 @@ class VerifyState:
             after_detections,
         )
         context.last_result = result
+        context.verification_checks += 1
+        explicit_failure = result.reason.startswith("failure indicator detected:")
+        now = context.clock()
+        deadline = context.verification_deadline
+        if (
+            not result.success
+            and not explicit_failure
+            and deadline is None
+            and context.verification_timeout_ms
+        ):
+            deadline = now + context.verification_timeout_ms / 1000
+            context.verification_deadline = deadline
+        within_deadline = deadline is not None and now < deadline
+        minimum_checks_pending = (
+            context.verification_timeout_ms > 0
+            and context.verification_checks
+            < max(1, context.verification_minimum_checks)
+        )
+        pending = (
+            not result.success
+            and not explicit_failure
+            and (within_deadline or minimum_checks_pending)
+        )
+        remaining_ms = (
+            max(0, round((deadline - now) * 1000))
+            if deadline is not None
+            else 0
+        )
+        elapsed_ms = (
+            max(0, round((now - context.verification_started_at) * 1000))
+            if context.verification_started_at is not None
+            else None
+        )
         context.event_log.emit(
             "verify",
+            phase="pending" if pending else "final",
+            check=context.verification_checks,
+            elapsed_ms=elapsed_ms,
+            remaining_ms=remaining_ms if pending else None,
             target=target_payload(context.target),
             attempt=context.attempt,
             result=verification_payload(result),
@@ -421,30 +508,17 @@ class VerifyState:
             capture_ms=capture_ms,
             detect_ms=detect_ms,
         )
-        explicit_failure = result.reason.startswith("failure indicator detected:")
-        deadline = context.verification_deadline
-        if (
-            not result.success
-            and not explicit_failure
-            and deadline is None
-            and context.verification_timeout_ms
-        ):
-            deadline = (
-                context.clock() + context.verification_timeout_ms / 1000
+        if pending:
+            poll_interval_ms = max(1, context.transition_poll_interval_ms)
+            poll_ms = (
+                min(poll_interval_ms, max(1, remaining_ms))
+                if within_deadline
+                else poll_interval_ms
             )
-            context.verification_deadline = deadline
-        if (
-            not result.success
-            and not explicit_failure
-            and deadline is not None
-            and context.clock() < deadline
-        ):
-            now = context.clock()
-            remaining_ms = max(1, round((deadline - now) * 1000))
-            poll_ms = min(max(1, context.transition_poll_interval_ms), remaining_ms)
             context.logger.debug(
-                "Verify | Pending | %s | poll=%dms | remaining=%dms",
+                "Verify | Pending | %s | check=%d | poll=%dms | remaining=%dms",
                 result.reason,
+                context.verification_checks,
                 poll_ms,
                 remaining_ms,
             )
@@ -453,6 +527,8 @@ class VerifyState:
             return BotState.VERIFY
         context.verification_deadline = None
         context.verification_timeout_ms = 0
+        context.verification_started_at = None
+        context.verification_checks = 0
         record = ActionRecord(
             timestamp=utc_now(),
             action=context.action,
@@ -527,6 +603,29 @@ class VerifyState:
             context.attempt = 0
             context.attempt_target_type = None
             return BotState.IDLE
+        on_blocked_action_context = getattr(
+            context.planner,
+            "on_blocked_action_context",
+            None,
+        )
+        if callable(on_blocked_action_context) and on_blocked_action_context(
+            context.target,
+            context.after_detections,
+            context.attempt,
+        ):
+            context.logger.warning(
+                "Recovery | hunt confirmation remained blocked after %d attempts; "
+                "closing the hunt dialog and collecting mailbox rewards",
+                context.attempt,
+            )
+            context.event_log.emit(
+                "mailbox_full_recovery",
+                target=target_payload(context.target),
+                attempts=context.attempt,
+            )
+            context.attempt = 0
+            context.attempt_target_type = None
+            return BotState.IDLE
         if context.attempt <= context.verify_retries:
             return BotState.RECOVER
         context.logger.error("Verify | retry limit exhausted after %d attempts", context.attempt)
@@ -581,6 +680,38 @@ class StoppedState:
         return BotState.STOPPED
 
 
+def _report_blind_stall(context: BotContext, stage: str) -> None:
+    """Record a stall the planner could neither act on nor name a wait for.
+
+    The planner has already released its stage machines by the time this runs;
+    what is left to do is leave evidence. The snapshot is the point: the cause
+    of these episodes is a screen the detector has no name for, so the event
+    stream - which can only report what matched - cannot describe it.
+    """
+
+    take_blind_escape = getattr(context.planner, "take_blind_escape", None)
+    if not callable(take_blind_escape):
+        return
+    escape = take_blind_escape()
+    if not escape:
+        return
+    context.event_log.emit("blind_stall", **escape)
+    context.logger.warning(
+        "Planning | no actionable target for %.0fs | stage=%s | releasing stages",
+        float(escape.get("seconds", 0.0)),
+        escape.get("stage") or stage or "unknown",
+    )
+    if context.stall_snapshots is None or context.frame is None:
+        return
+    context.stall_snapshots.capture(
+        context.frame,
+        context.detections,
+        seconds=float(escape.get("seconds", 0.0)),
+        stage=str(escape.get("stage") or stage or ""),
+        escapes=int(escape.get("escapes", 0)),
+    )
+
+
 def _reset_after_runtime_recovery(context: BotContext) -> None:
     context.logger.info("Recovery | clearing transient workflow state")
     context.event_log.emit("recovery", action="reset_workflow")
@@ -606,6 +737,8 @@ def _reset_after_runtime_recovery(context: BotContext) -> None:
     context.attempt_target_type = None
     context.verification_timeout_ms = 0
     context.verification_deadline = None
+    context.verification_started_at = None
+    context.verification_checks = 0
     context.reuse_verified_detections = False
     context.inert_taps = 0
     context.inert_target = None

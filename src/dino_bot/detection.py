@@ -86,6 +86,13 @@ class TemplateAsset:
     click_offset: tuple[int, int] | None = None
     scales: tuple[float, ...] = (1.0,)
     prepared_images: tuple[tuple[float, np.ndarray], ...] = ()
+    # Fraction of the reference resolution this template is searched at.
+    # matchTemplate costs scale with the searched pixel count, so halving both
+    # axes is close to a 4x cut. Confidence survives it - INTER_AREA is a low
+    # pass filter, so the noise that fights the match goes with the pixels -
+    # but only for templates large enough to keep their shape. Anything that
+    # would shrink below a legible size stays at 1.0.
+    match_scale: float = 1.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,15 +170,24 @@ class OpenCvDetector:
             )
             if not scales or any(value <= 0 for value in scales):
                 raise DetectorAssetError(f"Template scales must be positive: {path}")
+            match_scale = float(raw.get("match_scale", 1.0))
+            if not 0 < match_scale <= 1.0:
+                raise DetectorAssetError(
+                    f"Template match_scale must be within (0, 1]: {path}"
+                )
             prepared_images: list[tuple[float, np.ndarray]] = []
             for scale in scales:
-                if scale == 1.0:
+                # The prepared image carries both scales: `scale` is the size
+                # the game draws this control at, `match_scale` the resolution
+                # we search for it in.
+                effective = scale * match_scale
+                if effective == 1.0:
                     prepared_images.append((scale, image))
                     continue
                 source_height, source_width = image.shape[:2]
-                width = max(1, round(source_width * scale))
-                height = max(1, round(source_height * scale))
-                interpolation = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
+                width = max(1, round(source_width * effective))
+                height = max(1, round(source_height * effective))
+                interpolation = cv2.INTER_AREA if effective < 1.0 else cv2.INTER_LINEAR
                 prepared_images.append(
                     (
                         scale,
@@ -195,6 +211,7 @@ class OpenCvDetector:
                     ),
                     scales=scales,
                     prepared_images=tuple(prepared_images),
+                    match_scale=match_scale,
                 )
             )
 
@@ -276,26 +293,53 @@ class OpenCvDetector:
         target_types: frozenset[str] | None = None,
     ) -> list[Detection]:
         results: list[Detection] = []
+        # One reduced copy per distinct match_scale, built at most once per
+        # scan and shared by every asset that searches at that resolution.
+        # The resize itself is under a millisecond; the templates it saves
+        # are hundreds.
+        searched: dict[float, np.ndarray] = {1.0: image}
         for asset in self.templates:
             if target_types is not None and asset.type not in target_types:
                 continue
+            haystack = searched.get(asset.match_scale)
+            if haystack is None:
+                source_height, source_width = image.shape[:2]
+                haystack = cv2.resize(
+                    image,
+                    (
+                        max(1, round(source_width * asset.match_scale)),
+                        max(1, round(source_height * asset.match_scale)),
+                    ),
+                    interpolation=cv2.INTER_AREA,
+                )
+                searched[asset.match_scale] = haystack
+            # Everything below is computed in the reduced space and lifted
+            # back to reference coordinates with this factor.
+            back = 1.0 / asset.match_scale
             for scale, template in asset.prepared_images:
                 height, width = template.shape[:2]
-                if image.shape[0] < height or image.shape[1] < width:
+                if haystack.shape[0] < height or haystack.shape[1] < width:
                     continue
-                matches = cv2.matchTemplate(image, template, cv2.TM_CCOEFF_NORMED)
+                matches = cv2.matchTemplate(haystack, template, cv2.TM_CCOEFF_NORMED)
                 ys, xs = np.where(matches >= asset.threshold)
                 if len(xs) > 2000:
                     scores = matches[ys, xs]
                     top = np.argpartition(scores, -2000)[-2000:]
                     xs, ys = xs[top], ys[top]
                 for x, y in zip(xs.tolist(), ys.tolist(), strict=True):
-                    bbox = BoundingBox(x=x, y=y, width=width, height=height)
+                    bbox = BoundingBox(
+                        x=round(x * back),
+                        y=round(y * back),
+                        width=max(1, round(width * back)),
+                        height=max(1, round(height * back)),
+                    )
                     metadata = {
                         "detector": "template",
                         "asset": asset.path.name,
                         "template_scale": scale,
                     }
+                    if asset.match_scale != 1.0:
+                        metadata["match_scale"] = asset.match_scale
                     if asset.click_offset is None:
                         results.append(
                             Detection.from_bbox(
@@ -306,13 +350,13 @@ class OpenCvDetector:
                             )
                         )
                     else:
-                        click_x = x + round(asset.click_offset[0] * scale)
-                        click_y = y + round(asset.click_offset[1] * scale)
+                        click_x = bbox.x + round(asset.click_offset[0] * scale)
+                        click_y = bbox.y + round(asset.click_offset[1] * scale)
                         metadata["anchor_bbox"] = {
-                            "x": x,
-                            "y": y,
-                            "width": width,
-                            "height": height,
+                            "x": bbox.x,
+                            "y": bbox.y,
+                            "width": bbox.width,
+                            "height": bbox.height,
                         }
                         results.append(
                             Detection(

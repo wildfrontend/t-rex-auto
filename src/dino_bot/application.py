@@ -24,6 +24,7 @@ from .models import ActionKind
 from .modes import create_mode
 from .planning import HuntPlanner
 from .recovery import AdbAppRestarter, BlackScreenRecovery, HuntProgressWatchdog
+from .stalls import StallSnapshotWriter
 from .verification import TargetChangedVerifier
 
 
@@ -92,7 +93,10 @@ def create_engine(config: AppConfig, *, verbose: bool = False) -> BotEngine:
         capacity_wait_seconds=config.planner.capacity_wait_seconds,
         ring_width=config.planner.ring_width,
         own_path_angle_degrees=config.planner.own_path_angle_degrees,
-        stalled_recenter_frames=config.planner.stalled_recenter_frames,
+        stalled_recenter_seconds=config.planner.stalled_recenter_seconds,
+        recenter_min_candidates=config.planner.recenter_min_candidates,
+        blind_idle_seconds=config.planner.blind_idle_seconds,
+        mail_stage_timeout_seconds=config.planner.mail_stage_timeout_seconds,
         map_settle_frames=config.planner.map_settle_frames,
         map_settle_tolerance_px=config.planner.map_settle_tolerance_px,
         map_settle_max_frames=config.planner.map_settle_max_frames,
@@ -101,14 +105,20 @@ def create_engine(config: AppConfig, *, verbose: bool = False) -> BotEngine:
         retry_exhausted_cooldown_ms=config.planner.retry_exhausted_cooldown_ms,
         suppression_radius=config.planner.suppression_radius,
         action_cooldowns_ms=config.planner.action_cooldowns_ms,
+        stage_scoped_scan=config.planner.stage_scoped_scan,
+        full_scan_interval_seconds=config.planner.full_scan_interval_seconds,
+        full_scan_after_idle_cycles=config.planner.full_scan_after_idle_cycles,
     )
     action = AdbActionDriver(adb)
     verifier = TargetChangedVerifier(
-        config.verify.max_distance,
-        config.verify.pixel_change_threshold,
-        config.verify.failure_types,
-        config.verify.success_transitions,
-        config.recovery.black_mean_threshold,
+        max_distance=config.verify.max_distance,
+        pixel_change_threshold=config.verify.pixel_change_threshold,
+        failure_types=config.verify.failure_types,
+        success_transitions=config.verify.success_transitions,
+        black_mean_threshold=config.recovery.black_mean_threshold,
+        success_requires_target_absence=(
+            config.verify.success_requires_target_absence
+        ),
     )
     observer = create_mode(
         config.mode,
@@ -146,6 +156,16 @@ def create_engine(config: AppConfig, *, verbose: bool = False) -> BotEngine:
         if config.event_log.enabled
         else NullEventLog()
     )
+    stall_snapshots = (
+        StallSnapshotWriter(
+            config.stalls_dir,
+            logger,
+            limit=config.stalls.snapshot_limit,
+            min_interval_seconds=config.stalls.snapshot_min_interval_seconds,
+        )
+        if config.stalls.snapshots_enabled
+        else None
+    )
     context = BotContext(
         capture_provider=capture,
         detector=detector,
@@ -162,12 +182,14 @@ def create_engine(config: AppConfig, *, verbose: bool = False) -> BotEngine:
         },
         idle_delay_ms=config.idle_delay,
         transition_poll_interval_ms=config.transition_poll_interval,
+        verification_minimum_checks=config.verify.minimum_checks,
         verify_retries=config.verify_retry,
         max_actions=config.max_actions,
         max_cycles=config.workflow.max_cycles,
         cycle_complete_targets=config.workflow.complete_on,
         runtime_recovery=runtime_recovery,
         hunt_progress_recovery=hunt_progress_recovery,
+        stall_snapshots=stall_snapshots,
         event_log=event_log,
     )
     return BotEngine(context)

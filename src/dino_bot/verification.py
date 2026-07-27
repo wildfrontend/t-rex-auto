@@ -19,6 +19,7 @@ class TargetChangedVerifier:
         failure_types: Sequence[str] = (),
         success_transitions: dict[str, Sequence[str]] | None = None,
         black_mean_threshold: float = 2.0,
+        success_requires_target_absence: Sequence[str] = (),
     ):
         self.max_distance = max_distance
         self.pixel_change_threshold = pixel_change_threshold
@@ -28,12 +29,21 @@ class TargetChangedVerifier:
             for target_type, successors in (success_transitions or {}).items()
         }
         self.black_mean_threshold = black_mean_threshold
+        self.success_requires_target_absence = frozenset(
+            success_requires_target_absence
+        )
 
     def relevant_detection_types(self, target_type: str) -> frozenset[str]:
         expected = self.success_transitions.get(target_type)
+        target_presence = (
+            (target_type,)
+            if target_type in self.success_requires_target_absence
+            else ()
+        )
         return frozenset(
             {
                 *(expected or (target_type,)),
+                *target_presence,
                 *self.failure_types,
             }
         )
@@ -66,7 +76,24 @@ class TargetChangedVerifier:
         visible_successors = sorted(
             {item.type for item in after_detections if item.type in expected_successors}
         )
+        nearby_target = [
+            item
+            for item in after_detections
+            if item.type == target.type
+            and hypot(item.x - target.x, item.y - target.y) <= self.max_distance
+        ]
         if visible_successors:
+            if (
+                target.type in self.success_requires_target_absence
+                and nearby_target
+            ):
+                return VerificationResult(
+                    success=False,
+                    reason=(
+                        f"next UI detected but {target.type} is still visible"
+                    ),
+                    confidence=max(item.confidence for item in nearby_target),
+                )
             return VerificationResult(
                 success=True,
                 reason=f"next UI detected: {', '.join(visible_successors)}",
@@ -81,14 +108,8 @@ class TargetChangedVerifier:
                 ),
                 confidence=0.9,
             )
-        nearby = [
-            item
-            for item in after_detections
-            if item.type == target.type
-            and hypot(item.x - target.x, item.y - target.y) <= self.max_distance
-        ]
         change = self._target_region_change(before, after, target)
-        if not nearby:
+        if not nearby_target:
             return VerificationResult(
                 success=True,
                 reason=f"target disappeared; pixel_change={change:.3f}",
@@ -105,7 +126,7 @@ class TargetChangedVerifier:
                 confidence=min(0.95, 0.65 + change),
                 pixel_change=change,
             )
-        best = max(nearby, key=lambda item: item.confidence)
+        best = max(nearby_target, key=lambda item: item.confidence)
         return VerificationResult(
             success=False,
             reason=(

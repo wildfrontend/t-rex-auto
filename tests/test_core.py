@@ -376,11 +376,13 @@ def test_hunt_planner_waits_when_all_dinosaurs_are_on_own_blue_path() -> None:
 
 def test_hunt_planner_recenters_after_repeated_frames_without_safe_dinosaur() -> None:
     frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    now = [0.0]
     planner = HuntPlanner(
         ("map_exit_nest_button", "dinosaur"),
         own_path_radius=90,
-        stalled_recenter_frames=2,
+        stalled_recenter_seconds=1,
         safe_margin=80,
+        clock=lambda: now[0],
     )
     detections = [
         Detection("map_center_egg", 450, 800, 1.0),
@@ -390,20 +392,24 @@ def test_hunt_planner_recenters_after_repeated_frames_without_safe_dinosaur() ->
     ]
 
     assert planner.choose(frame, detections) is None
+    now[0] = 1.0
     reset = planner.choose(frame, detections)
     assert reset is not None and reset.type == "map_exit_nest_button"
 
 
 def test_hunt_planner_recenters_when_only_own_paths_remain() -> None:
     frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    now = [0.0]
     planner = HuntPlanner(
         ("map_exit_nest_button", "dinosaur"),
-        stalled_recenter_frames=2,
+        stalled_recenter_seconds=1,
+        clock=lambda: now[0],
     )
     anchor = Detection("map_center_egg", 450, 800, 1.0)
     own_path = Detection("own_hunt_path", 500, 820, 0.9)
 
     assert planner.choose(frame, [anchor, own_path]) is None
+    now[0] = 1.0
     reset = planner.choose(frame, [own_path])
 
     assert reset is not None and reset.type == "map_exit_nest_button"
@@ -506,7 +512,7 @@ def test_hunt_planner_recovers_when_full_mailbox_blocks_confirmation() -> None:
     mail_close = Detection("mail_close_button", 450, 1380, 1.0)
 
     # The ordinary hunt dialog is unchanged: confirmation still wins while
-    # retries remain, even though its close button is also visible.
+    # the first retry remains, even though its close button is also visible.
     chosen = planner.choose(frame, [confirm, dialog_close])
     assert chosen is not None and chosen.type == "hunt_confirm_button"
 
@@ -517,10 +523,15 @@ def test_hunt_planner_recovers_when_full_mailbox_blocks_confirmation() -> None:
         confidence=confirm.confidence,
         detection=confirm,
     )
-    planner.on_retry_exhausted(failed_target)
-    assert planner.on_retry_exhausted_context(
+    assert not planner.on_blocked_action_context(
         failed_target,
         [confirm, dialog_close],
+        attempt=1,
+    )
+    assert planner.on_blocked_action_context(
+        failed_target,
+        [confirm, dialog_close],
+        attempt=2,
     )
 
     recovery = planner.choose(frame, [confirm, dialog_close])
@@ -547,6 +558,24 @@ def test_hunt_planner_does_not_assume_mailbox_full_without_dialog_close() -> Non
     assert not planner.on_retry_exhausted_context(failed_target, [confirm])
     assert "hunt_dialog_close_button" in planner.verification_detection_types(
         "hunt_confirm_button"
+    )
+
+
+def test_hunt_planner_does_not_recover_blocked_confirmation_without_dialog_close() -> None:
+    planner = HuntPlanner(("hunt_confirm_button", "hunt_dialog_close_button"))
+    confirm = Detection("hunt_confirm_button", 451, 1412, 1.0)
+    failed_target = Target(
+        type=confirm.type,
+        x=confirm.x,
+        y=confirm.y,
+        confidence=confirm.confidence,
+        detection=confirm,
+    )
+
+    assert not planner.on_blocked_action_context(
+        failed_target,
+        [confirm],
+        attempt=2,
     )
 
 
@@ -998,6 +1027,44 @@ def test_engine_retries_three_times_then_stops() -> None:
     BotEngine(context).run()
     assert len(driver.actions) == 4
     assert context.state == BotState.STOPPED
+
+
+def test_engine_short_circuits_repeated_blocked_hunt_confirmation() -> None:
+    class BlockedConfirmationDetector:
+        def detect(self, frame: Frame) -> list[Detection]:
+            return [
+                make_detection(80, 50, "hunt_confirm_button"),
+                make_detection(100, 70, "hunt_dialog_close_button"),
+            ]
+
+    planner = HuntPlanner(
+        ("hunt_confirm_button", "hunt_dialog_close_button"),
+        safe_margin=0,
+    )
+    context = BotContext(
+        capture_provider=SequenceCapture([make_frame()]),
+        detector=BlockedConfirmationDetector(),
+        planner=planner,
+        action_driver=RecordingActionDriver(),
+        verifier=AlwaysFailsVerifier(),
+        observer=RuntimeMode(),
+        logger=logging.getLogger("test_engine_blocked_confirmation"),
+        click_delay_ms=0,
+        idle_delay_ms=0,
+        verify_retries=3,
+    )
+    engine = BotEngine(context)
+
+    for _ in range(30):
+        engine.step()
+        if context.action_count == 2 and context.state == BotState.IDLE:
+            break
+
+    assert context.action_count == 2
+    assert context.attempt == 0
+    assert context.state == BotState.IDLE
+    recovery = planner.choose(make_frame(), BlockedConfirmationDetector().detect(make_frame()))
+    assert recovery is not None and recovery.type == "hunt_dialog_close_button"
 
 
 def test_debug_mode_saves_action_bundle(tmp_path: Path) -> None:
