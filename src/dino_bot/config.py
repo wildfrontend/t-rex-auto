@@ -115,6 +115,7 @@ class PlannerConfig:
 class VerifyConfig:
     max_distance: float = 35.0
     pixel_change_threshold: float = 0.08
+    minimum_checks: int = 2
     failure_types: tuple[str, ...] = ()
     success_transitions: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
@@ -435,6 +436,7 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
         verify=VerifyConfig(
             max_distance=float(verify_data.get("max_distance", 35)),
             pixel_change_threshold=float(verify_data.get("pixel_change_threshold", 0.08)),
+            minimum_checks=int(verify_data.get("minimum_checks", 2)),
             failure_types=tuple(verify_data.get("failure_types", [])),
             success_transitions={
                 str(target_type): tuple(str(item) for item in successors)
@@ -521,6 +523,8 @@ def _validate(config: AppConfig) -> None:
         raise ConfigError("target_actions values must be tap or back")
     if config.verify_retry < 0:
         raise ConfigError("verify_retry cannot be negative")
+    if config.verify.minimum_checks <= 0:
+        raise ConfigError("verify.minimum_checks must be greater than zero")
     if not 1 <= config.training.fps <= 5:
         raise ConfigError("training.fps must be between 1 and 5")
     if not 1 <= config.training.max_images <= 500:

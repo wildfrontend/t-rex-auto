@@ -66,6 +66,17 @@ def test_config_enforces_training_collection_limits(
         load_config(config_file)
 
 
+def test_config_requires_positive_verification_minimum_checks(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.json"
+    config_file.write_text(
+        json.dumps({"verify": {"minimum_checks": 0}}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="verify.minimum_checks"):
+        load_config(config_file)
+
+
 def test_cli_fast_speed_profile_reduces_hunt_delays() -> None:
     config = AppConfig(
         root=Path("."),
@@ -921,6 +932,28 @@ class AlwaysFailsVerifier:
         return VerificationResult(False, "test failure")
 
 
+class SequenceVerifier:
+    def __init__(self, results: list[VerificationResult]) -> None:
+        self.results = results
+        self.index = 0
+
+    def verify(self, *args, **kwargs) -> VerificationResult:
+        result = self.results[min(self.index, len(self.results) - 1)]
+        self.index += 1
+        return result
+
+
+class RecordingEventLog:
+    def __init__(self) -> None:
+        self.records: list[dict[str, object]] = []
+
+    def emit(self, event: str, **fields: object) -> None:
+        self.records.append({"e": event, **fields})
+
+    def close(self) -> None:
+        return None
+
+
 def test_engine_runs_complete_feedback_loop() -> None:
     capture = SequenceCapture([make_frame(0, 1), make_frame(255, 2)])
     driver = RecordingActionDriver()
@@ -975,6 +1008,92 @@ def test_engine_uses_target_specific_post_action_delay() -> None:
     wait.assert_called_once_with(0.25)
     assert context.cycle_count == 1
     assert context.action_count == 1
+
+
+def test_engine_adaptive_verification_finishes_before_timeout() -> None:
+    now = [0.0]
+    detection = make_detection()
+    target = Target("resource", detection.x, detection.y, detection.confidence, detection)
+    events = RecordingEventLog()
+    context = BotContext(
+        capture_provider=SequenceCapture([make_frame(10), make_frame(20)]),
+        detector=PixelDetector(),
+        planner=TargetPlanner(),
+        action_driver=RecordingActionDriver(),
+        verifier=SequenceVerifier(
+            [
+                VerificationResult(False, "not ready"),
+                VerificationResult(True, "ready"),
+            ]
+        ),
+        observer=RuntimeMode(),
+        logger=logging.getLogger("test_adaptive_verify_early_success"),
+        click_delay_ms=5000,
+        transition_poll_interval_ms=250,
+        event_log=events,
+        clock=lambda: now[0],
+        state=BotState.ACTION,
+        frame=make_frame(),
+        detections=[detection],
+        target=target,
+        action=ActionCommand.tap(target.x, target.y),
+    )
+
+    def advance(seconds: float) -> bool:
+        now[0] += seconds
+        return False
+
+    with patch.object(context.stop_event, "wait", side_effect=advance):
+        engine = BotEngine(context)
+        assert engine.step() == BotState.VERIFY
+        assert engine.step() == BotState.VERIFY
+        assert engine.step() == BotState.IDLE
+
+    verify_events = [record for record in events.records if record["e"] == "verify"]
+    assert [record["phase"] for record in verify_events] == ["pending", "final"]
+    assert now[0] == pytest.approx(0.5)
+
+
+def test_engine_slow_verification_gets_minimum_checks_after_timeout() -> None:
+    now = [0.0]
+    detection = make_detection()
+    target = Target("resource", detection.x, detection.y, detection.confidence, detection)
+    events = RecordingEventLog()
+    context = BotContext(
+        capture_provider=SequenceCapture([make_frame(10)]),
+        detector=PixelDetector(),
+        planner=TargetPlanner(),
+        action_driver=RecordingActionDriver(),
+        verifier=AlwaysFailsVerifier(),
+        observer=RuntimeMode(),
+        logger=logging.getLogger("test_adaptive_verify_minimum_checks"),
+        click_delay_ms=100,
+        transition_poll_interval_ms=250,
+        verification_minimum_checks=2,
+        verify_retries=0,
+        event_log=events,
+        clock=lambda: now[0],
+        state=BotState.ACTION,
+        frame=make_frame(),
+        detections=[detection],
+        target=target,
+        action=ActionCommand.tap(target.x, target.y),
+    )
+
+    def advance(seconds: float) -> bool:
+        now[0] += seconds
+        return False
+
+    with patch.object(context.stop_event, "wait", side_effect=advance):
+        engine = BotEngine(context)
+        assert engine.step() == BotState.VERIFY
+        assert engine.step() == BotState.VERIFY
+        assert engine.step() == BotState.IDLE
+
+    verify_events = [record for record in events.records if record["e"] == "verify"]
+    assert [record["phase"] for record in verify_events] == ["pending", "final"]
+    assert [record["check"] for record in verify_events] == [1, 2]
+    assert now[0] == pytest.approx(0.2)
 
 
 def test_engine_retries_three_times_then_stops() -> None:

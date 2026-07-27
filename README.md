@@ -374,8 +374,10 @@ D:\DinoMutantBot\python\python.exe `
 - `planner.stalled_recenter_frames`: 連續多少幀沒有安全目標後重置視野，預設 8。
 - `capture.viewport`: Android 畫面在 BlueStacks client 內的 `[x,y,width,height]`；
   若含有 BlueStacks 側欄，應設定此值以確保 ADB 座標精準。
-- `click_delay`: 點擊到驗證畫面的等待毫秒數。
-- `post_action_delays`: 可針對確認按鈕等動畫較長的操作設定額外等待時間。
+- `click_delay`: 一般點擊後條件式驗證的最長等待毫秒數；成功時會立即往下執行。
+- `post_action_delays`: 各類操作等待下一個 UI 的最長期限，不是固定睡眠時間。
+- `transition_poll_interval`: 等待期間重新擷取與辨識的間隔。
+- `verify.minimum_checks`: 慢速電腦即使超過時間期限，最少仍會完成的驗證次數。
 - `--speed safe|fast`: 從終端切換保守或快速延遲預設。
 - `--status-port`: 本機狀態與白名單控制 API 連接埠；`0` 代表停用。
 - `--dinosaur-delay-ms`、`--hunt-button-delay-ms`、`--hunt-confirm-delay-ms`、

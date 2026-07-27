@@ -56,6 +56,8 @@ _CODEX_GUIDE = """# Dino Mutant Bot 診斷包
    - `action_rate`：有送出操作的循環佔比；偏低代表多數循環在空轉。
    - `rejections`：八條恐龍拒絕規則各淘汰了幾個候選。
    - `capture_ms` / `detect_ms`：擷取與辨識耗時的 p50／p95，是循環速率的下限。
+   - `verify.checks_total`：所有驗證輪詢；`verify.pending` 是尚在等待下一個 UI，
+     `verify.total`／`verify.failed` 才是操作最終結果。
    - `suggestions`：符合門檻的可調參數線索，`tuning` 欄位指出對應的設定鍵。
      這些只指出「該看哪個參數」，沒有建議值；請依證據自行判斷方向與幅度。
 2. `status.json`：最新工作階段、成功狩獵、重試、黑畫面與最近操作；
@@ -69,7 +71,8 @@ _CODEX_GUIDE = """# Dino Mutant Bot 診斷包
      `action_cooldown`、`interrupt`、`blocked`、`hunt_unavailable`），沒選中時
      `reject` 會列出各條件淘汰了幾個候選（`screen_margin`、`anchor_window`、
      `own_path_angle`、`exclusion_zone` 等）。
-   - `action` / `verify`：實際送出的操作與驗證結果，含 `pixel_change`。
+   - `action` / `verify`：實際送出的操作與驗證結果，含 `pixel_change`；`verify.phase`
+     為 `pending` 代表仍在條件式等待，`final` 才是最終判定。
    - `retry_exhausted` / `recovery` / `session`：重試耗盡、狀態重置與啟停。
    同一個 `c` 值的事件屬於同一個感知循環，可據此重建整段決策過程。
 4. `doctor.json`：執行環境、ADB、模擬器與辨識資源檢查。

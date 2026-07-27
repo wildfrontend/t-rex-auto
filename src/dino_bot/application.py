@@ -162,6 +162,7 @@ def create_engine(config: AppConfig, *, verbose: bool = False) -> BotEngine:
         },
         idle_delay_ms=config.idle_delay,
         transition_poll_interval_ms=config.transition_poll_interval,
+        verification_minimum_checks=config.verify.minimum_checks,
         verify_retries=config.verify_retry,
         max_actions=config.max_actions,
         max_cycles=config.workflow.max_cycles,

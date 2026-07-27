@@ -144,6 +144,7 @@
     "verify":  {
                    "max_distance":  35,
                    "pixel_change_threshold":  0.08,
+                   "minimum_checks":  2,
                    "failure_types":  [
                                          "duplicate_hunt_alert",
                                          "hunt_team_return_button"

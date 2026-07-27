@@ -134,6 +134,19 @@ def _latency(values: Sequence[float]) -> dict[str, Any] | None:
     }
 
 
+def _verification_key(record: Mapping[str, Any]) -> tuple[Any, ...]:
+    target = record.get("target")
+    if not isinstance(target, Mapping):
+        target = {}
+    return (
+        record.get("c"),
+        target.get("type"),
+        target.get("x"),
+        target.get("y"),
+        record.get("attempt"),
+    )
+
+
 def _suggestions(
     stage_counts: Mapping[str, int],
     planning_cycles: int,
@@ -240,11 +253,28 @@ def summarize_events(lines: Iterable[str]) -> dict[str, Any]:
     hunts_confirmed = 0
     verify_total = 0
     verify_failed = 0
+    verify_pending = 0
+    verify_checks_total = 0
     retry_exhausted = 0
     recoveries = 0
     sessions = 0
 
-    for record in events:
+    # v0.2.15 event records did not distinguish an in-progress poll from the
+    # final result. The last check for an action is terminal; earlier checks
+    # are pending. New records carry an explicit ``phase`` field.
+    legacy_terminal: set[int] = set()
+    for index, record in enumerate(events):
+        if record.get("e") != "verify" or record.get("phase") is not None:
+            continue
+        next_record = events[index + 1] if index + 1 < len(events) else None
+        if (
+            not isinstance(next_record, Mapping)
+            or next_record.get("e") != "verify"
+            or _verification_key(next_record) != _verification_key(record)
+        ):
+            legacy_terminal.add(index)
+
+    for index, record in enumerate(events):
         stamp = _clock_seconds(record.get("t"))
         if stamp is not None:
             stamps.append(stamp)
@@ -275,6 +305,15 @@ def summarize_events(lines: Iterable[str]) -> dict[str, Any]:
             if isinstance(cycle, int):
                 action_cycles.add(cycle)
         elif kind == "verify":
+            verify_checks_total += 1
+            phase = record.get("phase")
+            is_pending = phase == "pending" or (
+                phase is None
+                and index not in legacy_terminal
+            )
+            if is_pending:
+                verify_pending += 1
+                continue
             verify_total += 1
             result = record.get("result")
             success = bool(result.get("ok")) if isinstance(result, Mapping) else False
@@ -323,6 +362,8 @@ def summarize_events(lines: Iterable[str]) -> dict[str, Any]:
         "capture_ms": _latency(capture_ms),
         "detect_ms": detect_latency,
         "verify": {
+            "checks_total": verify_checks_total,
+            "pending": verify_pending,
             "total": verify_total,
             "failed": verify_failed,
             "failure_rate": (

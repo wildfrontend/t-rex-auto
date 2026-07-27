@@ -8,6 +8,7 @@ from zipfile import ZipFile
 from dino_bot.config import AppConfig
 from dino_bot.diagnostics import create_diagnostic_bundle, redact_text
 from dino_bot.doctor import Check
+from dino_bot.optimization import summarize_events
 
 
 def test_diagnostic_bundle_contains_sanitized_evidence(tmp_path: Path) -> None:
@@ -100,6 +101,57 @@ def test_diagnostic_bundle_preserves_config_error_and_snapshot_failure(tmp_path:
     }
     assert "private-value" not in config_error
     assert "ADB screenshot failed" in snapshot_error
+
+
+def test_optimization_counts_pending_checks_separately() -> None:
+    target = {"type": "dinosaur", "x": 80, "y": 50}
+    records = [
+        {
+            "t": "08:00:00.000",
+            "c": 1,
+            "e": "verify",
+            "target": target,
+            "attempt": 1,
+            "result": {"ok": False, "reason": "legacy pending"},
+        },
+        {
+            "t": "08:00:00.500",
+            "c": 1,
+            "e": "verify",
+            "target": target,
+            "attempt": 1,
+            "result": {"ok": True, "reason": "legacy final"},
+        },
+        {
+            "t": "08:00:01.000",
+            "c": 2,
+            "e": "verify",
+            "phase": "pending",
+            "target": target,
+            "attempt": 1,
+            "result": {"ok": False, "reason": "pending"},
+        },
+        {
+            "t": "08:00:02.000",
+            "c": 2,
+            "e": "verify",
+            "phase": "final",
+            "target": target,
+            "attempt": 1,
+            "result": {"ok": False, "reason": "final"},
+        },
+    ]
+
+    summary = summarize_events(json.dumps(record) for record in records)
+
+    assert summary["verify"] == {
+        "checks_total": 4,
+        "pending": 2,
+        "total": 2,
+        "failed": 1,
+        "failure_rate": 0.5,
+        "retry_exhausted": 0,
+    }
 
 
 def test_diagnostic_bundle_includes_only_explicit_snapshot(tmp_path: Path) -> None:

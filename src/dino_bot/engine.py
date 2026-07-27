@@ -66,6 +66,7 @@ class BotContext:
     target_action_kinds: dict[str, ActionKind] = field(default_factory=dict)
     idle_delay_ms: int = 500
     transition_poll_interval_ms: int = 250
+    verification_minimum_checks: int = 2
     verify_retries: int = 3
     max_actions: int = 0
     max_cycles: int = 0
@@ -92,6 +93,8 @@ class BotContext:
     cycle_count: int = 0
     verification_timeout_ms: int = 0
     verification_deadline: float | None = None
+    verification_started_at: float | None = None
+    verification_checks: int = 0
     reuse_verified_detections: bool = False
     inert_taps: int = 0
     inert_target: tuple[str, int, int] | None = None
@@ -337,14 +340,16 @@ class ActionState:
             context.click_delay_ms,
         )
         context.verification_timeout_ms = max(0, delay_ms)
+        context.verification_started_at = context.clock()
         context.verification_deadline = None
+        context.verification_checks = 0
         initial_poll_ms = min(
             max(0, delay_ms),
             max(1, context.transition_poll_interval_ms),
         )
         if initial_poll_ms:
             context.logger.debug(
-                "Action | poll in %dms; transition timeout=%dms | target=%s",
+                "Action | adaptive verify in %dms; max timeout=%dms | target=%s",
                 initial_poll_ms,
                 max(0, delay_ms),
                 context.target.type,
@@ -411,8 +416,45 @@ class VerifyState:
             after_detections,
         )
         context.last_result = result
+        context.verification_checks += 1
+        explicit_failure = result.reason.startswith("failure indicator detected:")
+        now = context.clock()
+        deadline = context.verification_deadline
+        if (
+            not result.success
+            and not explicit_failure
+            and deadline is None
+            and context.verification_timeout_ms
+        ):
+            deadline = now + context.verification_timeout_ms / 1000
+            context.verification_deadline = deadline
+        within_deadline = deadline is not None and now < deadline
+        minimum_checks_pending = (
+            context.verification_timeout_ms > 0
+            and context.verification_checks
+            < max(1, context.verification_minimum_checks)
+        )
+        pending = (
+            not result.success
+            and not explicit_failure
+            and (within_deadline or minimum_checks_pending)
+        )
+        remaining_ms = (
+            max(0, round((deadline - now) * 1000))
+            if deadline is not None
+            else 0
+        )
+        elapsed_ms = (
+            max(0, round((now - context.verification_started_at) * 1000))
+            if context.verification_started_at is not None
+            else None
+        )
         context.event_log.emit(
             "verify",
+            phase="pending" if pending else "final",
+            check=context.verification_checks,
+            elapsed_ms=elapsed_ms,
+            remaining_ms=remaining_ms if pending else None,
             target=target_payload(context.target),
             attempt=context.attempt,
             result=verification_payload(result),
@@ -421,30 +463,17 @@ class VerifyState:
             capture_ms=capture_ms,
             detect_ms=detect_ms,
         )
-        explicit_failure = result.reason.startswith("failure indicator detected:")
-        deadline = context.verification_deadline
-        if (
-            not result.success
-            and not explicit_failure
-            and deadline is None
-            and context.verification_timeout_ms
-        ):
-            deadline = (
-                context.clock() + context.verification_timeout_ms / 1000
+        if pending:
+            poll_interval_ms = max(1, context.transition_poll_interval_ms)
+            poll_ms = (
+                min(poll_interval_ms, max(1, remaining_ms))
+                if within_deadline
+                else poll_interval_ms
             )
-            context.verification_deadline = deadline
-        if (
-            not result.success
-            and not explicit_failure
-            and deadline is not None
-            and context.clock() < deadline
-        ):
-            now = context.clock()
-            remaining_ms = max(1, round((deadline - now) * 1000))
-            poll_ms = min(max(1, context.transition_poll_interval_ms), remaining_ms)
             context.logger.debug(
-                "Verify | Pending | %s | poll=%dms | remaining=%dms",
+                "Verify | Pending | %s | check=%d | poll=%dms | remaining=%dms",
                 result.reason,
+                context.verification_checks,
                 poll_ms,
                 remaining_ms,
             )
@@ -453,6 +482,8 @@ class VerifyState:
             return BotState.VERIFY
         context.verification_deadline = None
         context.verification_timeout_ms = 0
+        context.verification_started_at = None
+        context.verification_checks = 0
         record = ActionRecord(
             timestamp=utc_now(),
             action=context.action,
@@ -606,6 +637,8 @@ def _reset_after_runtime_recovery(context: BotContext) -> None:
     context.attempt_target_type = None
     context.verification_timeout_ms = 0
     context.verification_deadline = None
+    context.verification_started_at = None
+    context.verification_checks = 0
     context.reuse_verified_detections = False
     context.inert_taps = 0
     context.inert_target = None
