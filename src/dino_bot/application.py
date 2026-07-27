@@ -94,6 +94,7 @@ def create_engine(config: AppConfig, *, verbose: bool = False) -> BotEngine:
         ring_width=config.planner.ring_width,
         own_path_angle_degrees=config.planner.own_path_angle_degrees,
         stalled_recenter_seconds=config.planner.stalled_recenter_seconds,
+        recenter_min_candidates=config.planner.recenter_min_candidates,
         blind_idle_seconds=config.planner.blind_idle_seconds,
         mail_stage_timeout_seconds=config.planner.mail_stage_timeout_seconds,
         map_settle_frames=config.planner.map_settle_frames,

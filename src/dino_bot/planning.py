@@ -270,6 +270,7 @@ class HuntPlanner(TargetPlanner):
         ring_width: float = 150.0,
         own_path_angle_degrees: float = 7.0,
         stalled_recenter_seconds: float = 10.0,
+        recenter_min_candidates: int = 1,
         blind_idle_seconds: float = 20.0,
         mail_stage_timeout_seconds: float = 20.0,
         map_settle_frames: int = 2,
@@ -322,6 +323,10 @@ class HuntPlanner(TargetPlanner):
         self.ring_width = max(1.0, ring_width)
         self.own_path_angle_degrees = max(0.0, own_path_angle_degrees)
         self.stalled_recenter_seconds = max(0.001, stalled_recenter_seconds)
+        # Recentering is a resupply operation: it exists so the next few scans
+        # have enough dinosaurs to choose from, not to put the egg anywhere in
+        # particular. This is the supply floor that triggers it.
+        self.recenter_min_candidates = max(1, recenter_min_candidates)
         self.blind_idle_seconds = max(0.001, blind_idle_seconds)
         self.mail_stage_timeout_seconds = max(0.001, mail_stage_timeout_seconds)
         self.map_settle_frames = max(1, map_settle_frames)
@@ -356,6 +361,11 @@ class HuntPlanner(TargetPlanner):
         self._map_idle_since: float | None = None
         self._last_map_idle_seconds = 0.0
         self._recenter_reason: str | None = None
+        # Whether `_last_anchor` came from a detected egg or was inferred from
+        # the last tap. Only a measured anchor is worth rejecting candidates
+        # over; a predicted one accumulates a fresh error every hunt.
+        self._anchor_measured = False
+        self._last_supply = 0
         self._no_target_since: float | None = None
         self._last_blind_seconds = 0.0
         self._blind_escapes = 0
@@ -520,6 +530,7 @@ class HuntPlanner(TargetPlanner):
         self._recenter_dinosaur_frames = 0
         self._pending_hunt_return = False
         self._last_anchor = None
+        self._anchor_measured = False
         self._mail_stage = 0
         self._mail_failures = 0
         # A restart invalidates where the workflow stood, and the hunt counter
@@ -742,7 +753,16 @@ class HuntPlanner(TargetPlanner):
             <= self.anchor_exclusion_radius
         ):
             return "screen_center"
-        if not (
+        # Would tapping this dinosaur push the egg off screen? That only
+        # disqualifies it while the egg is the thing being protected, and it
+        # is not: recentering exists to restore the supply of reachable
+        # dinosaurs for the next few scans, and the egg is merely how the bot
+        # recognises that the reset finished. Enforcing it against a *predicted*
+        # anchor is worse than useless - the prediction gains a fresh error
+        # every hunt, and a measured run threw away 1344 candidates this way,
+        # emptying 22% of all planning cycles and then paying for a recenter to
+        # refill them.
+        if self._anchor_measured and not (
             self.safe_margin
             <= anchor_x + frame.width / 2 - item.x
             <= frame.width - self.safe_margin
@@ -765,7 +785,12 @@ class HuntPlanner(TargetPlanner):
             if marker.type in self.own_path_types
         ):
             return "own_path_marker"
-        if any(
+        # Same gate, same reason. These angles are measured from the anchor, so
+        # a predicted anchor turns the corridor test into noise. The radius rule
+        # above needs no origin and covers the same ground: the route markers
+        # run 30 to a frame and are present in 95% of scans, already rejecting a
+        # quarter of every dinosaur on screen.
+        if self._anchor_measured and any(
             self._angle_distance(
                 degrees(atan2(item.y - anchor_y, item.x - anchor_x)) % 360.0,
                 path_angle,
@@ -781,6 +806,20 @@ class HuntPlanner(TargetPlanner):
         ):
             return "team_status_panel"
         return None
+
+    def anchor_measured(self) -> bool:
+        """Whether the last anchor came from a detected egg or was inferred."""
+
+        return self._anchor_measured
+
+    def last_supply(self) -> int:
+        """Dinosaurs that survived every rejection rule on the previous cycle.
+
+        This is what recentering is for, so it is what the diagnostic has to
+        show: a run whose supply sits at zero is not slow, it is starving.
+        """
+
+        return self._last_supply
 
     def last_idle_seconds(self) -> float:
         """Return how long the map had gone without a target when last planned."""
@@ -1070,6 +1109,7 @@ class HuntPlanner(TargetPlanner):
         self._total_hunt_count = 0
         self._recenter_stage = 0
         self._last_anchor = (frame.width / 2, frame.height / 2)
+        self._anchor_measured = False
         self._map_idle_since = None
         return True
 
@@ -1189,6 +1229,7 @@ class HuntPlanner(TargetPlanner):
 
         if self._last_anchor is None:
             self._last_anchor = (frame.width / 2, frame.height / 2)
+            self._anchor_measured = False
         self._abandon_mail()
         self._mail_progress_since = None
         self._recenter_stage = 0
@@ -1264,6 +1305,7 @@ class HuntPlanner(TargetPlanner):
                 ),
             )
             self._last_anchor = (float(anchor.x), float(anchor.y))
+            self._anchor_measured = True
 
         if self._observe_map_settle(frame, detections):
             self._stage = "map_settle"
@@ -1391,6 +1433,7 @@ class HuntPlanner(TargetPlanner):
                     float(centered_anchor.x),
                     float(centered_anchor.y),
                 )
+                self._anchor_measured = True
                 if self._total_hunt_count >= self.mail_after_hunts:
                     self._mail_stage = 1
                     self._mail_failures = 0
@@ -1439,6 +1482,7 @@ class HuntPlanner(TargetPlanner):
                     self._recenter_stage = 0
                     self._recenter_dinosaur_frames = 0
                     self._last_anchor = (frame.width / 2, frame.height / 2)
+                    self._anchor_measured = False
                     self._map_idle_since = None
                     if self._total_hunt_count >= self.mail_after_hunts:
                         self._mail_stage = 1
@@ -1529,6 +1573,7 @@ class HuntPlanner(TargetPlanner):
                 continue
             actionable.append(item)
         anchor_position = self._last_anchor
+        supply = 0
         self._failed_dinosaur_positions = [
             entry
             for entry in self._failed_dinosaur_positions
@@ -1564,9 +1609,22 @@ class HuntPlanner(TargetPlanner):
             actionable = [
                 item for item in actionable if item.type != self.dinosaur_type
             ]
+            supply = len(safe_dinosaurs)
             if safe_dinosaurs:
                 def radial_key(item: Detection) -> tuple[float, float, float, float]:
-                    distance = hypot(item.x - anchor_x, item.y - anchor_y)
+                    # Rank by displacement, which is what a tap actually costs:
+                    # the map re-centres on the dinosaur, so how far it sits
+                    # from the *screen* centre is exactly how far the view - and
+                    # the egg with it - is about to move. Measuring from the
+                    # anchor instead was measuring the wrong thing as soon as
+                    # the anchor stopped being centred, and needs an anchor at
+                    # all. Right after a reset the egg is the screen centre, so
+                    # this is the ring-around-the-egg ordering; several hunts
+                    # later it is still the cheapest tap available.
+                    distance = hypot(
+                        item.x - frame.width / 2,
+                        item.y - frame.height / 2,
+                    )
                     angle = degrees(atan2(item.y - anchor_y, item.x - anchor_x)) % 360.0
                     clearance = min(
                         (
@@ -1591,13 +1649,23 @@ class HuntPlanner(TargetPlanner):
             self._begin_recenter("missing_anchor")
             return self._choose_map_exit(frame, detections)
         target = super().choose(frame, actionable)
-        if target is None and on_collect_map:
+        self._last_supply = supply
+        # Recentering is resupply, so run it off the supply rather than off
+        # "did this cycle plan anything". Those differed by a lot: with
+        # `anchor_window` rejecting against a predicted anchor, cycles reported
+        # nothing to do while the map was still full, and 31 of a run's 32
+        # resets were spent refilling a map that had never emptied.
+        #
+        # The grace period stays. A corridor full of the bot's own routes
+        # clears itself as hunts return, and resetting the moment supply dips
+        # would trade a few seconds of waiting for a whole map reload.
+        if supply < self.recenter_min_candidates and on_collect_map:
             idle_now = self.clock()
             if self._map_idle_since is None:
                 self._map_idle_since = idle_now
             self._last_map_idle_seconds = max(0.0, idle_now - self._map_idle_since)
             if self._last_map_idle_seconds >= self.stalled_recenter_seconds:
-                self._begin_recenter("no_target_timeout")
+                self._begin_recenter("low_supply")
                 return self._choose_map_exit(frame, detections)
         else:
             self._map_idle_since = None
@@ -1609,6 +1677,8 @@ class HuntPlanner(TargetPlanner):
                     anchor_position[0] + frame.width / 2 - target.x,
                     anchor_position[1] + frame.height / 2 - target.y,
                 )
+                # Inferred from where the map was told to go, not seen.
+                self._anchor_measured = False
             self._awaiting_hunt_button = True
             self._waited_frames = 0
         return target

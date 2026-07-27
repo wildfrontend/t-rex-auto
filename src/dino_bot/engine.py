@@ -256,6 +256,17 @@ class PlanningState:
         last_blind_seconds = getattr(context.planner, "last_blind_seconds", None)
         if callable(last_blind_seconds):
             blind_ms = round(float(last_blind_seconds()) * 1000)
+        # Supply is what recentering exists to restore, and whether the anchor
+        # was measured decides which rejection rules were even allowed to run.
+        # Neither is recoverable from the rejection counts afterwards.
+        supply = None
+        last_supply = getattr(context.planner, "last_supply", None)
+        if callable(last_supply):
+            supply = int(last_supply())
+        anchor = None
+        anchor_measured = getattr(context.planner, "anchor_measured", None)
+        if callable(anchor_measured):
+            anchor = "measured" if anchor_measured() else "predicted"
         context.event_log.emit(
             "plan",
             stage=stage or None,
@@ -264,6 +275,8 @@ class PlanningState:
             cooldown_ms=cooldown_ms or None,
             idle_ms=idle_ms or None,
             blind_ms=blind_ms or None,
+            supply=supply,
+            anchor=anchor,
             recenter_reason=recenter_reason,
         )
         _report_blind_stall(context, stage)

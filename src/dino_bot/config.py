@@ -101,6 +101,9 @@ class PlannerConfig:
     ring_width: float = 150.0
     own_path_angle_degrees: float = 7.0
     stalled_recenter_seconds: float = 10.0
+    # Recentering restores the supply of reachable dinosaurs; it is not about
+    # where the egg sits. Reset once fewer than this many candidates survive.
+    recenter_min_candidates: int = 1
     # Every other stall guard is written as "leave once the expected control
     # appears", so none of them fire on a screen showing no known control at
     # all. This one is measured from the planner alone.
@@ -447,6 +450,9 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
             stalled_recenter_seconds=float(
                 planner_data.get("stalled_recenter_seconds", 10)
             ),
+            recenter_min_candidates=int(
+                planner_data.get("recenter_min_candidates", 1)
+            ),
             blind_idle_seconds=float(planner_data.get("blind_idle_seconds", 20)),
             mail_stage_timeout_seconds=float(
                 planner_data.get("mail_stage_timeout_seconds", 20)
@@ -630,6 +636,8 @@ def _validate(config: AppConfig) -> None:
         raise ConfigError("planner.own_path_angle_degrees must be between 0 and 180")
     if config.planner.stalled_recenter_seconds <= 0:
         raise ConfigError("planner.stalled_recenter_seconds must be greater than zero")
+    if config.planner.recenter_min_candidates <= 0:
+        raise ConfigError("planner.recenter_min_candidates must be greater than zero")
     if config.planner.blind_idle_seconds <= 0:
         raise ConfigError("planner.blind_idle_seconds must be greater than zero")
     if config.planner.mail_stage_timeout_seconds <= 0:

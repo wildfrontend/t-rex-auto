@@ -116,6 +116,7 @@
     "ring_width": 150,
     "own_path_angle_degrees": 7,
     "stalled_recenter_seconds": 10,
+    "recenter_min_candidates": 1,
     "blind_idle_seconds": 20,
     "mail_stage_timeout_seconds": 20,
     "stage_scoped_scan": true,

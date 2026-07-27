@@ -442,6 +442,10 @@ def test_hunt_planner_recenters_after_seconds_without_a_safe_dinosaur() -> None:
     A frame count buys a different wait on every machine: the same four frames
     were 4.3 seconds when a scan cost 1080ms and 15 seconds when the host was
     busy enough to push it to 3668ms. Seconds hold the wait still.
+
+    The grace period survived the move to supply-driven recentering: a corridor
+    full of the bot's own routes clears itself as hunts return, so resetting the
+    instant supply dips would trade seconds of waiting for a whole map reload.
     """
 
     frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
@@ -467,7 +471,68 @@ def test_hunt_planner_recenters_after_seconds_without_a_safe_dinosaur() -> None:
     now[0] = 10.0
     reset = planner.choose(frame, detections)
     assert reset is not None and reset.type == "map_exit_nest_button"
-    assert planner.last_recenter_reason() == "no_target_timeout"
+    assert planner.last_recenter_reason() == "low_supply"
+    assert planner.last_supply() == 0
+
+
+def test_hunt_planner_keeps_hunting_once_the_anchor_is_only_predicted() -> None:
+    """Tapping a dinosaur must not disqualify the next one.
+
+    `anchor_window` asks whether a tap would push the centre egg off screen.
+    That protects the egg, and the egg is not the point: recentering exists to
+    restore the supply of reachable dinosaurs, and the egg is only how the bot
+    recognises the reset finished. Enforced against an anchor that is *inferred*
+    from the previous tap - which is the state for 88% of a measured run - the
+    rule threw away 1344 candidates, emptied 22% of all planning cycles, and
+    then charged a recenter to refill a map that was never empty.
+    """
+
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(("dinosaur",), clock=lambda: 0.0)
+    # The egg sits off centre, which is the only way the rule can bite: with the
+    # anchor exactly centred the projection is a point reflection through the
+    # centre, and `screen_margin` has already excluded everything it could
+    # reject.
+    egg = Detection("map_center_egg", 250, 500, 1.0)
+    far = Detection("dinosaur", 700, 1100, 0.95)
+
+    # Measured anchor: the rule applies, and this tap would throw the egg off
+    # screen, so it is refused.
+    assert planner.choose(frame, [egg, far]) is None
+    assert planner.anchor_measured()
+    assert planner.last_rejections().get("anchor_window") == 1
+
+    # Same dinosaur, same anchor, but now only predicted. The egg is no longer
+    # worth protecting, so the hunt goes ahead.
+    planner._anchor_measured = False
+    target = planner.choose(frame, [far])
+
+    assert target is not None and target.type == "dinosaur"
+    assert "anchor_window" not in planner.last_rejections()
+    assert planner.last_supply() == 1
+
+
+def test_hunt_planner_prefers_the_tap_that_moves_the_map_least() -> None:
+    """Displacement is measured from the screen centre, not from the anchor.
+
+    A tap re-centres the map on the dinosaur, so its distance from the *screen*
+    centre is exactly how far the view is about to travel. Ranking from the
+    anchor measured the wrong thing the moment the anchor stopped being
+    centred - and needed an anchor at all. Cheaper taps mean more hunts before
+    the map runs dry and has to be reset.
+    """
+
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(("dinosaur",), ring_width=75.0, clock=lambda: 0.0)
+    planner._last_anchor = (120.0, 300.0)      # stale, far from the screen centre
+    planner._anchor_measured = False
+    near = Detection("dinosaur", 450, 640, 0.9)    # 160px from the screen centre
+    far = Detection("dinosaur", 200, 400, 0.99)    # closer to the stale anchor
+
+    target = planner.choose(frame, [near, far])
+
+    assert target is not None
+    assert (target.x, target.y) == (450, 640)
 
 
 def test_hunt_planner_recenters_when_only_own_paths_remain() -> None:
