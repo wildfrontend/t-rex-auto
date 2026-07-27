@@ -512,6 +512,46 @@ def test_hunt_planner_keeps_hunting_once_the_anchor_is_only_predicted() -> None:
     assert planner.last_supply() == 1
 
 
+def test_hunt_planner_counts_only_dinosaurs_it_could_actually_tap() -> None:
+    """A dinosaur already hunted this map is scenery, not supply.
+
+    It stays on screen and keeps passing every rejection rule, but `choose`
+    drops it as a duplicate. Counting it left the map reporting supply while
+    planning nothing, so the resupply trigger never fired: a measured run sat
+    on `supply=2` through twenty seconds of empty cycles before the blind-stall
+    timer had to rescue it. Resetting the map is exactly what should have
+    happened, and it is what the operator expected to see.
+    """
+
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    now = [0.0]
+    planner = HuntPlanner(
+        ("map_exit_nest_button", "dinosaur"),
+        deduplicate_types=("dinosaur",),
+        dedup_radius=25.0,
+        stalled_recenter_seconds=10.0,
+        clock=lambda: now[0],
+    )
+    planner._last_anchor = (450.0, 800.0)
+    landmark = Detection("mailbox_button", 841, 1210, 0.99)
+    lone = Detection("dinosaur", 450, 640, 0.95)
+
+    first = planner.choose(frame, [landmark, lone])
+    assert first is not None and first.type == "dinosaur"
+    assert planner.last_supply() == 1
+
+    # The hunt went out; the map still shows the dinosaur that was spent on it.
+    planner._awaiting_hunt_button = False
+    assert planner.choose(frame, [landmark, lone]) is None
+    assert planner.last_supply() == 0, "a spent dinosaur is not supply"
+
+    now[0] = 10.0
+    reset = planner.choose(frame, [landmark, lone])
+
+    assert reset is not None and reset.type == "map_exit_nest_button"
+    assert planner.last_recenter_reason() == "low_supply"
+
+
 def test_hunt_planner_prefers_the_tap_that_moves_the_map_least() -> None:
     """Displacement is measured from the screen centre, not from the anchor.
 

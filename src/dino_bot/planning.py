@@ -1263,6 +1263,9 @@ class HuntPlanner(TargetPlanner):
     ) -> Target | None:
         previous_stage = self._stage
         self._rejections = {}
+        # Cleared per cycle: a stage that returns before counting candidates
+        # would otherwise report the previous cycle's supply as its own.
+        self._last_supply = 0
         self._last_map_idle_seconds = 0.0
         self._recenter_reason = None
         if previous_stage != "hunting":
@@ -1608,6 +1611,22 @@ class HuntPlanner(TargetPlanner):
                     self._rejections[reason] = self._rejections.get(reason, 0) + 1
             actionable = [
                 item for item in actionable if item.type != self.dinosaur_type
+            ]
+            # Supply has to mean "could be tapped right now", which is two
+            # filters further on than "passed the rejection rules". A dinosaur
+            # already hunted this map stays on screen and keeps passing every
+            # rule, but `choose` drops it as a duplicate - so a map whose last
+            # candidates were all spent reported supply and planned nothing,
+            # and the resupply trigger never fired. A measured run sat on
+            # `supply=2` for twenty seconds that way before the blind-stall
+            # timer had to rescue it.
+            safe_dinosaurs = [
+                item
+                for item in self.filter_suppressed(safe_dinosaurs)
+                if not (
+                    self.dinosaur_type in self.deduplicate_types
+                    and self._was_selected(frame, item)
+                )
             ]
             supply = len(safe_dinosaurs)
             if safe_dinosaurs:
