@@ -97,6 +97,34 @@ def test_cli_fast_speed_profile_reduces_hunt_delays() -> None:
     assert result.post_action_delays["hunt_confirm_button"] == 1200
 
 
+def test_cli_safe_speed_profile_uses_conservative_delays() -> None:
+    config = AppConfig(
+        root=Path("."),
+        click_delay=300,
+        idle_delay=250,
+        transition_poll_interval=100,
+        post_action_delays={
+            "hunt_button": 900,
+            "hunt_confirm_button": 1200,
+        },
+    )
+
+    result = apply_run_timing(config, speed="safe")
+
+    assert result.click_delay == 1500
+    assert result.idle_delay == 500
+    assert result.transition_poll_interval == 250
+    assert result.post_action_delays["dinosaur"] == 1500
+    assert result.post_action_delays["hunt_button"] == 5000
+    assert result.post_action_delays["hunt_confirm_button"] == 3000
+
+
+def test_cli_leaves_speed_unset_for_config_default() -> None:
+    args = build_parser().parse_args(["run"])
+
+    assert args.speed is None
+
+
 def test_cli_explicit_timing_overrides_profile() -> None:
     result = apply_run_timing(
         AppConfig(root=Path(".")),
@@ -321,6 +349,26 @@ def test_hunt_planner_retries_forest_when_recenter_tap_is_ignored() -> None:
 
     assert planner.choose(frame, [centered_anchor]) is None
     resumed = planner.choose(frame, [centered_anchor, dinosaur])
+    assert resumed is not None and resumed.type == "dinosaur"
+
+
+def test_hunt_planner_accepts_stable_dinosaur_only_recenter_result() -> None:
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(
+        ("forest_recenter_button", "map_center_egg", "dinosaur"),
+        safe_margin=80,
+        map_settle_frames=2,
+    )
+    forest_button = Detection("forest_recenter_button", 841, 1295, 1.0)
+    dinosaur = Detection("dinosaur", 650, 800, 0.9)
+
+    target = planner.choose(frame, [forest_button])
+    assert target is not None and target.type == "forest_recenter_button"
+    planner.on_action_success("forest_recenter_button")
+
+    assert planner.choose(frame, [dinosaur]) is None
+    assert planner.choose(frame, [dinosaur]) is None
+    resumed = planner.choose(frame, [dinosaur])
     assert resumed is not None and resumed.type == "dinosaur"
 
 
@@ -883,6 +931,38 @@ def test_verifier_accepts_expected_next_ui() -> None:
     ).verify(make_frame(10), make_frame(10), target, [detection], [detection, hunt_button])
     assert result.success
     assert "hunt_button" in result.reason
+
+
+def test_verifier_requires_forest_target_to_disappear_before_dinosaur_success() -> None:
+    forest = make_detection(type="forest_recenter_button")
+    target = Target(forest.type, forest.x, forest.y, forest.confidence, forest)
+    dinosaur = make_detection(x=120, y=70, type="dinosaur")
+    verifier = TargetChangedVerifier(
+        success_transitions={"forest_recenter_button": ("dinosaur",)},
+        success_requires_target_absence=("forest_recenter_button",),
+    )
+
+    still_visible = verifier.verify(
+        make_frame(10),
+        make_frame(20),
+        target,
+        [forest],
+        [forest, dinosaur],
+    )
+    transitioned = verifier.verify(
+        make_frame(10),
+        make_frame(20),
+        target,
+        [forest],
+        [dinosaur],
+    )
+
+    assert not still_visible.success
+    assert "still visible" in still_visible.reason
+    assert transitioned.success
+    assert verifier.relevant_detection_types(target.type) == frozenset(
+        {"forest_recenter_button", "dinosaur"}
+    )
 
 
 def test_verifier_requires_expected_next_ui() -> None:

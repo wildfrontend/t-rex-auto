@@ -65,7 +65,7 @@ The controller enforces confirmation. Pass `-Confirm` only after verifying expli
 ```
 
 Allow only `fast` or `safe`. Use the user's stated profile; otherwise preserve the known current
-profile, or use `fast` only for a new start when no current profile is known. A restart may take up
+profile, or use `fast` for a new start when no current profile is known. A restart may take up
 to 20 seconds. After a start or restart, query status once and report the result.
 
 For custom millisecond timings or changing the port interactively, direct the user to the Chinese

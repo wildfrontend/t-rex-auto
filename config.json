@@ -149,6 +149,9 @@
                                          "duplicate_hunt_alert",
                                          "hunt_team_return_button"
                                      ],
+                   "success_requires_target_absence":  [
+                                                           "forest_recenter_button"
+                                                       ],
                    "success_transitions":  {
                                                "dinosaur":  [
                                                                 "hunt_button"
@@ -172,7 +175,8 @@
                                                "forest_recenter_button":  [
                                                                               "map_center_egg",
                                                                               "map_exit_nest_button",
-                                                                              "mailbox_button"
+                                                                              "mailbox_button",
+                                                                              "dinosaur"
                                                                           ],
                                                "mailbox_button":  [
                                                                       "mail_collect_all_button"

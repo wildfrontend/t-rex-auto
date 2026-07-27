@@ -104,11 +104,14 @@ def create_engine(config: AppConfig, *, verbose: bool = False) -> BotEngine:
     )
     action = AdbActionDriver(adb)
     verifier = TargetChangedVerifier(
-        config.verify.max_distance,
-        config.verify.pixel_change_threshold,
-        config.verify.failure_types,
-        config.verify.success_transitions,
-        config.recovery.black_mean_threshold,
+        max_distance=config.verify.max_distance,
+        pixel_change_threshold=config.verify.pixel_change_threshold,
+        failure_types=config.verify.failure_types,
+        success_transitions=config.verify.success_transitions,
+        black_mean_threshold=config.recovery.black_mean_threshold,
+        success_requires_target_absence=(
+            config.verify.success_requires_target_absence
+        ),
     )
     observer = create_mode(
         config.mode,

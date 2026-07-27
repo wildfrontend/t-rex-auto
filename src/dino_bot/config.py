@@ -118,6 +118,7 @@ class VerifyConfig:
     minimum_checks: int = 2
     failure_types: tuple[str, ...] = ()
     success_transitions: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    success_requires_target_absence: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -444,6 +445,13 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
                     "success_transitions", {}
                 ).items()
             },
+            success_requires_target_absence=tuple(
+                str(item)
+                for item in verify_data.get(
+                    "success_requires_target_absence",
+                    [],
+                )
+            ),
         ),
         training=TrainingConfig(
             fps=float(training_data.get("fps", 2)),

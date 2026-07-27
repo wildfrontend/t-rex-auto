@@ -298,6 +298,7 @@ class HuntPlanner(TargetPlanner):
         self._awaiting_hunt_button = False
         self._waited_frames = 0
         self._recenter_stage = 0
+        self._recenter_dinosaur_frames = 0
         self._pending_hunt_return = False
         self._hunt_count = 0
         self._total_hunt_count = 0
@@ -392,6 +393,7 @@ class HuntPlanner(TargetPlanner):
             # after a failure parks the planner in the anchor stage, where it
             # ignores every hunt control still on screen.
             self._recenter_stage = 0
+            self._recenter_dinosaur_frames = 0
             return
 
         if self._mail_stage and target_type in self._mail_stage_by_type:
@@ -462,6 +464,7 @@ class HuntPlanner(TargetPlanner):
         self._awaiting_hunt_button = False
         self._waited_frames = 0
         self._recenter_stage = 0
+        self._recenter_dinosaur_frames = 0
         self._pending_hunt_return = False
         self._last_anchor = None
         self._mail_stage = 0
@@ -1034,6 +1037,7 @@ class HuntPlanner(TargetPlanner):
                 target = super().choose(frame, forest)
                 if target is not None:
                     self._recenter_stage = 2
+                    self._recenter_dinosaur_frames = 0
                 return target
 
         if self._recenter_stage == 1:
@@ -1045,6 +1049,7 @@ class HuntPlanner(TargetPlanner):
                 target = super().choose(frame, forest)
                 if target is not None:
                     self._recenter_stage = 2
+                    self._recenter_dinosaur_frames = 0
                 return target
             return self._choose_map_exit(frame, detections)
 
@@ -1053,6 +1058,7 @@ class HuntPlanner(TargetPlanner):
         # right now. Release the stage instead of stalling on a missed anchor.
         if self._recenter_stage == 2 and actionable_hunt_controls:
             self._recenter_stage = 0
+            self._recenter_dinosaur_frames = 0
 
         if self._recenter_stage == 2:
             self._stage = "recenter"
@@ -1066,6 +1072,7 @@ class HuntPlanner(TargetPlanner):
             if centered:
                 self.clear_history()
                 self._recenter_stage = 0
+                self._recenter_dinosaur_frames = 0
                 centered_anchor = min(
                     anchors,
                     key=lambda item: hypot(
@@ -1092,6 +1099,7 @@ class HuntPlanner(TargetPlanner):
                     if item.type == self.forest_recenter_type
                 ]
                 if forest:
+                    self._recenter_dinosaur_frames = 0
                     return super().choose(frame, forest)
                 has_hunt_control = any(
                     item.type in self.hunt_button_types for item in detections
@@ -1103,13 +1111,26 @@ class HuntPlanner(TargetPlanner):
                 has_dinosaur = any(
                     item.type == self.dinosaur_type for item in detections
                 )
-                if has_map_landmark and has_dinosaur and not has_hunt_control:
+                if has_dinosaur and not has_hunt_control:
+                    self._recenter_dinosaur_frames += 1
+                else:
+                    self._recenter_dinosaur_frames = 0
+                dinosaur_only_confirmed = (
+                    self._recenter_dinosaur_frames >= self.map_settle_frames
+                )
+                if (
+                    has_dinosaur
+                    and not has_hunt_control
+                    and (has_map_landmark or dinosaur_only_confirmed)
+                ):
                     # The forest transition succeeded, but the animated egg
-                    # anchor can miss template matching. The forest action
-                    # guarantees a centered map, so retain a safe synthetic
-                    # center instead of waiting forever in recenter stage 2.
+                    # anchor and map landmarks can miss template matching. Two
+                    # consecutive dinosaur-only frames prove that the forest
+                    # button disappeared into the collection map. Retain a
+                    # safe synthetic center instead of waiting forever.
                     self.clear_history()
                     self._recenter_stage = 0
+                    self._recenter_dinosaur_frames = 0
                     self._last_anchor = (frame.width / 2, frame.height / 2)
                     self._map_idle_frames = 0
                     if self._total_hunt_count >= self.mail_after_hunts:
