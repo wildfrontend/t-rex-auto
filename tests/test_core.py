@@ -19,6 +19,7 @@ from dino_bot.assets import create_template
 from dino_bot.cli import apply_run_timing, build_parser
 from dino_bot.config import AppConfig, ConfigError, load_config
 from dino_bot.detection import (
+    DetectorAssetError,
     HuntCapacityDetector,
     HuntTeamAvailabilityDetector,
     OpenCvDetector,
@@ -433,13 +434,22 @@ def test_hunt_planner_waits_when_all_dinosaurs_are_on_own_blue_path() -> None:
     assert planner.choose(frame, detections) is None
 
 
-def test_hunt_planner_recenters_after_repeated_frames_without_safe_dinosaur() -> None:
+def test_hunt_planner_recenters_after_seconds_without_a_safe_dinosaur() -> None:
+    """The stall threshold counts seconds, not frames.
+
+    A frame count buys a different wait on every machine: the same four frames
+    were 4.3 seconds when a scan cost 1080ms and 15 seconds when the host was
+    busy enough to push it to 3668ms. Seconds hold the wait still.
+    """
+
     frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    now = [0.0]
     planner = HuntPlanner(
         ("map_exit_nest_button", "dinosaur"),
         own_path_radius=90,
-        stalled_recenter_frames=2,
+        stalled_recenter_seconds=10.0,
         safe_margin=80,
+        clock=lambda: now[0],
     )
     detections = [
         Detection("map_center_egg", 450, 800, 1.0),
@@ -449,20 +459,28 @@ def test_hunt_planner_recenters_after_repeated_frames_without_safe_dinosaur() ->
     ]
 
     assert planner.choose(frame, detections) is None
+    now[0] = 9.0
+    assert planner.choose(frame, detections) is None, "still inside the window"
+
+    now[0] = 10.0
     reset = planner.choose(frame, detections)
     assert reset is not None and reset.type == "map_exit_nest_button"
+    assert planner.last_recenter_reason() == "no_target_timeout"
 
 
 def test_hunt_planner_recenters_when_only_own_paths_remain() -> None:
     frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    now = [0.0]
     planner = HuntPlanner(
         ("map_exit_nest_button", "dinosaur"),
-        stalled_recenter_frames=2,
+        stalled_recenter_seconds=10.0,
+        clock=lambda: now[0],
     )
     anchor = Detection("map_center_egg", 450, 800, 1.0)
     own_path = Detection("own_hunt_path", 500, 820, 0.9)
 
     assert planner.choose(frame, [anchor, own_path]) is None
+    now[0] = 10.0
     reset = planner.choose(frame, [own_path])
 
     assert reset is not None and reset.type == "map_exit_nest_button"
@@ -1390,3 +1408,246 @@ def test_engine_clears_transient_state_after_black_screen_recovery() -> None:
     assert context.target is None
     assert context.attempt == 0
     assert not planner._awaiting_hunt_button
+
+
+def test_template_matches_at_half_resolution_in_reference_coordinates(
+    tmp_path: Path,
+) -> None:
+    """Halving the searched image is a 4x cut that must not move the target.
+
+    Measured on a live 900x1600 frame: the full scan costs 1614ms, and every
+    button in it survives being matched at half size - INTER_AREA strips the
+    high-frequency noise that fights the match, so confidence holds or improves.
+    What cannot shift is where the hit lands, because the coordinate is what
+    gets tapped.
+    """
+
+    rng = np.random.default_rng(11)
+    template = rng.integers(0, 256, (40, 40, 3), dtype=np.uint8)
+    image = np.zeros((800, 600, 3), dtype=np.uint8)
+    image[300:340, 200:240] = template
+    assert cv2.imwrite(str(tmp_path / "button.png"), template)
+    (tmp_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "templates": [
+                    {
+                        "type": "button",
+                        "file": "button.png",
+                        "threshold": 0.8,
+                        "match_scale": 0.5,
+                        "click_offset": [20, 20],
+                    }
+                ],
+                "hsv_ranges": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    found = OpenCvDetector(tmp_path / "manifest.json").detect(Frame(image))
+
+    assert len(found) == 1
+    assert found[0].type == "button"
+    # The click offset lands on the centre of the button, in full-size pixels.
+    assert abs(found[0].x - 220) <= 2
+    assert abs(found[0].y - 320) <= 2
+    assert found[0].bbox is not None
+    assert abs(found[0].bbox.width - 40) <= 2, "the box is reported at full size"
+    assert found[0].metadata["match_scale"] == 0.5
+
+
+def test_match_scale_of_one_leaves_a_template_at_full_size(tmp_path: Path) -> None:
+    """The dinosaur label is 18x18 and stays whole.
+
+    Halved it produced fifteen distinct hits where full size found ten, and
+    the five extras scored 0.54-0.58 at full resolution - too marginal to
+    accept sight unseen when a wrong tap costs a failure cooldown.
+    """
+
+    rng = np.random.default_rng(12)
+    template = rng.integers(0, 256, (18, 18, 3), dtype=np.uint8)
+    image = np.zeros((400, 400, 3), dtype=np.uint8)
+    image[100:118, 150:168] = template
+    assert cv2.imwrite(str(tmp_path / "label.png"), template)
+    (tmp_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "templates": [
+                    {
+                        "type": "label",
+                        "file": "label.png",
+                        "threshold": 0.95,
+                        "match_scale": 1.0,
+                    }
+                ],
+                "hsv_ranges": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    detector = OpenCvDetector(tmp_path / "manifest.json")
+    found = detector.detect(Frame(image))
+
+    assert len(found) == 1
+    assert (found[0].x, found[0].y) == (159, 109)
+    assert "match_scale" not in found[0].metadata, "full size is the quiet default"
+
+
+def test_manifest_rejects_a_match_scale_outside_the_unit_range(tmp_path: Path) -> None:
+    rng = np.random.default_rng(13)
+    assert cv2.imwrite(
+        str(tmp_path / "button.png"),
+        rng.integers(0, 256, (10, 10, 3), dtype=np.uint8),
+    )
+    (tmp_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "templates": [
+                    {"type": "button", "file": "button.png", "match_scale": 1.5}
+                ],
+                "hsv_ranges": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(DetectorAssetError):
+        OpenCvDetector(tmp_path / "manifest.json")
+
+
+def test_planning_scan_leaves_out_screens_the_current_stage_cannot_reach() -> None:
+    """The launch dialogs cost a quarter of every scan and cannot appear mid-run.
+
+    Working the map needs none of the login screens, and paying for them on
+    every cycle is what put 41% of a hunt's wall clock into planning detection.
+    """
+
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(("dinosaur",), blocking_types=("duplicate_hunt_alert",))
+    anchor = Detection("map_center_egg", 450, 800, 1.0)
+    dinosaur = Detection("dinosaur", 650, 1200, 0.90)
+
+    assert planner.planning_detection_types() is None, "the first cycle sees it all"
+    assert planner.choose(frame, [anchor, dinosaur]) is not None
+
+    scoped = planner.planning_detection_types()
+
+    assert scoped is not None
+    assert {"dinosaur", "map_center_egg", "own_hunt_path"} <= scoped
+    assert "duplicate_hunt_alert" in scoped, "a blocked tap must still be seen"
+    assert {"hunt_capacity_full", "target_too_strong"} <= scoped
+    assert not scoped & {
+        "device_history_confirm_button",
+        "duplicate_login_close_button",
+        "startup_offer_dismiss",
+    }
+    assert not scoped & {
+        "mail_collect_all_button",
+        "mail_reward_collect_button",
+        "mail_close_button",
+    }, "the mail overlay only exists inside the mail flow"
+    assert {"startup_growth_result_back", "startup_auto_battle_close"} <= scoped, (
+        "the layout-ratio interrupts cost under a millisecond and stay visible"
+    )
+
+
+def test_planning_scan_widens_again_after_two_cycles_plan_nothing() -> None:
+    """A narrow scan is only trustworthy while it keeps finding work."""
+
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(("dinosaur",), full_scan_after_idle_cycles=2)
+    anchor = Detection("map_center_egg", 450, 800, 1.0)
+    dinosaur = Detection("dinosaur", 650, 1200, 0.90)
+
+    assert planner.planning_detection_types() is None
+    assert planner.choose(frame, [anchor, dinosaur]) is not None
+    assert planner.planning_detection_types() is not None
+
+    assert planner.choose(frame, [anchor]) is None
+    assert planner.planning_detection_types() is not None, "one empty cycle is normal"
+
+    assert planner.choose(frame, [anchor]) is None
+    assert planner.planning_detection_types() is None, "two in a row widens the scan"
+
+
+def test_planning_scan_sweeps_everything_on_a_timer() -> None:
+    """A run that never stalls still has to re-check the screens it skips."""
+
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    now = [0.0]
+    planner = HuntPlanner(
+        ("dinosaur",),
+        full_scan_interval_seconds=30.0,
+        clock=lambda: now[0],
+    )
+    anchor = Detection("map_center_egg", 450, 800, 1.0)
+    dinosaur = Detection("dinosaur", 650, 1200, 0.90)
+
+    assert planner.planning_detection_types() is None
+    assert planner.choose(frame, [anchor, dinosaur]) is not None
+
+    now[0] = 29.0
+    assert planner.planning_detection_types() is not None
+
+    now[0] = 30.0
+    assert planner.planning_detection_types() is None
+
+
+def test_restarting_the_game_forces_a_full_planning_scan() -> None:
+    """A relaunch walks back through the very dialogs a scoped scan omits."""
+
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(("dinosaur",))
+    anchor = Detection("map_center_egg", 450, 800, 1.0)
+    dinosaur = Detection("dinosaur", 650, 1200, 0.90)
+
+    assert planner.planning_detection_types() is None
+    assert planner.choose(frame, [anchor, dinosaur]) is not None
+    assert planner.planning_detection_types() is not None
+
+    planner.reset_workflow()
+
+    assert planner.planning_detection_types() is None
+
+
+def test_disabling_stage_scoped_scan_always_asks_for_everything() -> None:
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(("dinosaur",), stage_scoped_scan=False)
+    anchor = Detection("map_center_egg", 450, 800, 1.0)
+    dinosaur = Detection("dinosaur", 650, 1200, 0.90)
+
+    assert planner.planning_detection_types() is None
+    assert planner.choose(frame, [anchor, dinosaur]) is not None
+    assert planner.planning_detection_types() is None
+
+
+def test_every_recenter_names_the_reason_that_started_it() -> None:
+    """Without the reason, a starved map and a scheduled sweep look identical.
+
+    They are not: the scheduled one is policy, the starved one is throughput
+    leaking away, and telling them apart is what the tuning record runs on.
+    """
+
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(
+        ("map_exit_nest_button", "hunt_confirm_button", "dinosaur"),
+        recenter_every=1,
+        map_settle_frames=1,
+        safe_margin=80,
+    )
+    anchor = Detection("map_center_egg", 450, 800, 1.0)
+    exit_button = Detection("map_exit_nest_button", 841, 1295, 1.0)
+    dinosaur = Detection("dinosaur", 500, 820, 0.9)
+    confirm = Detection("hunt_confirm_button", 451, 1412, 1.0)
+
+    assert planner.choose(frame, [anchor, exit_button, dinosaur]).type == "dinosaur"  # type: ignore[union-attr]
+    assert planner.choose(frame, [confirm]).type == "hunt_confirm_button"  # type: ignore[union-attr]
+    planner.on_action_success("hunt_confirm_button")
+    target = planner.choose(frame, [anchor, exit_button])
+
+    assert target is not None and target.type == "map_exit_nest_button"
+    assert planner.last_recenter_reason() == "batch", (
+        "a scheduled sweep must not read as a starved map"
+    )

@@ -1,28 +1,10 @@
 {
+  "root": "<app-root>",
   "emulator": "custom",
   "mode": "runtime",
   "debug": false,
-  "capture_fps": 10,
+  "capture_fps": 10.0,
   "click_delay": 1500,
-  "transition_poll_interval": 250,
-  "speed_profiles": {
-    "fast": {
-      "click_delay_ms": 300,
-      "dinosaur_delay_ms": 300,
-      "hunt_button_delay_ms": 900,
-      "hunt_confirm_delay_ms": 1200,
-      "idle_delay_ms": 250,
-      "poll_interval_ms": 100
-    },
-    "safe": {
-      "click_delay_ms": 1500,
-      "dinosaur_delay_ms": 1500,
-      "hunt_button_delay_ms": 5000,
-      "hunt_confirm_delay_ms": 3000,
-      "idle_delay_ms": 500,
-      "poll_interval_ms": 250
-    }
-  },
   "post_action_delays": {
     "duplicate_login_close_button": 5000,
     "device_history_confirm_button": 5000,
@@ -50,10 +32,32 @@
   "save_debug_image": false,
   "idle_delay": 500,
   "log_max_bytes": 33554432,
+  "transition_poll_interval": 250,
+  "speed_profiles": {
+    "safe": {
+      "click_delay_ms": 1500,
+      "dinosaur_delay_ms": 1500,
+      "hunt_button_delay_ms": 5000,
+      "hunt_confirm_delay_ms": 3000,
+      "idle_delay_ms": 500,
+      "poll_interval_ms": 250
+    },
+    "fast": {
+      "click_delay_ms": 300,
+      "dinosaur_delay_ms": 300,
+      "hunt_button_delay_ms": 900,
+      "hunt_confirm_delay_ms": 1200,
+      "idle_delay_ms": 250,
+      "poll_interval_ms": 100
+    }
+  },
   "max_actions": 0,
   "capture": {
     "backend": "adb",
-    "viewport": "auto",
+    "window_titles": [],
+    "process_names": [],
+    "viewport": null,
+    "auto_viewport": true,
     "chrome_insets": [
       0,
       40,
@@ -62,13 +66,13 @@
     ]
   },
   "adb": {
-    "executable": null,
+    "executable": "C:\\platform-tools\\adb.exe",
+    "serial": "127.0.0.1:16416",
     "connect_on_start": true,
-    "timeout": 30.0,
-    "serial": "127.0.0.1:16384"
+    "timeout": 30.0
   },
   "detector": {
-    "manifest": "assets/manifest.json",
+    "manifest": "<app-root>/assets/manifest.json",
     "default_threshold": 0.85,
     "nms_iou": 0.3
   },
@@ -103,57 +107,48 @@
     "deduplicate_types": [
       "dinosaur"
     ],
-    "dedup_radius": 25,
+    "dedup_radius": 25.0,
+    "history_file": null,
     "history_limit": 500,
     "recenter_every": 10,
-    "own_path_radius": 90,
-    "anchor_exclusion_radius": 50,
+    "own_path_radius": 90.0,
+    "anchor_exclusion_radius": 50.0,
     "dinosaur_failure_cooldown_ms": 5000,
-    "dinosaur_failure_radius": 80,
+    "dinosaur_failure_radius": 80.0,
     "mail_after_hunts": 30,
     "mail_failure_limit": 3,
-    "capacity_wait_seconds": 300,
-    "ring_width": 150,
-    "own_path_angle_degrees": 7,
-    "stalled_recenter_seconds": 10,
-    "stage_scoped_scan": true,
-    "full_scan_interval_seconds": 30,
-    "full_scan_after_idle_cycles": 2,
+    "capacity_wait_seconds": 300.0,
+    "ring_width": 150.0,
+    "own_path_angle_degrees": 7.0,
+    "stalled_recenter_frames": 4,
     "map_settle_frames": 2,
-    "map_settle_tolerance_px": 20,
+    "map_settle_tolerance_px": 20.0,
     "map_settle_max_frames": 12,
     "bottom_exclusion_px": 180,
     "exclusion_zones": [
       {
         "name": "left_buff_stack",
-        "reference_width": 900,
-        "x": [
-          0,
-          115
-        ],
-        "y": [
-          445,
-          800
-        ]
+        "x0": 0.0,
+        "y0": 445.0,
+        "x1": 115.0,
+        "y1": 800.0,
+        "reference_width": 900.0
       }
     ],
     "retry_exhausted_cooldown_ms": 60000,
-    "suppression_radius": 60,
+    "suppression_radius": 60.0,
     "action_cooldowns_ms": {
       "target_too_strong": 300000,
       "no_available_dinosaurs": 90000
     }
   },
   "verify": {
-    "max_distance": 35,
+    "max_distance": 35.0,
     "pixel_change_threshold": 0.08,
     "minimum_checks": 2,
     "failure_types": [
       "duplicate_hunt_alert",
       "hunt_team_return_button"
-    ],
-    "success_requires_target_absence": [
-      "forest_recenter_button"
     ],
     "success_transitions": {
       "dinosaur": [
@@ -195,10 +190,13 @@
         "map_exit_nest_button",
         "map_center_egg"
       ]
-    }
+    },
+    "success_requires_target_absence": [
+      "forest_recenter_button"
+    ]
   },
   "training": {
-    "fps": 2,
+    "fps": 2.0,
     "max_images": 500
   },
   "workflow": {
@@ -207,19 +205,19 @@
       "mail_reward_collect_button"
     ]
   },
+  "recovery": {
+    "enabled": true,
+    "black_screen_timeout_seconds": 45.0,
+    "black_mean_threshold": 2.0,
+    "no_hunt_progress_timeout_seconds": 180.0,
+    "hunt_progress_suspend_budget_seconds": 120.0,
+    "restart_cooldown_seconds": 90.0,
+    "launch_wait_seconds": 15.0,
+    "package": "com.mondayoff.dinomutant",
+    "activity": "com.unity3d.player.UnityPlayerActivity"
+  },
   "event_log": {
     "enabled": true,
     "max_bytes": 16777216
-  },
-  "recovery": {
-    "enabled": true,
-    "black_screen_timeout_seconds": 45,
-    "black_mean_threshold": 2,
-    "no_hunt_progress_timeout_seconds": 180,
-    "hunt_progress_suspend_budget_seconds": 120,
-    "restart_cooldown_seconds": 90,
-    "launch_wait_seconds": 15,
-    "package": "com.mondayoff.dinomutant",
-    "activity": "com.unity3d.player.UnityPlayerActivity"
   }
 }

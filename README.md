@@ -371,7 +371,20 @@ D:\DinoMutantBot\python\python.exe `
 ## 設定重點
 
 - `capture.backend`: `adb` 不搶 focus；`mss` 較快但會把 BlueStacks 拉到前景。
-- `planner.stalled_recenter_frames`: 連續多少幀沒有安全目標後重置視野，預設 8。
+- `planner.stalled_recenter_seconds`: 在採集地圖連續多少秒沒有安全目標後重置視野，預設 10。
+  用秒數而非幀數，是因為一次掃描的成本會隨主機負載在 1080–3668 ms 之間浮動，同樣「4 幀」
+  在忙碌的機器上是等 15 秒、在空閒的機器上只有 4.3 秒。
+- `planner.stage_scoped_scan`: 規劃階段只掃目前階段用得到的素材，預設 `true`。登入／裝置
+  紀錄／開場優惠三個對話框佔一次全掃描的四分之一，而它們跑起來之後不可能再出現；實測地圖
+  階段因此省 42%、信箱流程省 56%。設為 `false` 可回到每個 cycle 都掃全部。
+- `planner.full_scan_after_idle_cycles`: 連續幾個 cycle 規劃不出目標就把下一次掃描放回全部，
+  預設 `2`。窄掃描漏看的東西長得跟空地圖一模一樣，這個計數就是察覺的方式；設 2 表示意外的
+  對話框最多浪費一個 cycle。
+- `planner.full_scan_interval_seconds`: 就算一路順利，最長多久也要全掃一次，預設 30 秒。
+- `assets/manifest.json` 的 `match_scale`: 每個素材要在多少解析度下搜尋，預設 `1.0`。
+  matchTemplate 的成本與搜尋範圍的像素數成正比、與素材大小和命中數無關，所以砍半是接近
+  四倍的加速。實測 17 個素材在半解析度下信心值全部保住（`INTER_AREA` 縮圖等於低通濾波，
+  把干擾比對的高頻雜訊去掉了），只有 18×18 的 `dinosaur` 標籤太小、維持 `1.0`。
 - `capture.viewport`: Android 畫面在 BlueStacks client 內的 `[x,y,width,height]`；
   若含有 BlueStacks 側欄，應設定此值以確保 ADB 座標精準。
 - `click_delay`: 一般點擊後條件式驗證的最長等待毫秒數；成功時會立即往下執行。

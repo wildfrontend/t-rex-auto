@@ -222,6 +222,11 @@ class HuntPlanner(TargetPlanner):
             "startup_growth_result_back",
             "startup_auto_battle_close",
         ),
+        launch_only_types: Sequence[str] = (
+            "duplicate_login_close_button",
+            "device_history_confirm_button",
+            "startup_offer_dismiss",
+        ),
         own_path_types: Sequence[str] = ("own_hunt_path",),
         own_path_radius: float = 90.0,
         anchor_exclusion_radius: float = 50.0,
@@ -241,7 +246,7 @@ class HuntPlanner(TargetPlanner):
         capacity_wait_seconds: float = 300.0,
         ring_width: float = 150.0,
         own_path_angle_degrees: float = 7.0,
-        stalled_recenter_frames: int = 8,
+        stalled_recenter_seconds: float = 10.0,
         map_settle_frames: int = 2,
         map_settle_tolerance_px: float = 20.0,
         map_settle_max_frames: int = 12,
@@ -250,6 +255,9 @@ class HuntPlanner(TargetPlanner):
         exclusion_zones: Sequence[ExclusionZone] = (),
         action_cooldowns_ms: dict[str, int] | None = None,
         await_hunt_frames: int = 5,
+        stage_scoped_scan: bool = True,
+        full_scan_interval_seconds: float = 30.0,
+        full_scan_after_idle_cycles: int = 2,
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -261,6 +269,11 @@ class HuntPlanner(TargetPlanner):
         self.center_anchor_type = center_anchor_type
         self.recovery_button_types = frozenset(recovery_button_types)
         self.interrupt_button_types = frozenset(interrupt_button_types)
+        # The subset of the interrupts only the launch sequence can raise.
+        # They are template matches and the priciest part of a scan; the
+        # rest are layout checks costing under a millisecond, so those stay
+        # visible to every scan.
+        self.launch_only_types = frozenset(launch_only_types)
         self.own_path_types = frozenset(own_path_types)
         self.own_path_radius = max(0.0, own_path_radius)
         self.anchor_exclusion_radius = max(0.0, anchor_exclusion_radius)
@@ -283,7 +296,7 @@ class HuntPlanner(TargetPlanner):
         self.capacity_wait_seconds = max(0.0, capacity_wait_seconds)
         self.ring_width = max(1.0, ring_width)
         self.own_path_angle_degrees = max(0.0, own_path_angle_degrees)
-        self.stalled_recenter_frames = max(1, stalled_recenter_frames)
+        self.stalled_recenter_seconds = max(0.001, stalled_recenter_seconds)
         self.map_settle_frames = max(1, map_settle_frames)
         self.map_settle_tolerance_px = max(0.0, map_settle_tolerance_px)
         self.map_settle_max_frames = max(
@@ -295,6 +308,11 @@ class HuntPlanner(TargetPlanner):
         self.exclusion_zones = tuple(exclusion_zones)
         self.action_cooldowns_ms = dict(action_cooldowns_ms or {})
         self.await_hunt_frames = max(1, await_hunt_frames)
+        self.stage_scoped_scan = bool(stage_scoped_scan)
+        self.full_scan_interval_seconds = max(0.0, full_scan_interval_seconds)
+        self.full_scan_after_idle_cycles = max(1, full_scan_after_idle_cycles)
+        self._scoped_idle_cycles = 0
+        self._last_full_scan: float | None = None
         self._awaiting_hunt_button = False
         self._waited_frames = 0
         self._recenter_stage = 0
@@ -308,7 +326,9 @@ class HuntPlanner(TargetPlanner):
         self._mailbox_full_recovery = False
         self._capacity_cooldown_until = 0.0
         self._action_cooldown_until = 0.0
-        self._map_idle_frames = 0
+        self._map_idle_since: float | None = None
+        self._last_map_idle_seconds = 0.0
+        self._recenter_reason: str | None = None
         self._map_settle_active = False
         self._map_settle_observed_frames = 0
         self._map_settle_stable_frames = 0
@@ -475,7 +495,13 @@ class HuntPlanner(TargetPlanner):
         self._total_hunt_count = 0
         self._capacity_cooldown_until = 0.0
         self._action_cooldown_until = 0.0
-        self._map_idle_frames = 0
+        self._map_idle_since = None
+        self._last_map_idle_seconds = 0.0
+        self._recenter_reason = None
+        # A relaunch walks back through the login and startup dialogs, and
+        # those are exactly what a stage-scoped scan leaves out.
+        self._scoped_idle_cycles = 0
+        self._last_full_scan = None
         self._map_settle_active = False
         self._map_settle_observed_frames = 0
         self._map_settle_stable_frames = 0
@@ -720,6 +746,103 @@ class HuntPlanner(TargetPlanner):
             return "team_status_panel"
         return None
 
+    def last_idle_seconds(self) -> float:
+        """Return how long the map had gone without a target when last planned."""
+
+        return self._last_map_idle_seconds
+
+    def last_recenter_reason(self) -> str | None:
+        """Return why the previous planning decision started recentering."""
+
+        return self._recenter_reason
+
+    def _begin_recenter(self, reason: str) -> None:
+        """Start a fresh recenter cycle and reset its batch budget."""
+
+        self._hunt_count = 0
+        self._map_idle_since = None
+        self._recenter_stage = 1
+        self._stage = "recenter"
+        self._recenter_reason = reason
+
+    def planning_detection_types(self) -> frozenset[str] | None:
+        """Name what the next planning decision can act on, or None for everything.
+
+        A full scan prices every template in the manifest, and the launch-only
+        dialogs are a quarter of that bill on screens that cannot appear again
+        once a run is under way. Narrowing the scan to the stage the planner is
+        actually in is safe exactly while the narrow view keeps producing work,
+        so a scan that plans nothing twice running - or a sweep that has not
+        happened for ``full_scan_interval_seconds`` - widens the next one back
+        to everything. An unexpected dialog therefore costs a wasted cycle
+        rather than a stall.
+        """
+
+        if not self.stage_scoped_scan:
+            return None
+        now = self.clock()
+        if (
+            self._last_full_scan is None
+            or self._scoped_idle_cycles >= self.full_scan_after_idle_cycles
+            or now - self._last_full_scan >= self.full_scan_interval_seconds
+        ):
+            self._last_full_scan = now
+            self._scoped_idle_cycles = 0
+            return None
+        return self._stage_detection_types()
+
+    def _stage_detection_types(self) -> frozenset[str]:
+        """Return the detections the planner's current stage can act on.
+
+        The set stays deliberately wide. Leaving out the launch dialogs and the
+        mail overlay is unambiguous - the game cannot raise a device-history
+        prompt mid-run, and the mail buttons only exist inside the mail flow -
+        and measured 42% off a full scan. Narrowing further, to the point of
+        hiding the hunt sheet while the map is worked, buys another 18% and
+        costs a wasted cycle every time a sheet opens on its own.
+        """
+
+        # Exceptions the game can raise at any point of a hunt cycle. They are
+        # cheap to look for and expensive to miss: an unseen capacity warning
+        # spends the next five minutes tapping a hunt the game keeps refusing.
+        always = {
+            *self.blocking_types,
+            *self.recovery_button_types,
+            *(self.interrupt_button_types - self.launch_only_types),
+            self.no_available_type,
+            self.target_too_strong_type,
+            self.capacity_full_type,
+        }
+        map_view = {
+            self.dinosaur_type,
+            *self.own_path_types,
+            self.center_anchor_type,
+            self.map_exit_type,
+            self.forest_recenter_type,
+            self.mailbox_type,
+        }
+        mail_view = {
+            self.mailbox_type,
+            self.mail_collect_all_type,
+            self.mail_reward_collect_type,
+            self.mail_close_type,
+        }
+        if self._mailbox_full_recovery:
+            return frozenset(
+                always | map_view | mail_view | {self.hunt_dialog_close_type}
+            )
+        if self._mail_stage:
+            return frozenset(
+                always | mail_view | {self.map_exit_type, self.center_anchor_type}
+            )
+        # The map, the recenter round trip and the hunt sheet all read the same
+        # screen, and the anchor rides along with them: a scan that drops
+        # `map_center_egg` leaves the planner predicting the anchor instead of
+        # measuring it, which is what starves `anchor_window` of candidates.
+        return frozenset(
+            always | map_view | self.hunt_button_types | {self.hunt_dialog_close_type}
+        )
+
     def last_rejections(self) -> dict[str, int]:
         """Return why the previous ``choose`` discarded each dinosaur."""
 
@@ -873,7 +996,7 @@ class HuntPlanner(TargetPlanner):
         self._total_hunt_count = 0
         self._recenter_stage = 0
         self._last_anchor = (frame.width / 2, frame.height / 2)
-        self._map_idle_frames = 0
+        self._map_idle_since = None
         return True
 
     def _choose_map_exit(
@@ -918,7 +1041,27 @@ class HuntPlanner(TargetPlanner):
         return None
 
     def choose(self, frame: Frame, detections: Sequence[Detection]) -> Target | None:
+        target = self._choose_target(frame, detections)
+        # A scoped scan earns the next one by producing work. Counting the
+        # empty ones is what lets `planning_detection_types` widen the view
+        # before something it cannot see turns into a stall.
+        if target is None:
+            self._scoped_idle_cycles += 1
+        else:
+            self._scoped_idle_cycles = 0
+        return target
+
+    def _choose_target(
+        self,
+        frame: Frame,
+        detections: Sequence[Detection],
+    ) -> Target | None:
+        previous_stage = self._stage
         self._rejections = {}
+        self._last_map_idle_seconds = 0.0
+        self._recenter_reason = None
+        if previous_stage != "hunting":
+            self._map_idle_since = None
         self._stage = "hunting"
         # Login/device-switch prompts and startup offers can interrupt any
         # workflow stage. Always clear them before resuming mail or hunting.
@@ -1132,7 +1275,7 @@ class HuntPlanner(TargetPlanner):
                     self._recenter_stage = 0
                     self._recenter_dinosaur_frames = 0
                     self._last_anchor = (frame.width / 2, frame.height / 2)
-                    self._map_idle_frames = 0
+                    self._map_idle_since = None
                     if self._total_hunt_count >= self.mail_after_hunts:
                         self._mail_stage = 1
                     self._mail_failures = 0
@@ -1168,9 +1311,7 @@ class HuntPlanner(TargetPlanner):
         if self._pending_hunt_return and on_collect_map and not has_hunt_control:
             self._pending_hunt_return = False
             if self._hunt_count >= self.recenter_every:
-                self._hunt_count = 0
-                self._recenter_stage = 1
-                self._stage = "recenter"
+                self._begin_recenter("batch")
                 return self._choose_map_exit(frame, detections)
 
         now = time.monotonic()
@@ -1183,7 +1324,7 @@ class HuntPlanner(TargetPlanner):
             return None
 
         if has_hunt_control:
-            self._map_idle_frames = 0
+            self._map_idle_since = None
             self._stage = "hunt_control"
             hunt_controls = [
                 item for item in detections if item.type in self.hunt_button_types
@@ -1283,18 +1424,19 @@ class HuntPlanner(TargetPlanner):
                 )
                 actionable.append(nearest)
         elif on_collect_map:
-            self._recenter_stage = 1
+            self._begin_recenter("missing_anchor")
             return self._choose_map_exit(frame, detections)
         target = super().choose(frame, actionable)
         if target is None and on_collect_map:
-            self._map_idle_frames += 1
-            if self._map_idle_frames >= self.stalled_recenter_frames:
-                self._map_idle_frames = 0
-                self._recenter_stage = 1
-                self._stage = "recenter"
+            idle_now = self.clock()
+            if self._map_idle_since is None:
+                self._map_idle_since = idle_now
+            self._last_map_idle_seconds = max(0.0, idle_now - self._map_idle_since)
+            if self._last_map_idle_seconds >= self.stalled_recenter_seconds:
+                self._begin_recenter("no_target_timeout")
                 return self._choose_map_exit(frame, detections)
-        elif target is not None:
-            self._map_idle_frames = 0
+        else:
+            self._map_idle_since = None
         if target is not None and target.type == self.dinosaur_type:
             self._last_selected_dinosaur = (float(target.x), float(target.y))
             self._anchor_before_dinosaur = anchor_position

@@ -100,7 +100,7 @@ class PlannerConfig:
     capacity_wait_seconds: float = 300.0
     ring_width: float = 150.0
     own_path_angle_degrees: float = 7.0
-    stalled_recenter_frames: int = 8
+    stalled_recenter_seconds: float = 10.0
     map_settle_frames: int = 2
     map_settle_tolerance_px: float = 20.0
     map_settle_max_frames: int = 12
@@ -109,6 +109,9 @@ class PlannerConfig:
     retry_exhausted_cooldown_ms: int = 60_000
     suppression_radius: float = 60.0
     action_cooldowns_ms: dict[str, int] = field(default_factory=dict)
+    stage_scoped_scan: bool = True
+    full_scan_interval_seconds: float = 30.0
+    full_scan_after_idle_cycles: int = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -411,8 +414,8 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
             own_path_angle_degrees=float(
                 planner_data.get("own_path_angle_degrees", 7)
             ),
-            stalled_recenter_frames=int(
-                planner_data.get("stalled_recenter_frames", 8)
+            stalled_recenter_seconds=float(
+                planner_data.get("stalled_recenter_seconds", 10)
             ),
             map_settle_frames=int(planner_data.get("map_settle_frames", 2)),
             map_settle_tolerance_px=float(
@@ -433,6 +436,13 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
                     planner_data, "action_cooldowns_ms"
                 ).items()
             },
+            stage_scoped_scan=bool(planner_data.get("stage_scoped_scan", True)),
+            full_scan_interval_seconds=float(
+                planner_data.get("full_scan_interval_seconds", 30)
+            ),
+            full_scan_after_idle_cycles=int(
+                planner_data.get("full_scan_after_idle_cycles", 2)
+            ),
         ),
         verify=VerifyConfig(
             max_distance=float(verify_data.get("max_distance", 35)),
@@ -577,8 +587,14 @@ def _validate(config: AppConfig) -> None:
         raise ConfigError("planner.ring_width must be greater than zero")
     if not 0 <= config.planner.own_path_angle_degrees <= 180:
         raise ConfigError("planner.own_path_angle_degrees must be between 0 and 180")
-    if config.planner.stalled_recenter_frames <= 0:
-        raise ConfigError("planner.stalled_recenter_frames must be greater than zero")
+    if config.planner.stalled_recenter_seconds <= 0:
+        raise ConfigError("planner.stalled_recenter_seconds must be greater than zero")
+    if config.planner.full_scan_interval_seconds < 0:
+        raise ConfigError("planner.full_scan_interval_seconds cannot be negative")
+    if config.planner.full_scan_after_idle_cycles <= 0:
+        raise ConfigError(
+            "planner.full_scan_after_idle_cycles must be greater than zero"
+        )
     if config.planner.map_settle_frames <= 0:
         raise ConfigError("planner.map_settle_frames must be greater than zero")
     if config.planner.map_settle_tolerance_px < 0:

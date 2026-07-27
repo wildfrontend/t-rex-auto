@@ -167,8 +167,20 @@ class DetectState:
     def execute(self, context: BotContext) -> BotState:
         if context.frame is None:
             raise RuntimeError("Detect state entered without a frame")
+        # Most of a planning scan is spent on screens the current stage cannot
+        # reach - the launch dialogs alone are a quarter of the bill. When the
+        # planner can name what it is able to act on, scan only that; it widens
+        # the request itself whenever the narrow view stops paying off.
+        scoped_types: frozenset[str] | None = None
+        detect_types = getattr(context.detector, "detect_types", None)
+        planning_types = getattr(context.planner, "planning_detection_types", None)
+        if callable(detect_types) and callable(planning_types):
+            scoped_types = planning_types()
         started = time.perf_counter()
-        context.detections = context.detector.detect(context.frame)
+        if scoped_types is None:
+            context.detections = context.detector.detect(context.frame)
+        else:
+            context.detections = detect_types(context.frame, scoped_types)
         detect_ms = round((time.perf_counter() - started) * 1000)
         counts: dict[str, int] = {}
         for item in context.detections:
@@ -178,12 +190,14 @@ class DetectState:
             "detect",
             ms=detect_ms,
             n=len(context.detections),
+            scoped=len(scoped_types) if scoped_types is not None else None,
             det=detection_payload(context.detections),
         )
         context.logger.info(
-            "Detect | %s | %dms",
+            "Detect | %s | %dms | %s",
             summary or "no targets",
             detect_ms,
+            f"scoped={len(scoped_types)}" if scoped_types is not None else "full scan",
         )
         # Layout detectors decide from a handful of ratios that never reach the
         # log, so a misfire can only be diagnosed by reverse-engineering the
@@ -228,12 +242,22 @@ class PlanningState:
         last_stage = getattr(context.planner, "last_stage", None)
         if callable(last_stage):
             stage = str(last_stage())
+        idle_ms = 0
+        last_idle_seconds = getattr(context.planner, "last_idle_seconds", None)
+        if callable(last_idle_seconds):
+            idle_ms = round(float(last_idle_seconds()) * 1000)
+        recenter_reason = None
+        last_recenter_reason = getattr(context.planner, "last_recenter_reason", None)
+        if callable(last_recenter_reason):
+            recenter_reason = last_recenter_reason()
         context.event_log.emit(
             "plan",
             stage=stage or None,
             target=target_payload(context.target),
             reject=rejections or None,
             cooldown_ms=cooldown_ms or None,
+            idle_ms=idle_ms or None,
+            recenter_reason=recenter_reason,
         )
         if (
             context.hunt_progress_recovery is not None

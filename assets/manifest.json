@@ -11,17 +11,24 @@
       "click_offset": [
         114,
         47
-      ]
+      ],
+      "match_scale": 0.5
     },
     {
       "type": "device_history_confirm_button",
       "file": "templates/device-history-confirm-button.png",
       "threshold": 0.82,
-      "scales": [0.88, 0.9, 0.95, 1.0],
+      "scales": [
+        0.88,
+        0.9,
+        0.95,
+        1.0
+      ],
       "click_offset": [
         86,
         41
-      ]
+      ],
+      "match_scale": 0.5
     },
     {
       "type": "startup_offer_dismiss",
@@ -30,7 +37,8 @@
       "click_offset": [
         515,
         415
-      ]
+      ],
+      "match_scale": 0.5
     },
     {
       "type": "dinosaur",
@@ -39,7 +47,8 @@
       "click_offset": [
         22,
         32
-      ]
+      ],
+      "match_scale": 1.0
     },
     {
       "type": "hunt_button",
@@ -48,7 +57,8 @@
       "click_offset": [
         71,
         36
-      ]
+      ],
+      "match_scale": 0.5
     },
     {
       "type": "hunt_confirm_button",
@@ -57,7 +67,8 @@
       "click_offset": [
         83,
         47
-      ]
+      ],
+      "match_scale": 0.5
     },
     {
       "type": "hunt_max_group_button",
@@ -66,12 +77,14 @@
       "click_offset": [
         86,
         46
-      ]
+      ],
+      "match_scale": 0.5
     },
     {
       "type": "duplicate_hunt_alert",
       "file": "templates/duplicate-hunt-alert.png",
-      "threshold": 0.88
+      "threshold": 0.88,
+      "match_scale": 0.5
     },
     {
       "type": "map_exit_nest_button",
@@ -80,7 +93,8 @@
       "click_offset": [
         41,
         47
-      ]
+      ],
+      "match_scale": 0.5
     },
     {
       "type": "map_center_egg",
@@ -89,7 +103,8 @@
       "click_offset": [
         48,
         35
-      ]
+      ],
+      "match_scale": 0.5
     },
     {
       "type": "hunt_team_return_button",
@@ -98,7 +113,8 @@
       "click_offset": [
         68,
         34
-      ]
+      ],
+      "match_scale": 0.5
     },
     {
       "type": "forest_recenter_button",
@@ -107,7 +123,8 @@
       "click_offset": [
         27,
         20
-      ]
+      ],
+      "match_scale": 0.5
     },
     {
       "type": "mail_close_button",
@@ -116,7 +133,8 @@
       "click_offset": [
         33,
         32
-      ]
+      ],
+      "match_scale": 0.5
     },
     {
       "type": "mailbox_button",
@@ -125,7 +143,8 @@
       "click_offset": [
         41,
         38
-      ]
+      ],
+      "match_scale": 0.5
     },
     {
       "type": "mail_collect_all_button",
@@ -134,7 +153,8 @@
       "click_offset": [
         69,
         44
-      ]
+      ],
+      "match_scale": 0.5
     },
     {
       "type": "mail_reward_collect_button",
@@ -143,7 +163,8 @@
       "click_offset": [
         94,
         51
-      ]
+      ],
+      "match_scale": 0.5
     },
     {
       "type": "hunt_dialog_close_button",
@@ -152,7 +173,8 @@
       "click_offset": [
         36,
         37
-      ]
+      ],
+      "match_scale": 0.5
     }
   ],
   "hsv_ranges": [
