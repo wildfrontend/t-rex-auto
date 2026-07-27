@@ -1,58 +1,15 @@
 # Dino Mutant Bot
 
-支援 MuMu Player 與 BlueStacks 的可擴充 Python Bot Framework。核心採用
+以 BlueStacks 5 為執行環境的可擴充 Python Bot Framework。核心採用
 `Sense → Think → Act → Verify` 回饋循環，不依賴錄製 Macro。
 
 目前完成 Auto Hunt MVP：辨識恐龍、選擇最大隊伍、發動狩獵並驗證結果。後續功能以
 Feature 方式加入，不需要修改核心狀態機。
 
-目前版本：`v0.2.9`。這一版加入固定禁點區塊，避免左側加成圖示被當成恐龍點掉：
+目前版本：`v0.2.15`。這一版補上狩獵被信箱容量擋住時的自動恢復流程，
+並保留雙視窗啟動器、可調整狩獵速度及本機 AI 狀態接口：
 
-- `config.json` 的 `planner.exclusion_zones` 可列出固定禁點區塊，落在裡面的恐龍
-  不會被選為狩獵目標；預設擋住左側 x2 加成圖示那一疊（含倒數計時與預留槽位）。
-- 區塊座標寫在 900 寬的參考像素空間，執行時只依 `frame.width` 等比縮放。遊戲 UI
-  錨定左上角、隨寬度縮放，改用畫面高度換算會在長寬比改變時整段滑掉。
-- 禁點判斷排在地圖錨點邏輯之前，有沒有辨識到中央蛋都一樣生效；只作用於恐龍
-  點擊，信箱、回中等導覽按鈕不受影響。
-
-`v0.2.8` 加入通用模擬器 ADB Port、使用者設定保存、狩獵停滯自動復原，以及
-Lite／Portable 兩種 Windows 分享版本：
-
-- Windows 不再要求選擇模擬器品牌，只需輸入模擬器顯示的 ADB Port。
-- ADB Port 保存於根目錄的 `user-settings.json`，更新 `app` 後仍會自動套回。
-- 連續 180 秒沒有狩獵進度時，會排除正常等待情況後重啟遊戲 App。
-- Lite 版首次啟動下載 Python 套件；Portable 版已附完整執行環境。
-- 收信視窗關閉後若中央蛋漏判，以地圖標記加恐龍作為完成證據直接恢復狩獵，
-  不再原地等待蛋被辨識。
-
-- 蛋漏判時觸發的回中安全錨點路徑也會啟動已到期的收信流程，收信不會被
-  無限延後。
-- 收信循環統計改在「領取獎勵」驗證成功時累計，不再因關閉後蛋漏判而漏計。
-- 按回中按鈕後若已看到離巢或信箱標記與恐龍，即使中央蛋漏判也以畫面中心
-  作為安全錨點繼續狩獵，不再停在等待錨點的階段。
-- 回中按鈕的驗證接受中央蛋、離巢按鈕或信箱任一地圖標記，避免動畫蛋漏判
-  造成整輪虛假失敗。
-- ADB 指令逾時放寬為 30 秒；主機高負載（例如同時編譯）時截圖變慢不再導致
-  Bot 直接停止。
-- 狩獵確認後會等待中央蛋或恐龍位置連續穩定，再選擇下一個目標。
-- 中央蛋模板包含肉圖示與容量列，避免相似蛋圖示或側邊按鈕誤判。
-- macOS 雙擊 `start-bot.command` 會先部署到 `.runtime-macos/app`，再從獨立副本啟動。
-- 動作後每 100–250 ms 檢查下一個 UI；成功時立即繼續，不必等滿固定秒數。
-- 驗證階段只掃描預期下一個 UI 與必要錯誤提示，不再重跑全部辨識素材。
-- 已確認的「恐龍 → 狩獵 → 確認」可沿用同一驗證畫面，省去重複截圖及完整掃描。
-- 確認狩獵回到地圖後直接沿用該畫面選下一隻，不等待隊伍回程或再次完整掃描。
-- 點恐龍未進入狩獵畫面時立即釋放等待狀態，直接尋找下一個安全目標。
-- 點恐龍失敗後 5 秒內避開附近 80px，並還原尚未成立的地圖位移預測。
-- 狩獵確認後看到離巢按鈕、中央蛋或信箱任一地圖標記即可立即繼續。
-- 地圖錨點與固定畫面中心周圍 50px 都不會被選為恐龍，避免中央蛋素材短暫漏判。
-- 地圖與信箱按鈕使用 2.5–3 秒最大轉場時間，畫面提早就緒仍立即繼續。
-- 轉場上限從第一個辨識結果開始計算，避免辨識本身耗時造成虛假失敗。
-- Capture、Detect 與 Verify 日誌會記錄實際耗時，方便繼續定位效能瓶頸。
-- `fast`、`safe` 的所有延遲與輪詢速度都集中在 `config.json` 的 `speed_profiles`。
-- macOS 使用 `caffeinate` 在 Bot 執行期間防止系統睡眠，仍允許螢幕休眠。
-- Windows 與 macOS 都使用 ADB framebuffer，不需要搶走滑鼠或鍵盤焦點。
 - 使用者只需雙擊 `start-bot.cmd`；啟動器會先檢查 Python、ADB、素材及畫面擷取。
-- Windows 啟動介面只需輸入模擬器顯示的 ADB Port，品牌與多開方式不受限制。
 - 一個視窗顯示原始即時 LOG，另一個繁體中文互動視窗提供統計、調速、重啟與診斷工具。
 - `127.0.0.1:8765` 提供結構化狀態與白名單停止接口，讓同一台電腦上的 AI 安全操作。
 - Repository 內附 `.agents/skills/control-dino-bot`，限制 AI 使用固定接口與控制命令。
@@ -68,27 +25,24 @@ Lite／Portable 兩種 Windows 分享版本：
 ## 執行架構
 
 ```text
-Windows
-  ├─ MuMu Player（目前預設）或 BlueStacks 5
-  ├─ 可攜式 Python 3.12 runtime
-  └─ PowerShell 啟動／控制器
-
-macOS（Apple Silicon）
-  ├─ BlueStacks Air
-  ├─ .runtime-macos/app 執行副本與獨立 .venv
-  └─ Finder .command 啟動／Python 安全控制器
-
-兩個平台
-  ├─ ADB framebuffer 背景擷取（預設）
-  └─ Android SDK adb 執行 tap/swipe/long press
+WSL /home/louis/github/wildfrontend/t-rex-auto
+  ├─ 原始碼、Git、離線測試
+  └─ scripts/deploy-windows.sh
+               │
+               ▼
+Windows D:\DinoMutantBot
+  ├─ python\   可攜式 Python 3.12 runtime
+  └─ app\      WSL 原始碼的執行副本
+               │
+               ├─ ADB framebuffer 背景擷取（預設）
+               └─ Android SDK adb 執行 tap/swipe/long press
 ```
 
-Windows 預設使用 MuMu Player，也可切換 BlueStacks 5；macOS 使用 BlueStacks Air。WSL 只用於 Windows 版的
-原始碼與離線測試，不執行 BlueStacks。
+BlueStacks 必須保留在 Windows，不需要也不應安裝到 WSL。
 
 ## 已完成項目
 
-- 模擬器視窗自動尋找：內建 MuMu Player 與 BlueStacks 視窗／程序 profile。
+- BlueStacks 視窗自動尋找：支援視窗標題及 `HD-Player.exe` 程序辨識。
 - MSS 指定客戶區域擷取：畫面以 BGR `numpy.ndarray` 留在 RAM。
 - ADB framebuffer 擷取備援。
 - OpenCV Template Matching（支援單一素材多尺寸比對）、HSV 輪廓偵測與 NMS。
@@ -108,11 +62,10 @@ Windows 預設使用 MuMu Player，也可切換 BlueStacks 5；macOS 使用 Blue
 - 每 10 次狩獵自動返回主頁，再從森林入口回到以中央蛋置中的採集地圖。
 - 連續多幀沒有安全恐龍時，自動重置視野，不會放寬藍線保護或無限等待。
 - 約 30 次狩獵後自動開啟信箱，依序執行「全部獲取、資源獲取、關閉」。
+- 狩獵確認因信箱已滿而反覆失敗時，自動關閉狩獵視窗、清空信箱並恢復狩獵。
 - 右上角同時派出隊伍為 `10/10` 時不再選目標，等待 5 分鐘後重試。
 - 出現「目標太強了，你會輸」時關閉狩獵視窗並等待 5 分鐘。
 - Unity 畫面持續全黑 45 秒時只重啟遊戲 App；短暫轉場不處理，且有 90 秒重啟冷卻。
-- 連續 180 秒沒有狩獵進度時重啟遊戲 App；隊伍滿額、沒有可用恐龍、過強冷卻、
-  信箱及登入流程不計入異常停滯。
 - 黑畫面不會被當成「按鈕消失」或像素變化成功，避免重複點擊與虛假狩獵計數。
 - 遊戲重啟後可優先處理重複登入、不同設備歷史記錄與啟動優惠提示。
 - 自動關閉「自動成長結果」及其後續「自動戰鬥」快捷視窗，再回到採集地圖。
@@ -160,87 +113,22 @@ Windows 預設使用 MuMu Player，也可切換 BlueStacks 5；macOS 使用 Blue
 
 ## 第一次設定
 
-### macOS：BlueStacks Air
+### 1. BlueStacks
 
-需求：
-
-- Apple Silicon Mac 與 BlueStacks Air。
-- Python 3.12 或更新版本。
-- Android SDK Platform Tools；預設會尋找
-  `~/Library/Android/sdk/platform-tools/adb`。
-- 遊戲直向畫面 `900 × 1600`。
-
-在 BlueStacks Air 設定中啟用 Android Debug Bridge，確認顯示
-`127.0.0.1:5555`，啟動 Dino Mutant 並停在主地圖或採集地圖。接著在 Finder
-雙擊根目錄的：
-
-```text
-start-bot.command
-```
-
-第一次執行會部署 `.runtime-macos/app`、建立其中的 `.venv` 並安裝相依套件。
-若 macOS 阻止開啟，可在 Finder
-對檔案按右鍵後選擇「打開」一次。
-
-要明確關閉 Bot，可直接雙擊 `stop-bot.command`。它會驗證本機 API、Port、PID
-及執行路徑，送出安全停止要求，並等待程序真正退出後才顯示完成。終端用法：
-
-```bash
-./stop-bot.command
-./stop-bot.command 8877
-```
-
-終端控制命令：
-
-```bash
-python3 scripts/control-macos.py status
-python3 scripts/control-macos.py doctor
-python3 scripts/control-macos.py diagnostics
-python3 scripts/control-macos.py snapshot
-python3 scripts/control-macos.py stop --confirm
-python3 scripts/control-macos.py restart --speed fast --confirm
-```
-
-預設狀態 Port 是 `8765`；非預設 Port 必須在每個控制命令加上
-`--status-port <Port>`。來源端控制腳本會自動連到已部署的執行副本。背景啟動記錄
-保存在 `.runtime-macos/app/logs/macos-launcher.log`，完整 Bot 日誌保存在
-`.runtime-macos/app/logs/YYYYMMDD.log`。
-
-原始碼與執行內容是分開的：修改 `src/` 或 `config.json` 不會直接改到正在運行的
-程式；下次雙擊 `start-bot.command` 時才會重新部署。`.runtime-macos` 已加入
-`.gitignore`，其中的日誌、診斷包、截圖與 Python 環境不會被部署流程刪除。
-
-macOS 只支援 `capture.backend: "adb"`；`mss` 視窗擷取仍是 Windows 專用。
-
-### Windows：MuMu Player（預設）
-
-1. 啟動 MuMu Player 與 Dino Mutant。
-2. 在 MuMu 多開器或問題診斷中確認該實例的 ADB port。
-3. 單一預設實例通常可使用 `127.0.0.1:7555`；若畫面顯示其他 port，
-   將 `config.json` 的 `adb.serial` 改成該值。
-4. 保持模擬器運行，遊戲設為直向 `900 × 1600`。
-
-雙擊 `start-bot.cmd` 後，輸入模擬器設定／診斷頁面顯示的 ADB Port；例如輸入
-`16384` 會自動組成 `127.0.0.1:16384`。品牌不影響 ADB 背景操作。選擇結果會保存
-到根目錄的 `user-settings.json`，下次啟動直接按 Enter 即可沿用；更新 `app`
-內容時也會自動套回。
+1. 啟動 BlueStacks 5。
+2. 開啟「設定 → 進階」。
+3. 啟用「Android 調試橋（ADB）」。
+4. 確認畫面顯示 `127.0.0.1:5555`。
+5. 保持 BlueStacks 視窗開啟且不要最小化。
 
 專案預設使用：
 
 ```text
 C:\Users\Louis\AppData\Local\Android\Sdk\platform-tools\adb.exe
-127.0.0.1:7555
+127.0.0.1:5555
 ```
 
-MuMu 舊版內建 ADB 也會自動尋找
-`C:\Program Files (x86)\Nemu\vmonitor\bin\adb_server.exe`。官方操作說明見
-[MuMu Player 開發者必備手冊](https://www.mumuplayer.com/tw/help/win/developers-essentials-manual.html)。
-
-MuMu、BlueStacks 或其他模擬器都使用相同流程，多開實例一律以模擬器顯示的 ADB
-Port 為準。`emulator` profile 仍可供手動設定預設值，但使用互動啟動器時不必選擇
-品牌。
-
-### Windows runtime
+### 2. Windows runtime
 
 專案使用不需管理員權限的可攜式 Python 3.12。若需要重建：
 
@@ -249,15 +137,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -File scripts\install-windows-runtime.ps1
 ```
 
-發佈包分為兩種：
-
-- `Lite`：內附 Bot 與官方 Android Platform-Tools；首次啟動需連線下載 Python 與
-  OpenCV 等套件。
-- `Portable`：另外內附完整 Windows Python 與所有相依套件；解壓後可直接執行。
-
-兩種版本都不依賴使用者預先安裝 ADB，只需輸入模擬器顯示的 ADB Port。
-
-### 從 WSL 部署
+### 3. 從 WSL 部署
 
 每次修改程式碼或 detector assets 後執行。第二個參數可把既有 Python runtime 一併
 封裝成可直接分享的完整資料夾：
@@ -267,7 +147,7 @@ bash scripts/deploy-windows.sh
 bash scripts/deploy-windows.sh /mnt/d/DinoMutantBot-release /mnt/d/DinoMutantBot/python
 ```
 
-### Windows 環境檢查
+### 4. 環境檢查
 
 ```bash
 powershell.exe -NoProfile -ExecutionPolicy Bypass \
@@ -367,7 +247,7 @@ D:\DinoMutantBot\start-bot.cmd safe
 D:\DinoMutantBot\start-bot.cmd fast 8877
 ```
 
-`fast` 使用 300/900/1200 ms 的選恐龍、狩獵、確認延遲；`safe` 則使用
+`fast` 使用 500/1500/2000 ms 的選恐龍、狩獵、確認延遲；`safe` 則使用
 1500/5000/3000 ms。
 
 完整日誌保存在 `app\logs\YYYYMMDD.log`。
@@ -490,51 +370,34 @@ D:\DinoMutantBot\python\python.exe `
 
 ## 設定重點
 
-- `emulator`: `mumu`、`bluestacks` 或 `custom`；提供 ADB、視窗標題與程序預設。
-- `adb.serial`: 模擬器實例的實際 ADB 位址；MuMu 多開時需填該實例顯示的 port。
-- `capture.backend`: `adb` 不搶 focus；`mss` 較快但會把模擬器拉到前景。
+- `capture.backend`: `adb` 不搶 focus；`mss` 較快但會把 BlueStacks 拉到前景。
 - `planner.stalled_recenter_frames`: 連續多少幀沒有安全目標後重置視野，預設 8。
-- `planner.map_settle_frames`、`map_settle_tolerance_px`、`map_settle_max_frames`：狩獵確認後，中央蛋或恐龍位置需連續穩定的幀數、允許位移，以及最長等待幀數；預設為 `2`、`20`、`12`。
 - `capture.viewport`: Android 畫面在 BlueStacks client 內的 `[x,y,width,height]`；
   若含有 BlueStacks 側欄，應設定此值以確保 ADB 座標精準。
-- `click_delay`: 一般動作等待下一個 UI 的最長毫秒數，不是固定休眠。
-- `transition_poll_interval`: 等待轉場期間重新擷取畫面的間隔，預設 `250` ms。
-- `post_action_delays`: 各按鈕等待下一個 UI 的最長時間；畫面提早就緒便立即繼續。
-- `speed_profiles`: `safe`、`fast` 的點擊、流程、空轉與輪詢設定唯一來源。
+- `click_delay`: 點擊到驗證畫面的等待毫秒數。
+- `post_action_delays`: 可針對確認按鈕等動畫較長的操作設定額外等待時間。
 - `--speed safe|fast`: 從終端切換保守或快速延遲預設。
 - `--status-port`: 本機狀態與白名單控制 API 連接埠；`0` 代表停用。
 - `--dinosaur-delay-ms`、`--hunt-button-delay-ms`、`--hunt-confirm-delay-ms`、
-  `--idle-delay-ms`、`--poll-interval-ms`: 以毫秒個別覆寫狩獵流程速度。
+  `--idle-delay-ms`: 以毫秒個別覆寫狩獵流程速度。
 - `assets/manifest.json` 的 template `scales`: 同一辨識素材要嘗試的縮放倍率。
 - `verify_retry`: 初次失敗後最多重試次數。
 - `max_actions`: `0` 代表不限，用於 Debug 時建議先設為 `1`。
 - `planner.recenter_every`: 完成多少次狩獵後重返主頁並重新置中，預設 `10`。
 - `planner.own_path_radius`: 藍色虛線周圍的禁點半徑，預設 `90` px。
-- `planner.anchor_exclusion_radius`: 中央蛋周圍不選恐龍的半徑，預設 `50` px。
 - `planner.mail_after_hunts`: 累積多少次狩獵後收取信箱，預設 `30`。
 - `planner.capacity_wait_seconds`: 同時派出隊伍達 `10/10` 時的等待秒數，預設
   `300` 秒。
-- `post_action_delays.no_available_dinosaurs`: 關閉「沒有可用恐龍」提示後等待
-  畫面改變的最長時間，預設 `300` ms。
-- `post_action_delays.target_too_strong`: 關閉過強目標視窗的轉場上限，預設
-  `3000` ms。
-- `post_action_delays.map_exit_nest_button`、`forest_recenter_button` 與信箱流程：
-  地圖／信箱動畫的最大轉場時間，預設 `2500–3000` ms。
-- `planner.action_cooldowns_ms.target_too_strong`: 過強目標關閉並驗證成功後的
-  可中斷冷卻，預設 `300000` ms（5 分鐘）。
+- `post_action_delays.target_too_strong`: 關閉過強目標後的等待時間，預設
+  `300000` ms（5 分鐘）。
 - `recovery.black_screen_timeout_seconds`: 持續黑畫面多久後重啟遊戲，預設 `45` 秒。
-- `recovery.no_hunt_progress_timeout_seconds`: 找不到任何狩獵進度多久後重啟遊戲 App，
-  預設 `180` 秒；設為 `0` 可停用。
 - `recovery.restart_cooldown_seconds`: 兩次遊戲重啟的最短間隔，預設 `90` 秒。
 - `workflow.max_cycles`: 完整「狩獵、信箱收取、關閉」流程次數；`0` 代表持續執行。
 
-Bot 執行期間可在中文控制介面按 `M` 更換 ADB Port。新設定會先接受完整環境檢查；
-通過後才重啟 Bot，失敗則自動還原設定並讓目前 Bot 繼續執行。
-
 ## 背景執行
 
-預設使用 ADB framebuffer，因此 Bot 不使用滑鼠，也不需要模擬器是前景視窗；
-可以讓其他視窗蓋住模擬器並正常使用電腦。Windows 可以鎖定或關閉螢幕，
+預設使用 ADB framebuffer，因此 Bot 不使用滑鼠，也不需要 BlueStacks 是前景視窗；
+可以讓其他視窗蓋住 BlueStacks並正常使用電腦。Windows 可以鎖定或關閉螢幕，
 但不能進入睡眠或休眠，否則 Python、BlueStacks 與 ADB 都會暫停。
 
 ## 測試

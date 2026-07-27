@@ -96,6 +96,7 @@ class PlannerConfig:
     dinosaur_failure_cooldown_ms: int = 5_000
     dinosaur_failure_radius: float = 80.0
     mail_after_hunts: int = 30
+    mail_failure_limit: int = 3
     capacity_wait_seconds: float = 300.0
     ring_width: float = 150.0
     own_path_angle_degrees: float = 7.0
@@ -105,6 +106,8 @@ class PlannerConfig:
     map_settle_max_frames: int = 12
     bottom_exclusion_px: int = 180
     exclusion_zones: tuple[ExclusionZone, ...] = ()
+    retry_exhausted_cooldown_ms: int = 60_000
+    suppression_radius: float = 60.0
     action_cooldowns_ms: dict[str, int] = field(default_factory=dict)
 
 
@@ -129,11 +132,25 @@ class WorkflowConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class EventLogConfig:
+    """Machine-readable event stream settings.
+
+    On by default: the text log alone could not explain any of the failures it
+    recorded, and a stream nobody switched on is a stream nobody has when it
+    matters.
+    """
+
+    enabled: bool = True
+    max_bytes: int = 16 * 1024 * 1024
+
+
+@dataclass(frozen=True, slots=True)
 class RecoveryConfig:
     enabled: bool = True
     black_screen_timeout_seconds: float = 45.0
     black_mean_threshold: float = 2.0
     no_hunt_progress_timeout_seconds: float = 180.0
+    hunt_progress_suspend_budget_seconds: float = 120.0
     restart_cooldown_seconds: float = 90.0
     launch_wait_seconds: float = 15.0
     package: str = "com.mondayoff.dinomutant"
@@ -153,6 +170,9 @@ class AppConfig:
     verify_retry: int = 3
     save_debug_image: bool = False
     idle_delay: int = 500
+    # The text log is read back by the control window and the diagnostic
+    # bundle, so its size is a latency budget, not just disk.
+    log_max_bytes: int = 32 * 1024 * 1024
     transition_poll_interval: int = 250
     speed_profiles: dict[str, dict[str, int]] = field(
         default_factory=_default_speed_profiles
@@ -166,6 +186,7 @@ class AppConfig:
     training: TrainingConfig = field(default_factory=TrainingConfig)
     workflow: WorkflowConfig = field(default_factory=WorkflowConfig)
     recovery: RecoveryConfig = field(default_factory=RecoveryConfig)
+    event_log: EventLogConfig = field(default_factory=EventLogConfig)
 
     @property
     def logs_dir(self) -> Path:
@@ -271,6 +292,7 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
     training_data = _section(data, "training")
     workflow_data = _section(data, "workflow")
     recovery_data = _section(data, "recovery")
+    event_log_data = _section(data, "event_log")
     speed_profiles_data = _section(data, "speed_profiles")
 
     speed_profiles = _default_speed_profiles()
@@ -328,6 +350,7 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
         verify_retry=int(data.get("verify_retry", 3)),
         save_debug_image=bool(data.get("save_debug_image", False)),
         idle_delay=int(data.get("idle_delay", 500)),
+        log_max_bytes=int(data.get("log_max_bytes", 32 * 1024 * 1024)),
         transition_poll_interval=int(data.get("transition_poll_interval", 250)),
         speed_profiles=speed_profiles,
         max_actions=int(data.get("max_actions", 0)),
@@ -378,6 +401,7 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
                 planner_data.get("dinosaur_failure_radius", 80)
             ),
             mail_after_hunts=int(planner_data.get("mail_after_hunts", 30)),
+            mail_failure_limit=int(planner_data.get("mail_failure_limit", 3)),
             capacity_wait_seconds=float(
                 planner_data.get("capacity_wait_seconds", 300)
             ),
@@ -397,6 +421,10 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
             ),
             bottom_exclusion_px=int(planner_data.get("bottom_exclusion_px", 180)),
             exclusion_zones=_exclusion_zones(planner_data),
+            retry_exhausted_cooldown_ms=int(
+                planner_data.get("retry_exhausted_cooldown_ms", 60_000)
+            ),
+            suppression_radius=float(planner_data.get("suppression_radius", 60)),
             action_cooldowns_ms={
                 str(target_type): int(delay)
                 for target_type, delay in _section(
@@ -434,6 +462,9 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
             no_hunt_progress_timeout_seconds=float(
                 recovery_data.get("no_hunt_progress_timeout_seconds", 180)
             ),
+            hunt_progress_suspend_budget_seconds=float(
+                recovery_data.get("hunt_progress_suspend_budget_seconds", 120)
+            ),
             restart_cooldown_seconds=float(
                 recovery_data.get("restart_cooldown_seconds", 90)
             ),
@@ -448,6 +479,10 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
                     "activity", "com.unity3d.player.UnityPlayerActivity"
                 )
             ),
+        ),
+        event_log=EventLogConfig(
+            enabled=bool(event_log_data.get("enabled", True)),
+            max_bytes=int(event_log_data.get("max_bytes", 16 * 1024 * 1024)),
         ),
     )
     _validate(config)
@@ -520,6 +555,8 @@ def _validate(config: AppConfig) -> None:
         raise ConfigError("planner.dinosaur_failure_radius cannot be negative")
     if config.planner.mail_after_hunts <= 0:
         raise ConfigError("planner.mail_after_hunts must be greater than zero")
+    if config.planner.mail_failure_limit <= 0:
+        raise ConfigError("planner.mail_failure_limit must be greater than zero")
     if config.planner.capacity_wait_seconds < 0:
         raise ConfigError("planner.capacity_wait_seconds cannot be negative")
     if any(delay < 0 for delay in config.planner.action_cooldowns_ms.values()):
@@ -540,6 +577,16 @@ def _validate(config: AppConfig) -> None:
         )
     if config.planner.bottom_exclusion_px < 0:
         raise ConfigError("planner.bottom_exclusion_px cannot be negative")
+    if config.planner.retry_exhausted_cooldown_ms < 0:
+        raise ConfigError("planner.retry_exhausted_cooldown_ms cannot be negative")
+    if config.planner.suppression_radius < 0:
+        raise ConfigError("planner.suppression_radius cannot be negative")
+    if config.recovery.hunt_progress_suspend_budget_seconds < 0:
+        raise ConfigError(
+            "recovery.hunt_progress_suspend_budget_seconds cannot be negative"
+        )
+    if config.event_log.max_bytes < 0:
+        raise ConfigError("event_log.max_bytes cannot be negative")
     if not 0 <= config.detector.default_threshold <= 1:
         raise ConfigError("detector.default_threshold must be between zero and one")
     if not 0 <= config.detector.nms_iou <= 1:

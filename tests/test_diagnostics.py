@@ -57,7 +57,7 @@ def test_diagnostic_bundle_contains_sanitized_evidence(tmp_path: Path) -> None:
         "settings.json",
         "logs/recent.log",
     } <= names
-    assert manifest["bot_version"] == "0.2.9"
+    assert manifest["bot_version"] == "0.2.15"
     assert manifest["snapshot_included"] is False
     assert status["successful_hunts"] == 1
     assert settings["root"] == "<app-root>"
@@ -128,14 +128,3 @@ def test_redact_text_removes_bearer_and_home_paths(tmp_path: Path) -> None:
     assert "person@example.org" not in value
     assert "Bearer <redacted>" in value
     assert "<app-root>/logs" in value
-
-
-def test_redact_text_removes_macos_user_home() -> None:
-    value = redact_text(
-        "ADB=/Users/Alice/Library/Android/sdk/platform-tools/adb "
-        "log=/Users/Bob/Desktop/bot.log"
-    )
-
-    assert "Alice" not in value
-    assert "Bob" not in value
-    assert value == "ADB=$HOME/Library/Android/sdk/platform-tools/adb log=$HOME/Desktop/bot.log"

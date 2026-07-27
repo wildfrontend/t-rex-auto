@@ -10,6 +10,15 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Protocol
 
+from .events import (
+    EventLog,
+    NullEventLog,
+    action_payload,
+    detection_payload,
+    frame_payload,
+    target_payload,
+    verification_payload,
+)
 from .interfaces import (
     ActionDriver,
     CaptureProvider,
@@ -63,6 +72,7 @@ class BotContext:
     cycle_complete_targets: tuple[str, ...] = ()
     runtime_recovery: RuntimeRecovery | None = None
     hunt_progress_recovery: HuntProgressRecovery | None = None
+    event_log: EventLog = field(default_factory=NullEventLog, repr=False)
     state: BotState = BotState.IDLE
     stop_requested: bool = False
     stop_event: threading.Event = field(default_factory=threading.Event, repr=False)
@@ -83,6 +93,11 @@ class BotContext:
     verification_timeout_ms: int = 0
     verification_deadline: float | None = None
     reuse_verified_detections: bool = False
+    inert_taps: int = 0
+    inert_target: tuple[str, int, int] | None = None
+    escalate_to_back: bool = False
+    inert_tap_threshold: int = 2
+    inert_pixel_change: float = 0.001
 
 
 class StateHandler(Protocol):
@@ -121,6 +136,10 @@ class CaptureState:
         capture_ms = round((time.perf_counter() - started) * 1000)
         context.observer.on_frame(frame)
         context.frame = frame
+        start_cycle = getattr(context.event_log, "start_cycle", None)
+        if callable(start_cycle):
+            start_cycle()
+        context.event_log.emit("capture", ms=capture_ms, frame=frame_payload(frame))
         context.logger.debug(
             "Capture | %dx%d | #%d | %dms",
             frame.width,
@@ -152,11 +171,36 @@ class DetectState:
         for item in context.detections:
             counts[item.type] = counts.get(item.type, 0) + 1
         summary = ", ".join(f"{count} {name}" for name, count in sorted(counts.items()))
+        context.event_log.emit(
+            "detect",
+            ms=detect_ms,
+            n=len(context.detections),
+            det=detection_payload(context.detections),
+        )
         context.logger.info(
             "Detect | %s | %dms",
             summary or "no targets",
             detect_ms,
         )
+        # Layout detectors decide from a handful of ratios that never reach the
+        # log, so a misfire can only be diagnosed by reverse-engineering the
+        # confidence value afterwards. Emit the ratios they already record.
+        for item in context.detections:
+            if not item.metadata:
+                continue
+            values = ", ".join(
+                f"{key}={value:.3f}" if isinstance(value, float) else f"{key}={value}"
+                for key, value in sorted(item.metadata.items())
+                if key != "detector"
+            )
+            if values:
+                context.logger.debug(
+                    "Detect | %s | %s | confidence=%.3f | %s",
+                    item.type,
+                    item.metadata.get("detector", "unknown"),
+                    item.confidence,
+                    values,
+                )
         return BotState.PLANNING
 
 
@@ -170,6 +214,24 @@ class PlanningState:
             next_ready_delay = getattr(context.planner, "next_ready_delay_ms", None)
             if callable(next_ready_delay):
                 cooldown_ms = int(next_ready_delay())
+        rejections: dict[str, int] = {}
+        last_rejections = getattr(context.planner, "last_rejections", None)
+        if callable(last_rejections):
+            rejections = last_rejections()
+        # Which branch of the planner ran is what separates a cycle spent
+        # waiting out a capacity cooldown from one spent settling the map. Both
+        # plan nothing, and only one of them is worth tuning.
+        stage = ""
+        last_stage = getattr(context.planner, "last_stage", None)
+        if callable(last_stage):
+            stage = str(last_stage())
+        context.event_log.emit(
+            "plan",
+            stage=stage or None,
+            target=target_payload(context.target),
+            reject=rejections or None,
+            cooldown_ms=cooldown_ms or None,
+        )
         if (
             context.hunt_progress_recovery is not None
             and context.hunt_progress_recovery.observe(
@@ -181,7 +243,16 @@ class PlanningState:
             _reset_after_runtime_recovery(context)
             return BotState.IDLE
         if context.target is None:
-            context.logger.debug("Planning | no actionable target")
+            if rejections:
+                context.logger.debug(
+                    "Planning | no actionable target | %s",
+                    " ".join(
+                        f"{name}={count}"
+                        for name, count in sorted(rejections.items())
+                    ),
+                )
+            else:
+                context.logger.debug("Planning | no actionable target")
             delay_ms = context.idle_delay_ms
             if cooldown_ms > delay_ms:
                 context.logger.info(
@@ -196,6 +267,24 @@ class PlanningState:
             context.target.type,
             ActionKind.TAP,
         )
+        target_key = (context.target.type, context.target.x, context.target.y)
+        if context.inert_target != target_key:
+            # The inert run belongs to one coordinate; carrying it across would
+            # send the back key on the first attempt at an unrelated target.
+            context.inert_taps = 0
+            context.inert_target = None
+            context.escalate_to_back = False
+        if context.escalate_to_back and action_kind != ActionKind.BACK:
+            # Repeated taps moved nothing at all, so the coordinate is inert -
+            # either a phantom detection or an overlay that ignores taps. Try
+            # the hardware back key once before giving up on this target.
+            context.escalate_to_back = False
+            context.logger.warning(
+                "Planning | %s ignored %d taps; escalating to back",
+                context.target.type,
+                context.inert_taps,
+            )
+            action_kind = ActionKind.BACK
         context.action = (
             ActionCommand.back()
             if action_kind == ActionKind.BACK
@@ -235,6 +324,12 @@ class ActionState:
                 context.action.y,
                 context.attempt,
             )
+        context.event_log.emit(
+            "action",
+            act=action_payload(context.action),
+            target=target_payload(context.target),
+            attempt=context.attempt,
+        )
         context.action_driver.execute(context.action, context.frame)
         context.action_count += 1
         delay_ms = context.post_action_delays_ms.get(
@@ -316,6 +411,16 @@ class VerifyState:
             after_detections,
         )
         context.last_result = result
+        context.event_log.emit(
+            "verify",
+            target=target_payload(context.target),
+            attempt=context.attempt,
+            result=verification_payload(result),
+            n=len(after_detections),
+            det=detection_payload(after_detections),
+            capture_ms=capture_ms,
+            detect_ms=detect_ms,
+        )
         explicit_failure = result.reason.startswith("failure indicator detected:")
         deadline = context.verification_deadline
         if (
@@ -356,10 +461,41 @@ class VerifyState:
             attempt=context.attempt,
         )
         context.observer.on_action_complete(record, context.before_frame, after)
+        target_key = (context.target.type, context.target.x, context.target.y)
+        if (
+            not result.success
+            and result.pixel_change is not None
+            and result.pixel_change < context.inert_pixel_change
+        ):
+            if context.inert_target != target_key:
+                context.inert_taps = 0
+                context.inert_target = target_key
+            context.inert_taps += 1
+            context.escalate_to_back = (
+                context.inert_taps >= context.inert_tap_threshold
+            )
+        else:
+            context.inert_taps = 0
+            context.inert_target = None
+            context.escalate_to_back = False
         if result.success:
             on_action_success = getattr(context.planner, "on_action_success", None)
             if callable(on_action_success):
                 on_action_success(context.target.type)
+            # A confirmed hunt is the only thing the stall watchdog accepts as
+            # progress; everything else on screen can stay unchanged for a
+            # quarter of an hour while the bot produces nothing. It also ends
+            # the startup phase for detectors that only apply during launch.
+            if context.target.type == getattr(
+                context.planner, "completion_type", None
+            ):
+                for component in (
+                    context.hunt_progress_recovery,
+                    context.detector,
+                ):
+                    on_hunt_completed = getattr(component, "on_hunt_completed", None)
+                    if callable(on_hunt_completed):
+                        on_hunt_completed()
             context.logger.info("Verify | Success | %s", result.reason)
             if context.target.type in context.cycle_complete_targets:
                 context.cycle_count += 1
@@ -394,6 +530,37 @@ class VerifyState:
         if context.attempt <= context.verify_retries:
             return BotState.RECOVER
         context.logger.error("Verify | retry limit exhausted after %d attempts", context.attempt)
+        context.event_log.emit(
+            "retry_exhausted",
+            target=target_payload(context.target),
+            attempts=context.attempt,
+        )
+        on_retry_exhausted = getattr(context.planner, "on_retry_exhausted", None)
+        if callable(on_retry_exhausted):
+            on_retry_exhausted(context.target)
+            context.logger.warning(
+                "Planning | suppressing %s at (%d,%d) after exhausted retries",
+                context.target.type,
+                context.target.x,
+                context.target.y,
+            )
+        on_retry_exhausted_context = getattr(
+            context.planner,
+            "on_retry_exhausted_context",
+            None,
+        )
+        if callable(on_retry_exhausted_context) and on_retry_exhausted_context(
+            context.target,
+            context.after_detections,
+        ):
+            context.logger.warning(
+                "Recovery | hunt confirmation was blocked; "
+                "closing the hunt dialog and collecting mailbox rewards"
+            )
+            context.event_log.emit(
+                "mailbox_full_recovery",
+                target=target_payload(context.target),
+            )
         context.attempt = 0
         context.attempt_target_type = None
         return BotState.IDLE
@@ -416,8 +583,13 @@ class StoppedState:
 
 def _reset_after_runtime_recovery(context: BotContext) -> None:
     context.logger.info("Recovery | clearing transient workflow state")
+    context.event_log.emit("recovery", action="reset_workflow")
     if context.hunt_progress_recovery is not None:
         context.hunt_progress_recovery.reset()
+    # The app is launching again, so startup-only modals are back in scope.
+    on_app_restart = getattr(context.detector, "on_app_restart", None)
+    if callable(on_app_restart):
+        on_app_restart()
     reset_workflow = getattr(context.planner, "reset_workflow", None)
     if callable(reset_workflow):
         reset_workflow()
@@ -435,6 +607,9 @@ def _reset_after_runtime_recovery(context: BotContext) -> None:
     context.verification_timeout_ms = 0
     context.verification_deadline = None
     context.reuse_verified_detections = False
+    context.inert_taps = 0
+    context.inert_target = None
+    context.escalate_to_back = False
 
 
 def _runtime_recovery_is_blocking(runtime_recovery: RuntimeRecovery) -> bool:
@@ -471,6 +646,7 @@ class BotEngine:
 
     def run(self) -> None:
         self.context.logger.info("Bot started | Sense -> Think -> Act")
+        self.context.event_log.emit("session", action="start")
         try:
             while self.context.state != BotState.STOPPED:
                 self.step()
@@ -487,6 +663,13 @@ class BotEngine:
     def close(self) -> None:
         self.context.capture_provider.close()
         self.context.observer.close()
+        self.context.event_log.emit(
+            "session",
+            action="stop",
+            actions=self.context.action_count,
+            cycles=self.context.cycle_count,
+        )
+        self.context.event_log.close()
         self.context.logger.info(
             "Bot stopped | actions=%d | cycles=%d",
             self.context.action_count,

@@ -154,6 +154,10 @@ class VerificationResult:
     success: bool
     reason: str
     confidence: float = 0.0
+    # Mean absolute difference over the target region, 0..1. ``None`` when the
+    # verdict was reached without comparing pixels. A run of exact zeros means
+    # the tap landed on something inert, which the engine escalates away from.
+    pixel_change: float | None = None
 
 
 @dataclass(frozen=True, slots=True)

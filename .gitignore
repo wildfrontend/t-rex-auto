@@ -1,16 +1,14 @@
 .venv/
 .venv-win/
-.runtime-macos/
 .deps/
+.testdeps/
 __pycache__/
 *.py[cod]
 .pytest_cache/
 .ruff_cache/
-*.egg-info/
 logs/*.log
 debug/*
 capture/*
 !logs/.gitkeep
 !debug/.gitkeep
 !capture/.gitkeep
-.debug

@@ -1,163 +1,217 @@
 {
-  "emulator": "custom",
-  "mode": "runtime",
-  "debug": false,
-  "capture_fps": 10,
-  "click_delay": 1500,
-  "transition_poll_interval": 250,
-  "speed_profiles": {
-    "fast": {
-      "click_delay_ms": 300,
-      "dinosaur_delay_ms": 300,
-      "hunt_button_delay_ms": 900,
-      "hunt_confirm_delay_ms": 1200,
-      "idle_delay_ms": 250,
-      "poll_interval_ms": 100
-    },
-    "safe": {
-      "click_delay_ms": 1500,
-      "dinosaur_delay_ms": 1500,
-      "hunt_button_delay_ms": 5000,
-      "hunt_confirm_delay_ms": 3000,
-      "idle_delay_ms": 500,
-      "poll_interval_ms": 250
-    }
-  },
-  "post_action_delays": {
-    "duplicate_login_close_button": 5000,
-    "device_history_confirm_button": 5000,
-    "startup_offer_dismiss": 1500,
-    "startup_growth_result_back": 3000,
-    "startup_auto_battle_close": 3000,
-    "hunt_button": 5000,
-    "hunt_confirm_button": 3000,
-    "map_center_egg": 5000,
-    "map_exit_nest_button": 2500,
-    "forest_recenter_button": 3000,
-    "mailbox_button": 2500,
-    "mail_collect_all_button": 2500,
-    "mail_reward_collect_button": 2500,
-    "mail_close_button": 2500,
-    "no_available_dinosaurs": 300,
-    "target_too_strong": 3000
-  },
-  "target_actions": {
-    "no_available_dinosaurs": "tap",
-    "target_too_strong": "tap"
-  },
-  "verify_retry": 3,
-  "save_debug_image": false,
-  "idle_delay": 500,
-  "max_actions": 0,
-  "capture": {
-    "backend": "adb",
-    "viewport": "auto",
-    "chrome_insets": [0, 40, 41, 0]
-  },
-  "adb": {
-    "executable": null,
-    "connect_on_start": true,
-    "timeout": 30.0
-  },
-  "detector": {
-    "manifest": "assets/manifest.json",
-    "default_threshold": 0.85,
-    "nms_iou": 0.3
-  },
-  "planner": {
-    "target_types": [
-      "duplicate_login_close_button",
-      "device_history_confirm_button",
-      "startup_offer_dismiss",
-      "startup_growth_result_back",
-      "startup_auto_battle_close",
-      "hunt_team_return_button",
-      "no_available_dinosaurs",
-      "target_too_strong",
-      "hunt_capacity_full",
-      "forest_recenter_button",
-      "map_exit_nest_button",
-      "map_center_egg",
-      "hunt_max_group_button",
-      "hunt_confirm_button",
-      "hunt_button",
-      "mail_reward_collect_button",
-      "mail_collect_all_button",
-      "mail_close_button",
-      "mailbox_button",
-      "dinosaur"
-    ],
-    "strategy": "nearest_center",
-    "blocking_types": ["duplicate_hunt_alert"],
-    "deduplicate_types": ["dinosaur"],
-    "dedup_radius": 25,
-    "history_limit": 500,
-    "recenter_every": 10,
-    "own_path_radius": 90,
-    "anchor_exclusion_radius": 50,
-    "dinosaur_failure_cooldown_ms": 5000,
-    "dinosaur_failure_radius": 80,
-    "mail_after_hunts": 30,
-    "capacity_wait_seconds": 300,
-    "ring_width": 150,
-    "own_path_angle_degrees": 7,
-    "stalled_recenter_frames": 8,
-    "map_settle_frames": 2,
-    "map_settle_tolerance_px": 20,
-    "map_settle_max_frames": 12,
-    "bottom_exclusion_px": 180,
-    "exclusion_zones": [
-      {
-        "name": "left_buff_stack",
-        "reference_width": 900,
-        "x": [0, 115],
-        "y": [445, 800]
-      }
-    ],
-    "action_cooldowns_ms": {
-      "target_too_strong": 300000
-    }
-  },
-  "verify": {
-    "max_distance": 35,
-    "pixel_change_threshold": 0.08,
-    "failure_types": ["duplicate_hunt_alert", "hunt_team_return_button"],
-    "success_transitions": {
-      "dinosaur": ["hunt_button"],
-      "hunt_button": ["hunt_confirm_button"],
-      "hunt_confirm_button": [
-        "map_exit_nest_button",
-        "map_center_egg",
-        "mailbox_button"
-      ],
-      "map_exit_nest_button": ["forest_recenter_button"],
-      "forest_recenter_button": [
-        "map_center_egg",
-        "map_exit_nest_button",
-        "mailbox_button"
-      ],
-      "mailbox_button": ["mail_collect_all_button"],
-      "mail_collect_all_button": ["mail_reward_collect_button"],
-      "mail_reward_collect_button": ["mail_close_button"],
-      "mail_close_button": ["map_center_egg"]
-    }
-  },
-  "training": {
-    "fps": 2,
-    "max_images": 500
-  },
-  "workflow": {
-    "max_cycles": 0,
-    "complete_on": ["mail_reward_collect_button"]
-  },
-  "recovery": {
-    "enabled": true,
-    "black_screen_timeout_seconds": 45,
-    "black_mean_threshold": 2,
-    "no_hunt_progress_timeout_seconds": 180,
-    "restart_cooldown_seconds": 90,
-    "launch_wait_seconds": 15,
-    "package": "com.mondayoff.dinomutant",
-    "activity": "com.unity3d.player.UnityPlayerActivity"
-  }
+    "emulator":  "custom",
+    "mode":  "runtime",
+    "debug":  false,
+    "capture_fps":  10,
+    "click_delay":  1500,
+    "transition_poll_interval":  250,
+    "speed_profiles":  {
+                           "fast":  {
+                                        "click_delay_ms":  300,
+                                        "dinosaur_delay_ms":  300,
+                                        "hunt_button_delay_ms":  900,
+                                        "hunt_confirm_delay_ms":  1200,
+                                        "idle_delay_ms":  250,
+                                        "poll_interval_ms":  100
+                                    },
+                           "safe":  {
+                                        "click_delay_ms":  1500,
+                                        "dinosaur_delay_ms":  1500,
+                                        "hunt_button_delay_ms":  5000,
+                                        "hunt_confirm_delay_ms":  3000,
+                                        "idle_delay_ms":  500,
+                                        "poll_interval_ms":  250
+                                    }
+                       },
+    "post_action_delays":  {
+                               "duplicate_login_close_button":  5000,
+                               "device_history_confirm_button":  5000,
+                               "startup_offer_dismiss":  1500,
+                               "startup_growth_result_back":  3000,
+                               "startup_auto_battle_close":  3000,
+                               "hunt_button":  5000,
+                               "hunt_confirm_button":  3000,
+                               "hunt_dialog_close_button":  2500,
+                               "map_center_egg":  5000,
+                               "map_exit_nest_button":  4000,
+                               "forest_recenter_button":  3000,
+                               "mailbox_button":  2500,
+                               "mail_collect_all_button":  2500,
+                               "mail_reward_collect_button":  2500,
+                               "mail_close_button":  2500,
+                               "no_available_dinosaurs":  300,
+                               "target_too_strong":  3000
+                           },
+    "target_actions":  {
+                           "no_available_dinosaurs":  "tap",
+                           "target_too_strong":  "tap"
+                       },
+    "verify_retry":  3,
+    "save_debug_image":  false,
+    "idle_delay":  500,
+    "log_max_bytes":  33554432,
+    "max_actions":  0,
+    "capture":  {
+                    "backend":  "adb",
+                    "viewport":  "auto",
+                    "chrome_insets":  [
+                                          0,
+                                          40,
+                                          41,
+                                          0
+                                      ]
+                },
+    "adb":  {
+                "executable":  null,
+                "connect_on_start":  true,
+                "timeout":  30.0,
+                "serial":  "127.0.0.1:16384"
+            },
+    "detector":  {
+                     "manifest":  "assets/manifest.json",
+                     "default_threshold":  0.85,
+                     "nms_iou":  0.3
+                 },
+    "planner":  {
+                    "target_types":  [
+                                         "duplicate_login_close_button",
+                                         "device_history_confirm_button",
+                                         "startup_offer_dismiss",
+                                         "startup_growth_result_back",
+                                         "startup_auto_battle_close",
+                                         "hunt_team_return_button",
+                                         "no_available_dinosaurs",
+                                         "target_too_strong",
+                                         "hunt_capacity_full",
+                                         "forest_recenter_button",
+                                         "map_exit_nest_button",
+                                         "map_center_egg",
+                                         "hunt_max_group_button",
+                                         "hunt_confirm_button",
+                                         "hunt_dialog_close_button",
+                                         "hunt_button",
+                                         "mail_reward_collect_button",
+                                         "mail_collect_all_button",
+                                         "mail_close_button",
+                                         "mailbox_button",
+                                         "dinosaur"
+                                     ],
+                    "strategy":  "nearest_center",
+                    "blocking_types":  [
+                                           "duplicate_hunt_alert"
+                                       ],
+                    "deduplicate_types":  [
+                                              "dinosaur"
+                                          ],
+                    "dedup_radius":  25,
+                    "history_limit":  500,
+                    "recenter_every":  10,
+                    "own_path_radius":  90,
+                    "anchor_exclusion_radius":  50,
+                    "dinosaur_failure_cooldown_ms":  5000,
+                    "dinosaur_failure_radius":  80,
+                    "mail_after_hunts":  30,
+                    "mail_failure_limit":  3,
+                    "capacity_wait_seconds":  300,
+                    "ring_width":  150,
+                    "own_path_angle_degrees":  7,
+                    "stalled_recenter_frames":  4,
+                    "map_settle_frames":  2,
+                    "map_settle_tolerance_px":  20,
+                    "map_settle_max_frames":  12,
+                    "bottom_exclusion_px":  180,
+                    "exclusion_zones":  [
+                                            {
+                                                "name":  "left_buff_stack",
+                                                "reference_width":  900,
+                                                "x":  [
+                                                          0,
+                                                          115
+                                                      ],
+                                                "y":  [
+                                                          445,
+                                                          800
+                                                      ]
+                                            }
+                                        ],
+                    "retry_exhausted_cooldown_ms":  60000,
+                    "suppression_radius":  60,
+                    "action_cooldowns_ms":  {
+                                                "target_too_strong":  300000,
+                                                "no_available_dinosaurs":  90000
+                                            }
+                },
+    "verify":  {
+                   "max_distance":  35,
+                   "pixel_change_threshold":  0.08,
+                   "failure_types":  [
+                                         "duplicate_hunt_alert",
+                                         "hunt_team_return_button"
+                                     ],
+                   "success_transitions":  {
+                                               "dinosaur":  [
+                                                                "hunt_button"
+                                                            ],
+                                               "hunt_button":  [
+                                                                   "hunt_confirm_button"
+                                                               ],
+                                               "hunt_confirm_button":  [
+                                                                           "map_exit_nest_button",
+                                                                           "map_center_egg",
+                                                                           "mailbox_button"
+                                                                       ],
+                                               "hunt_dialog_close_button":  [
+                                                                                 "mailbox_button",
+                                                                                 "map_exit_nest_button",
+                                                                                 "map_center_egg"
+                                                                             ],
+                                               "map_exit_nest_button":  [
+                                                                            "forest_recenter_button"
+                                                                        ],
+                                               "forest_recenter_button":  [
+                                                                              "map_center_egg",
+                                                                              "map_exit_nest_button",
+                                                                              "mailbox_button"
+                                                                          ],
+                                               "mailbox_button":  [
+                                                                      "mail_collect_all_button"
+                                                                  ],
+                                               "mail_collect_all_button":  [
+                                                                               "mail_reward_collect_button"
+                                                                           ],
+                                               "mail_reward_collect_button":  [
+                                                                                  "mail_close_button"
+                                                                              ],
+                                               "mail_close_button":  [
+                                                                         "mailbox_button",
+                                                                         "map_exit_nest_button",
+                                                                         "map_center_egg"
+                                                                     ]
+                                           }
+               },
+    "training":  {
+                     "fps":  2,
+                     "max_images":  500
+                 },
+    "workflow":  {
+                     "max_cycles":  0,
+                     "complete_on":  [
+                                         "mail_reward_collect_button"
+                                     ]
+                 },
+    "event_log":  {
+                      "enabled":  true,
+                      "max_bytes":  16777216
+                  },
+    "recovery":  {
+                     "enabled":  true,
+                     "black_screen_timeout_seconds":  45,
+                     "black_mean_threshold":  2,
+                     "no_hunt_progress_timeout_seconds":  180,
+                     "hunt_progress_suspend_budget_seconds":  120,
+                     "restart_cooldown_seconds":  90,
+                     "launch_wait_seconds":  15,
+                     "package":  "com.mondayoff.dinomutant",
+                     "activity":  "com.unity3d.player.UnityPlayerActivity"
+                 }
 }

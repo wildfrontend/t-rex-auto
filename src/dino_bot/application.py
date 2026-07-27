@@ -14,9 +14,11 @@ from .detection import (
     OpenCvDetector,
     StartupAutoBattleDialogDetector,
     StartupGrowthResultDetector,
+    StartupLayoutGuard,
     TargetTooStrongDetector,
 )
 from .engine import BotContext, BotEngine
+from .events import EventLog, JsonlEventLog, NullEventLog
 from .logging import configure_logging
 from .models import ActionKind
 from .modes import create_mode
@@ -26,7 +28,11 @@ from .verification import TargetChangedVerifier
 
 
 def create_engine(config: AppConfig, *, verbose: bool = False) -> BotEngine:
-    logger = configure_logging(config.logs_dir, verbose=verbose)
+    logger = configure_logging(
+        config.logs_dir,
+        verbose=verbose,
+        max_bytes=config.log_max_bytes,
+    )
     logger.info(
         "Timing | poll=%dms | click=%dms | dinosaur=%dms | hunt=%dms"
         " | confirm=%dms | idle=%dms",
@@ -64,8 +70,8 @@ def create_engine(config: AppConfig, *, verbose: bool = False) -> BotEngine:
         HuntTeamAvailabilityDetector(),
         HuntCapacityDetector(),
         TargetTooStrongDetector(),
-        StartupGrowthResultDetector(),
-        StartupAutoBattleDialogDetector(),
+        StartupLayoutGuard(StartupGrowthResultDetector(), logger=logger),
+        StartupLayoutGuard(StartupAutoBattleDialogDetector(), logger=logger),
         reference_size=open_cv_detector.reference_size,
     )
     planner = HuntPlanner(
@@ -82,6 +88,7 @@ def create_engine(config: AppConfig, *, verbose: bool = False) -> BotEngine:
         dinosaur_failure_cooldown_ms=config.planner.dinosaur_failure_cooldown_ms,
         dinosaur_failure_radius=config.planner.dinosaur_failure_radius,
         mail_after_hunts=config.planner.mail_after_hunts,
+        mail_failure_limit=config.planner.mail_failure_limit,
         capacity_wait_seconds=config.planner.capacity_wait_seconds,
         ring_width=config.planner.ring_width,
         own_path_angle_degrees=config.planner.own_path_angle_degrees,
@@ -91,6 +98,8 @@ def create_engine(config: AppConfig, *, verbose: bool = False) -> BotEngine:
         map_settle_max_frames=config.planner.map_settle_max_frames,
         bottom_exclusion_px=config.planner.bottom_exclusion_px,
         exclusion_zones=config.planner.exclusion_zones,
+        retry_exhausted_cooldown_ms=config.planner.retry_exhausted_cooldown_ms,
+        suppression_radius=config.planner.suppression_radius,
         action_cooldowns_ms=config.planner.action_cooldowns_ms,
     )
     action = AdbActionDriver(adb)
@@ -128,7 +137,15 @@ def create_engine(config: AppConfig, *, verbose: bool = False) -> BotEngine:
             runtime_recovery,
             logger,
             timeout_seconds=config.recovery.no_hunt_progress_timeout_seconds,
+            suspend_budget_seconds=(
+                config.recovery.hunt_progress_suspend_budget_seconds
+            ),
         )
+    event_log: EventLog = (
+        JsonlEventLog(config.logs_dir, max_bytes=config.event_log.max_bytes)
+        if config.event_log.enabled
+        else NullEventLog()
+    )
     context = BotContext(
         capture_provider=capture,
         detector=detector,
@@ -151,6 +168,7 @@ def create_engine(config: AppConfig, *, verbose: bool = False) -> BotEngine:
         cycle_complete_targets=config.workflow.complete_on,
         runtime_recovery=runtime_recovery,
         hunt_progress_recovery=hunt_progress_recovery,
+        event_log=event_log,
     )
     return BotEngine(context)
 

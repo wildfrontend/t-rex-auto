@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,65 @@ from .models import BoundingBox, Detection, Frame
 
 class DetectorAssetError(ValueError):
     pass
+
+
+class StartupLayoutGuard:
+    """Wrap a startup-only layout detector with two liveness checks.
+
+    These detectors derive confidence from live pixel ratios, so a real dialog
+    jitters frame to frame while it animates. A value that repeats bit for bit
+    is being computed from static screen furniture, and acting on it once cost
+    ten minutes of tapping an empty coordinate.
+
+    The second check is phase: the modals only appear while the app is starting
+    up. One misfire arrived after forty-four confirmed hunts, which no amount
+    of threshold tuning would have caught.
+    """
+
+    def __init__(
+        self,
+        detector: Any,
+        *,
+        max_identical_frames: int = 8,
+        logger: logging.Logger | None = None,
+    ) -> None:
+        self.detector = detector
+        self.max_identical_frames = max(1, max_identical_frames)
+        self.logger = logger
+        self.target_type = getattr(detector, "target_type", None)
+        self._signature: tuple[tuple[str, int, int, float], ...] | None = None
+        self._identical_frames = 0
+        self._startup_complete = False
+
+    def on_hunt_completed(self) -> None:
+        self._startup_complete = True
+
+    def on_app_restart(self) -> None:
+        self._startup_complete = False
+        self._signature = None
+        self._identical_frames = 0
+
+    def detect(self, frame: Frame) -> list[Detection]:
+        if self._startup_complete:
+            return []
+        results = self.detector.detect(frame)
+        signature = tuple(
+            (item.type, item.x, item.y, item.confidence) for item in results
+        )
+        if signature and signature == self._signature:
+            self._identical_frames += 1
+        else:
+            self._identical_frames = 0
+        self._signature = signature
+        if self._identical_frames >= self.max_identical_frames:
+            if self._identical_frames == self.max_identical_frames and self.logger:
+                self.logger.warning(
+                    "Detect | %s unchanged for %d frames; treating as static",
+                    self.target_type or "startup layout",
+                    self._identical_frames,
+                )
+            return []
+        return results
 
 
 @dataclass(frozen=True, slots=True)
@@ -320,6 +380,18 @@ class CompositeDetector:
     ) -> list[Detection]:
         return self._detect(frame, frozenset(target_types))
 
+    def on_hunt_completed(self) -> None:
+        self._notify("on_hunt_completed")
+
+    def on_app_restart(self) -> None:
+        self._notify("on_app_restart")
+
+    def _notify(self, hook: str) -> None:
+        for detector in self.detectors:
+            callback = getattr(detector, hook, None)
+            if callable(callback):
+                callback()
+
     def _detect(
         self,
         frame: Frame,
@@ -362,6 +434,57 @@ class CompositeDetector:
         return results
 
 
+# Fraction of a glyph's bounding box that must be enclosed background before it
+# can be a "0". Measured across font scales: 0 and 8 sit at 0.18-0.19, the next
+# largest (6) only reaches 0.12.
+_ZERO_MIN_HOLE_RATIO = 0.15
+# Ink coverage of the central band. A "0" is hollow there (0.33-0.40); an "8"
+# has its waist stroke crossing (0.83-1.00). Nothing else clears the hole test.
+_ZERO_MAX_WAIST = 0.6
+
+
+def _is_zero_glyph(mask: np.ndarray, glyph: tuple[int, int, int, int, int]) -> bool:
+    """Return True when a connected component looks like the digit ``0``.
+
+    Selecting on glyph width alone accepted every leading digit from 2 to 9,
+    which turned "some team left" into "no team left" and cancelled thirteen
+    consecutive hunts. Two shape measurements separate a zero from the rest:
+    the enclosed area rules out everything but 0 and 8, and the hollow centre
+    band then rules out the 8.
+    """
+
+    x, y, glyph_width, glyph_height, _ = glyph
+    if glyph_width <= 0 or glyph_height <= 0:
+        return False
+    if not 0.4 <= glyph_width / glyph_height <= 1.0:
+        return False
+
+    window = mask[y : y + glyph_height, x : x + glyph_width]
+    if window.size == 0:
+        return False
+    background = np.where(window > 0, 0, 255).astype(np.uint8)
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(background)
+    outside = set(labels[0, :]) | set(labels[-1, :])
+    outside |= set(labels[:, 0]) | set(labels[:, -1])
+    # Anti-aliasing can pinch a small ring into two components, so judge the
+    # holes by their combined area rather than by how many there are.
+    hole_area = sum(
+        int(stats[index, cv2.CC_STAT_AREA])
+        for index in range(1, count)
+        if index not in outside and stats[index, cv2.CC_STAT_AREA] >= 3
+    )
+    if hole_area / (glyph_width * glyph_height) < _ZERO_MIN_HOLE_RATIO:
+        return False
+
+    band = window[
+        int(glyph_height * 0.40) : int(glyph_height * 0.60),
+        int(glyph_width * 0.35) : int(glyph_width * 0.65),
+    ]
+    if band.size == 0:
+        return False
+    return float((band > 0).mean()) < _ZERO_MAX_WAIST
+
+
 class HuntTeamAvailabilityDetector:
     """Detect the fixed-layout ``0 / 11`` hunt-team exhaustion state."""
 
@@ -402,9 +525,12 @@ class HuntTeamAvailabilityDetector:
             ),
             key=lambda item: item[0],
         )
-        # 0 / 11 has four glyphs and its first glyph is wider than a "1".
-        # 11 / 11 has five glyphs, so it is intentionally rejected.
-        if len(glyphs) != 4 or glyphs[0][2] < 10:
+        # "0 / 11" is four glyphs, "10 / 11" and "11 / 11" are five. Within the
+        # four-glyph shapes only the leading digit separates "no team left"
+        # from "some team left", and a width threshold alone accepts every one
+        # of 2..9 - which cancelled thirteen consecutive hunts. Identify the
+        # zero by its shape instead.
+        if len(glyphs) != 4 or not _is_zero_glyph(mask, glyphs[0]):
             return []
 
         scale_x = frame.width / width
@@ -485,15 +611,13 @@ class HuntCapacityDetector:
             ),
             key=lambda item: item[0],
         )
-        # 10/10 has five glyphs. Confirm both narrow "1" glyphs and both wide
-        # zeroes so the available state (0/10) is intentionally accepted.
-        if (
-            len(glyphs) != 5
-            or glyphs[0][2] >= 7
-            or glyphs[1][2] < 7
-            or glyphs[3][2] >= 7
-            or glyphs[4][2] < 7
-        ):
+        # "10/10" is the only five-glyph reading; anything with spare capacity
+        # is four. Confirm the shape of each digit rather than its width - at
+        # this size a "1" and a "0" differ by a single pixel, which never
+        # matched and left this detector silent in every recorded session.
+        if len(glyphs) != 5 or [
+            _is_zero_glyph(mask, glyph) for glyph in glyphs
+        ] != [False, True, False, False, True]:
             return []
         scale_x = frame.width / width
         scale_y = frame.height / height
@@ -656,9 +780,11 @@ class StartupAutoBattleDialogDetector:
         self,
         target_type: str = "startup_auto_battle_close",
         reference_size: tuple[int, int] = (900, 1600),
+        min_cyan_ratio: float = 0.4,
     ) -> None:
         self.target_type = target_type
         self.reference_size = reference_size
+        self.min_cyan_ratio = min_cyan_ratio
 
     def detect(self, frame: Frame) -> list[Detection]:
         width, height = self.reference_size
@@ -684,7 +810,10 @@ class StartupAutoBattleDialogDetector:
             & (cyan[:, :, 0] >= cyan[:, :, 2] + 35)
         )
         cyan_ratio = float(np.mean(cyan_mask))
-        if cyan_ratio < 0.2:
+        # A real shortcut button fills roughly 0.42-0.46 of this band. The
+        # misfire that deadlocked the bot sat at 0.279, so the gate goes
+        # between them - and no higher, or genuine dialogs stop being closed.
+        if cyan_ratio < self.min_cyan_ratio:
             return []
 
         scale_x = frame.width / width

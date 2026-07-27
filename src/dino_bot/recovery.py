@@ -140,11 +140,15 @@ class BlackScreenRecovery:
 
 
 class HuntProgressWatchdog:
-    """Restart the app after sustained lack of hunting progress."""
+    """Restart the app after sustained lack of *completed* hunts.
 
-    _PROGRESS_TYPES = frozenset(
-        {"dinosaur", "hunt_button", "hunt_max_group_button", "hunt_confirm_button"}
-    )
+    Progress is the confirmed-hunt event reported by ``on_hunt_completed``, not
+    anything visible on screen. Screen-derived proxies all fail the same way: a
+    map always shows dinosaurs, so "a dinosaur is visible" stayed true through
+    fourteen minutes of zero hunts, and a stuck ``startup_*`` phantom held the
+    suspend list open for the entire deadlock it was causing.
+    """
+
     _EXPECTED_WAIT_TYPES = frozenset(
         {
             "no_available_dinosaurs",
@@ -164,16 +168,47 @@ class HuntProgressWatchdog:
         logger: logging.Logger,
         *,
         timeout_seconds: float = 180.0,
+        suspend_budget_seconds: float = 120.0,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.runtime_recovery = runtime_recovery
         self.logger = logger
         self.timeout_seconds = timeout_seconds
+        # A suspend reason may only mute the watchdog for this long in total
+        # before the timer resumes. Without a ceiling, an exempt type that
+        # never goes away disables recovery outright.
+        self.suspend_budget_seconds = max(0.0, suspend_budget_seconds)
         self.clock = clock
         self._stalled_since: float | None = None
+        self._suspended_since: float | None = None
+        self._warned = False
 
     def reset(self) -> None:
         self._stalled_since = None
+        self._suspended_since = None
+        self._warned = False
+
+    def on_hunt_completed(self) -> None:
+        """The only event that counts as progress."""
+
+        self.reset()
+
+    def _suspend_reason(self, observed_types: set[str]) -> str | None:
+        matched = observed_types & self._EXPECTED_WAIT_TYPES
+        if matched:
+            return ", ".join(sorted(matched))
+        matched = observed_types & self._SUSPENDED_TYPES
+        if matched:
+            return ", ".join(sorted(matched))
+        prefixed = sorted(
+            observed
+            for observed in observed_types
+            for prefix in self._SUSPENDED_PREFIXES
+            if observed.startswith(prefix)
+        )
+        if prefixed:
+            return ", ".join(prefixed)
+        return None
 
     def observe(
         self,
@@ -185,41 +220,64 @@ class HuntProgressWatchdog:
         if self.timeout_seconds <= 0:
             return False
 
+        now = self.clock()
+        if cooldown_ms > 0:
+            # The planner set this deadline itself and it expires on its own,
+            # so it is a bounded wait rather than an inference that might be
+            # wrong. Hold the timer without spending the suspend budget - a
+            # legitimate five-minute capacity wait would otherwise outlast the
+            # budget and trigger a restart at the moment it was about to end.
+            #
+            # Clearing the stall origin is what actually holds it. Returning
+            # early only skips the check: the elapsed time is measured from
+            # `_stalled_since` in wall clock, so a five-minute wait still ages
+            # the timer past its timeout and fires the restart three seconds
+            # after the wait it was supposed to protect. The bot needs a full
+            # timeout of real hunting before a stall is credible again, and
+            # restarting the game does not shorten a cooldown anyway.
+            self._suspended_since = None
+            self._stalled_since = None
+            self._warned = False
+            return False
+
         visible_types = {item.type for item in detections}
         target_type = target.type if target is not None else None
         observed_types = visible_types | ({target_type} if target_type else set())
-        if (
-            cooldown_ms > 0
-            or observed_types & self._EXPECTED_WAIT_TYPES
-            or observed_types & self._SUSPENDED_TYPES
-            or any(
-                target_type.startswith(prefix)
-                for target_type in observed_types
-                for prefix in self._SUSPENDED_PREFIXES
+
+        reason = self._suspend_reason(observed_types)
+        if reason is not None:
+            if self._suspended_since is None:
+                self._suspended_since = now
+            suspended_seconds = now - self._suspended_since
+            if suspended_seconds < self.suspend_budget_seconds:
+                # Genuine waits are short. Keep the stall timer frozen rather
+                # than reset, so a wait that never ends still ages out.
+                return False
+            self.logger.warning(
+                "Recovery | suspend budget exhausted after %.0fs | reason=%s",
+                suspended_seconds,
+                reason,
             )
-        ):
-            self.reset()
-            return False
+        else:
+            self._suspended_since = None
 
-        if target_type in self._PROGRESS_TYPES:
-            self.reset()
-            return False
-
-        now = self.clock()
         if self._stalled_since is None:
             self._stalled_since = now
-            self.logger.warning(
-                "Recovery | no hunt progress detected; watchdog=%.0fs",
-                self.timeout_seconds,
-            )
             return False
 
         stalled_seconds = now - self._stalled_since
         if stalled_seconds < self.timeout_seconds:
+            if not self._warned and stalled_seconds >= self.timeout_seconds / 2:
+                self._warned = True
+                self.logger.warning(
+                    "Recovery | no confirmed hunt for %.0fs; watchdog=%.0fs",
+                    stalled_seconds,
+                    self.timeout_seconds,
+                )
             return False
 
         restarted = self.runtime_recovery.request_restart(
-            f"no hunt progress for {stalled_seconds:.0f}s",
+            f"no confirmed hunt for {stalled_seconds:.0f}s",
             reason_key="no_hunt_progress",
         )
         if restarted:

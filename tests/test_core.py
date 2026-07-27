@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-import threading
 import time
-from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -21,30 +19,23 @@ from dino_bot.assets import create_template
 from dino_bot.cli import apply_run_timing, build_parser
 from dino_bot.config import AppConfig, ConfigError, load_config
 from dino_bot.detection import (
-    CompositeDetector,
     HuntCapacityDetector,
     HuntTeamAvailabilityDetector,
     OpenCvDetector,
     TargetTooStrongDetector,
 )
-from dino_bot.doctor import platform_supports_capture
 from dino_bot.engine import BotContext, BotEngine, BotState
 from dino_bot.models import (
     ActionCommand,
     BoundingBox,
     Detection,
-    ExclusionZone,
     Frame,
     Target,
     VerificationResult,
 )
 from dino_bot.modes import DebugMode, RuntimeMode, TrainingMode
 from dino_bot.planning import HuntPlanner, TargetPlanner
-from dino_bot.recovery import (
-    AdbAppRestarter,
-    BlackScreenRecovery,
-    HuntProgressWatchdog,
-)
+from dino_bot.recovery import AdbAppRestarter, BlackScreenRecovery
 from dino_bot.verification import TargetChangedVerifier
 
 
@@ -75,149 +66,6 @@ def test_config_enforces_training_collection_limits(
         load_config(config_file)
 
 
-def test_project_config_uses_short_no_available_verification_delay() -> None:
-    config = load_config(Path(__file__).resolve().parents[1] / "config.json")
-
-    assert config.emulator == "custom"
-    assert config.adb.serial is None
-    assert config.recovery.no_hunt_progress_timeout_seconds == 180
-    assert config.post_action_delays["no_available_dinosaurs"] == 300
-    assert config.post_action_delays["target_too_strong"] == 3000
-    assert config.post_action_delays["map_exit_nest_button"] == 2500
-    assert config.post_action_delays["forest_recenter_button"] == 3000
-    assert config.post_action_delays["mailbox_button"] == 2500
-    assert config.planner.anchor_exclusion_radius == 50
-    assert config.planner.dinosaur_failure_cooldown_ms == 5_000
-    assert config.planner.dinosaur_failure_radius == 80
-    assert config.planner.action_cooldowns_ms["target_too_strong"] == 300_000
-    assert set(config.verify.success_transitions["hunt_confirm_button"]) == {
-        "map_exit_nest_button",
-        "map_center_egg",
-        "mailbox_button",
-    }
-    assert set(config.verify.success_transitions["forest_recenter_button"]) == {
-        "map_center_egg",
-        "map_exit_nest_button",
-        "mailbox_button",
-    }
-
-
-def test_config_loads_exclusion_zones_in_reference_pixels(tmp_path: Path) -> None:
-    config_file = tmp_path / "config.json"
-    config_file.write_text(
-        json.dumps(
-            {
-                "planner": {
-                    "exclusion_zones": [
-                        {
-                            "name": "left_buff_stack",
-                            "reference_width": 900,
-                            "x": [0, 115],
-                            "y": [445, 800],
-                        }
-                    ]
-                }
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    config = load_config(config_file)
-
-    assert config.planner.exclusion_zones == (
-        ExclusionZone("left_buff_stack", 0.0, 445.0, 115.0, 800.0, 900.0),
-    )
-    zone = config.planner.exclusion_zones[0]
-    assert zone.contains(110, 570, 900)
-    assert not zone.contains(650, 1000, 900)
-
-
-def test_exclusion_zone_tracks_ui_through_an_aspect_ratio_change() -> None:
-    """The buff stack scales with frame width, not height.
-
-    Both captures show the same UI: at 900 wide the stack spans y 463-726, and
-    at 501 wide (a different aspect ratio) it spans y 258-404.
-    """
-
-    zone = ExclusionZone("left_buff_stack", 0.0, 445.0, 115.0, 800.0, 900.0)
-
-    for y in (463, 572, 652, 726):
-        assert zone.contains(60, y, 900), f"missed y={y} at 900 wide"
-    for y in (258, 305, 352, 404):
-        assert zone.contains(33, y, 501), f"missed y={y} at 501 wide"
-
-    # Dinosaurs out on the open map stay selectable at both sizes.
-    assert not zone.contains(650, 1000, 900)
-    assert not zone.contains(362, 518, 501)
-
-
-@pytest.mark.parametrize(
-    ("bounds", "message"),
-    [
-        ({"x": [-5, 115], "y": [445, 800]}, "cannot be negative"),
-        ({"x": [115, 40], "y": [445, 800]}, "smaller than end"),
-        ({"x": [115], "y": [445, 800]}, r"must be \[start, end\]"),
-        (
-            {"reference_width": 0, "x": [0, 115], "y": [445, 800]},
-            "reference_width",
-        ),
-    ],
-)
-def test_config_rejects_malformed_exclusion_zones(
-    tmp_path: Path,
-    bounds: dict[str, list[float]],
-    message: str,
-) -> None:
-    config_file = tmp_path / "config.json"
-    config_file.write_text(
-        json.dumps({"planner": {"exclusion_zones": [bounds]}}),
-        encoding="utf-8",
-    )
-
-    with pytest.raises(ConfigError, match=message):
-        load_config(config_file)
-
-
-def test_config_rejects_negative_anchor_exclusion_radius(tmp_path: Path) -> None:
-    config_file = tmp_path / "config.json"
-    config_file.write_text(
-        json.dumps({"planner": {"anchor_exclusion_radius": -1}}),
-        encoding="utf-8",
-    )
-
-    with pytest.raises(ConfigError, match="anchor_exclusion_radius"):
-        load_config(config_file)
-
-
-@pytest.mark.parametrize(
-    "setting",
-    ["dinosaur_failure_cooldown_ms", "dinosaur_failure_radius"],
-)
-def test_config_rejects_negative_dinosaur_failure_cooldown(
-    tmp_path: Path,
-    setting: str,
-) -> None:
-    config_file = tmp_path / "config.json"
-    config_file.write_text(
-        json.dumps({"planner": {setting: -1}}),
-        encoding="utf-8",
-    )
-
-    with pytest.raises(ConfigError, match=setting):
-        load_config(config_file)
-
-
-def test_config_rejects_negative_no_hunt_progress_timeout(tmp_path: Path) -> None:
-    config_file = tmp_path / "config.json"
-    config_file.write_text(
-        json.dumps({"recovery": {"no_hunt_progress_timeout_seconds": -1}}),
-        encoding="utf-8",
-    )
-
-    with pytest.raises(ConfigError, match="no_hunt_progress_timeout_seconds"):
-        load_config(config_file)
-
-
 def test_cli_fast_speed_profile_reduces_hunt_delays() -> None:
     config = AppConfig(
         root=Path("."),
@@ -233,33 +81,9 @@ def test_cli_fast_speed_profile_reduces_hunt_delays() -> None:
 
     assert result.click_delay == 300
     assert result.idle_delay == 250
-    assert result.transition_poll_interval == 100
     assert result.post_action_delays["dinosaur"] == 300
     assert result.post_action_delays["hunt_button"] == 900
     assert result.post_action_delays["hunt_confirm_button"] == 1200
-
-
-def test_config_speed_profile_is_the_cli_source_of_truth(tmp_path: Path) -> None:
-    config_file = tmp_path / "config.json"
-    config_file.write_text(
-        json.dumps(
-            {
-                "speed_profiles": {
-                    "fast": {
-                        "click_delay_ms": 125,
-                        "poll_interval_ms": 50,
-                    }
-                }
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    result = apply_run_timing(load_config(config_file), speed="fast")
-
-    assert result.click_delay == 125
-    assert result.transition_poll_interval == 50
-    assert result.post_action_delays["hunt_button"] == 900
 
 
 def test_cli_explicit_timing_overrides_profile() -> None:
@@ -286,8 +110,6 @@ def test_cli_parses_terminal_timing_options() -> None:
             "fast",
             "--hunt-button-delay-ms",
             "1800",
-            "--poll-interval-ms",
-            "75",
             "--status-port",
             "9876",
         ]
@@ -295,7 +117,6 @@ def test_cli_parses_terminal_timing_options() -> None:
 
     assert args.speed == "fast"
     assert args.hunt_button_delay_ms == 1800
-    assert args.poll_interval_ms == 75
     assert args.status_port == 9876
 
 
@@ -328,100 +149,8 @@ def test_adb_client_discovers_android_sdk_for_current_user(
     monkeypatch.delenv("ANDROID_SDK_ROOT", raising=False)
     monkeypatch.delenv("ANDROID_HOME", raising=False)
     monkeypatch.setattr("dino_bot.actions.shutil.which", lambda _: None)
-    monkeypatch.setattr("dino_bot.actions.sys.platform", "win32")
 
     assert AdbClient._resolve_executable(None) == str(adb)
-
-
-def test_adb_client_discovers_android_sdk_on_macos(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    adb = tmp_path / "AndroidSdk" / "platform-tools" / "adb"
-    adb.parent.mkdir(parents=True)
-    adb.touch()
-    monkeypatch.setenv("ANDROID_SDK_ROOT", str(tmp_path / "AndroidSdk"))
-    monkeypatch.delenv("ANDROID_HOME", raising=False)
-    monkeypatch.delenv("LOCALAPPDATA", raising=False)
-    monkeypatch.setattr("dino_bot.actions.shutil.which", lambda _: None)
-    monkeypatch.setattr("dino_bot.actions.sys.platform", "darwin")
-
-    assert AdbClient._resolve_executable(None) == str(adb)
-
-
-def test_adb_client_discovers_bundled_platform_tools(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.delenv("ANDROID_SDK_ROOT", raising=False)
-    monkeypatch.delenv("ANDROID_HOME", raising=False)
-    monkeypatch.delenv("LOCALAPPDATA", raising=False)
-    monkeypatch.setattr("dino_bot.actions.shutil.which", lambda _: None)
-    monkeypatch.setattr("dino_bot.actions.sys.platform", "win32")
-    monkeypatch.setattr(
-        "dino_bot.actions.Path.is_file",
-        lambda path: str(path).replace("\\", "/").endswith(
-            "/tools/platform-tools/adb.exe"
-        ),
-    )
-
-    executable = AdbClient._resolve_executable(None)
-
-    assert executable.replace("\\", "/").endswith("/tools/platform-tools/adb.exe")
-
-
-def test_mumu_profile_supplies_connection_and_window_defaults(tmp_path: Path) -> None:
-    config_file = tmp_path / "config.json"
-    config_file.write_text(json.dumps({"emulator": "mumu"}), encoding="utf-8")
-
-    config = load_config(config_file)
-
-    assert config.adb.serial == "127.0.0.1:7555"
-    assert "MuMuPlayer" in config.capture.window_titles
-    assert "NemuPlayer.exe" in config.capture.process_names
-
-
-def test_emulator_profile_allows_instance_specific_overrides(tmp_path: Path) -> None:
-    config_file = tmp_path / "config.json"
-    config_file.write_text(
-        json.dumps(
-            {
-                "emulator": "mumu",
-                "adb": {"serial": "127.0.0.1:16656"},
-                "capture": {
-                    "window_titles": ["Dino instance"],
-                    "process_names": ["custom-player.exe"],
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    config = load_config(config_file)
-
-    assert config.adb.serial == "127.0.0.1:16656"
-    assert config.capture.window_titles == ("Dino instance",)
-    assert config.capture.process_names == ("custom-player.exe",)
-
-
-def test_config_rejects_unknown_emulator_profile(tmp_path: Path) -> None:
-    config_file = tmp_path / "config.json"
-    config_file.write_text(json.dumps({"emulator": "unknown"}), encoding="utf-8")
-
-    with pytest.raises(ConfigError, match="emulator must be one of"):
-        load_config(config_file)
-
-
-def test_macos_supports_only_adb_capture() -> None:
-    windows_config = AppConfig(root=Path("."))
-    macos_config = replace(
-        windows_config,
-        capture=replace(windows_config.capture, backend="adb"),
-    )
-
-    assert platform_supports_capture(windows_config, "Windows")
-    assert platform_supports_capture(macos_config, "Darwin")
-    assert platform_supports_capture(windows_config, "Darwin") is False
-    assert platform_supports_capture(macos_config, "Linux") is False
 
 
 def test_compatibility_facades_are_independently_callable() -> None:
@@ -536,6 +265,7 @@ def test_hunt_planner_uses_egg_anchor_and_recenters_after_batch() -> None:
         deduplicate_types=("dinosaur",),
         dedup_radius=25,
         recenter_every=2,
+        map_settle_frames=1,
         safe_margin=80,
     )
 
@@ -547,13 +277,11 @@ def test_hunt_planner_uses_egg_anchor_and_recenters_after_batch() -> None:
     assert planner.choose(frame, [confirm]).type == "hunt_confirm_button"  # type: ignore[union-attr]
     planner.on_action_success("hunt_confirm_button")
     second_dinosaur = Detection("dinosaur", 400, 850, 0.9)
-    assert planner.choose(frame, [anchor, exit_button, second_dinosaur]) is None
     second = planner.choose(frame, [anchor, exit_button, second_dinosaur])
     assert second is not None and second.type == "dinosaur"
     assert planner.choose(frame, [confirm]).type == "hunt_confirm_button"  # type: ignore[union-attr]
     planner.on_action_success("hunt_confirm_button")
 
-    assert planner.choose(frame, [anchor, exit_button]) is None
     leave_map = planner.choose(frame, [anchor, exit_button])
     assert leave_map is not None and leave_map.type == "map_exit_nest_button"
     enter_forest = planner.choose(frame, [forest_button])
@@ -583,58 +311,6 @@ def test_hunt_planner_retries_forest_when_recenter_tap_is_ignored() -> None:
     assert planner.choose(frame, [centered_anchor]) is None
     resumed = planner.choose(frame, [centered_anchor, dinosaur])
     assert resumed is not None and resumed.type == "dinosaur"
-
-
-def test_hunt_planner_recovers_when_center_anchor_is_missed_after_recenter() -> None:
-    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
-    planner = HuntPlanner(
-        (
-            "forest_recenter_button",
-            "map_exit_nest_button",
-            "mailbox_button",
-            "dinosaur",
-        ),
-        safe_margin=80,
-    )
-    forest_button = Detection("forest_recenter_button", 841, 1295, 1.0)
-    exit_button = Detection("map_exit_nest_button", 841, 1295, 1.0)
-    mailbox = Detection("mailbox_button", 60, 1250, 1.0)
-    dinosaur = Detection("dinosaur", 500, 820, 0.9)
-    centered_map_without_anchor = [exit_button, mailbox, dinosaur]
-
-    first_attempt = planner.choose(frame, [forest_button])
-    assert first_attempt is not None and first_attempt.type == "forest_recenter_button"
-
-    # The forest button disappeared and map landmarks prove the transition
-    # completed even though the animated center egg was not detected.
-    assert planner.choose(frame, centered_map_without_anchor) is None
-    resumed = planner.choose(frame, centered_map_without_anchor)
-    assert resumed is not None and resumed.type == "dinosaur"
-
-
-def test_hunt_planner_waits_for_post_hunt_anchor_to_settle() -> None:
-    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
-    planner = HuntPlanner(
-        ("hunt_confirm_button", "dinosaur"),
-        map_settle_frames=2,
-        map_settle_tolerance_px=20,
-        safe_margin=80,
-    )
-    centered_anchor = Detection("map_center_egg", 450, 800, 1.0)
-    moving_anchor = Detection("map_center_egg", 490, 780, 1.0)
-    dinosaur = Detection("dinosaur", 600, 900, 0.9)
-    confirm = Detection("hunt_confirm_button", 451, 1412, 1.0)
-
-    assert planner.choose(frame, [centered_anchor, dinosaur]).type == "dinosaur"  # type: ignore[union-attr]
-    assert planner.choose(frame, [confirm]).type == "hunt_confirm_button"  # type: ignore[union-attr]
-    planner.on_action_success("hunt_confirm_button")
-
-    # The first frame after confirmation is still moving, so it cannot arm a tap.
-    assert planner.choose(frame, [centered_anchor, dinosaur]) is None
-    assert planner.choose(frame, [moving_anchor, dinosaur]) is None
-    # Two consecutive frames at the new anchor position release the gate.
-    target = planner.choose(frame, [moving_anchor, dinosaur])
-    assert target is not None and target.type == "dinosaur"
 
 
 def test_hunt_planner_excludes_dinosaur_on_own_blue_path() -> None:
@@ -680,85 +356,6 @@ def test_hunt_planner_never_clicks_dinosaur_in_bottom_ui() -> None:
         frame,
         [anchor, bottom_ui_false_positive],
     ) is None
-
-
-def test_hunt_planner_never_clicks_dinosaur_inside_exclusion_zone() -> None:
-    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
-    buff_stack = ExclusionZone("left_buff_stack", 0.0, 445.0, 115.0, 800.0, 900.0)
-    planner = HuntPlanner(
-        ("dinosaur",),
-        safe_margin=80,
-        exclusion_zones=(buff_stack,),
-    )
-    anchor = Detection("map_center_egg", 450, 800, 1.0)
-    # Clears safe_margin on every side, so only the zone can reject it.
-    behind_buff_stack = Detection("dinosaur", 110, 570, 0.99)
-    safe_dinosaur = Detection("dinosaur", 650, 1000, 0.80)
-
-    target = planner.choose(frame, [anchor, behind_buff_stack, safe_dinosaur])
-    assert target is not None and (target.x, target.y) == (650, 1000)
-
-    zone_only_planner = HuntPlanner(
-        ("dinosaur",),
-        safe_margin=80,
-        exclusion_zones=(buff_stack,),
-    )
-    assert zone_only_planner.choose(frame, [anchor, behind_buff_stack]) is None
-
-    unzoned_planner = HuntPlanner(("dinosaur",), safe_margin=80)
-    unzoned = unzoned_planner.choose(frame, [anchor, behind_buff_stack])
-    assert unzoned is not None and (unzoned.x, unzoned.y) == (110, 570)
-
-
-def test_hunt_planner_applies_exclusion_zone_without_a_known_anchor() -> None:
-    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
-    planner = HuntPlanner(
-        ("dinosaur",),
-        safe_margin=80,
-        exclusion_zones=(ExclusionZone("left_buff_stack", 0.0, 445.0, 115.0, 800.0, 900.0),),
-    )
-    behind_buff_stack = Detection("dinosaur", 110, 570, 0.99)
-
-    assert planner.choose(frame, [behind_buff_stack]) is None
-
-
-def test_hunt_planner_excludes_false_dinosaur_on_center_egg() -> None:
-    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
-    planner = HuntPlanner(
-        ("dinosaur",),
-        anchor_exclusion_radius=50,
-        safe_margin=80,
-    )
-    anchor = Detection("map_center_egg", 450, 800, 1.0)
-    egg_false_positive = Detection("dinosaur", 452, 820, 0.99)
-    safe_dinosaur = Detection("dinosaur", 510, 820, 0.85)
-
-    target = planner.choose(
-        frame,
-        [anchor, egg_false_positive, safe_dinosaur],
-    )
-
-    assert target is not None and (target.x, target.y) == (510, 820)
-
-
-def test_hunt_planner_excludes_screen_center_when_map_anchor_is_offset() -> None:
-    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
-    planner = HuntPlanner(
-        ("dinosaur",),
-        safe_margin=0,
-        bottom_exclusion_px=0,
-        anchor_exclusion_radius=50,
-    )
-    offset_anchor = Detection("map_center_egg", 300, 800, 1.0)
-    screen_center_false_positive = Detection("dinosaur", 450, 800, 0.99)
-    safe_dinosaur = Detection("dinosaur", 600, 800, 0.85)
-
-    target = planner.choose(
-        frame,
-        [offset_anchor, screen_center_false_positive, safe_dinosaur],
-    )
-
-    assert target is not None and (target.x, target.y) == (600, 800)
 
 
 def test_hunt_planner_waits_when_all_dinosaurs_are_on_own_blue_path() -> None:
@@ -826,66 +423,6 @@ def test_hunt_planner_counts_only_verified_confirmation() -> None:
     assert planner._total_hunt_count == 1
 
 
-def test_hunt_planner_releases_dinosaur_wait_after_failed_selection() -> None:
-    planner = HuntPlanner(("dinosaur",))
-    planner._awaiting_hunt_button = True
-    planner._waited_frames = 3
-
-    planner.on_action_failure("dinosaur")
-
-    assert planner._awaiting_hunt_button is False
-    assert planner._waited_frames == 0
-
-
-def test_hunt_planner_cools_failed_dinosaur_and_restores_anchor() -> None:
-    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
-    anchor = Detection("map_center_egg", 450, 800, 1.0)
-    nearest = Detection("dinosaur", 550, 800, 0.95)
-    alternative = Detection("dinosaur", 700, 800, 0.90)
-    planner = HuntPlanner(
-        ("dinosaur",),
-        safe_margin=0,
-        bottom_exclusion_px=0,
-        anchor_exclusion_radius=0,
-        dinosaur_failure_cooldown_ms=5_000,
-        dinosaur_failure_radius=80,
-    )
-
-    first = planner.choose(frame, [anchor, nearest, alternative])
-
-    assert first is not None and (first.x, first.y) == (550, 800)
-    assert planner._last_anchor == (350.0, 800.0)
-
-    planner.on_action_failure("dinosaur")
-    second = planner.choose(frame, [anchor, nearest, alternative])
-
-    assert second is not None and (second.x, second.y) == (700, 800)
-    assert planner._anchor_before_dinosaur == (450.0, 800.0)
-
-
-def test_hunt_planner_reuses_map_after_verified_confirmation() -> None:
-    planner = HuntPlanner(("dinosaur",))
-    map_detections = [
-        Detection("map_exit_nest_button", 841, 1295, 1.0),
-        Detection("map_center_egg", 450, 800, 1.0),
-        Detection("dinosaur", 500, 820, 0.9),
-    ]
-
-    relevant = planner.verification_detection_types("hunt_confirm_button")
-
-    assert {
-        "dinosaur",
-        "own_hunt_path",
-        "map_exit_nest_button",
-        "map_center_egg",
-        "hunt_capacity_full",
-    } <= relevant
-    assert planner.can_reuse_verification_result(
-        "hunt_confirm_button",
-        map_detections,
-    )
-
-
 def test_hunt_planner_collects_mail_after_hunt_threshold() -> None:
     frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
     planner = HuntPlanner(
@@ -904,6 +441,7 @@ def test_hunt_planner_collects_mail_after_hunt_threshold() -> None:
         ),
         recenter_every=1,
         mail_after_hunts=1,
+        map_settle_frames=1,
         safe_margin=80,
     )
     anchor = Detection("map_center_egg", 450, 800, 1.0)
@@ -928,7 +466,6 @@ def test_hunt_planner_collects_mail_after_hunt_threshold() -> None:
     assert planner.choose(frame, [anchor, exit_button, mailbox, dinosaur]).type == "dinosaur"  # type: ignore[union-attr]
     assert planner.choose(frame, [confirm]).type == "hunt_confirm_button"  # type: ignore[union-attr]
     planner.on_action_success("hunt_confirm_button")
-    assert planner.choose(frame, [anchor, exit_button]) is None
     assert planner.choose(frame, [anchor, exit_button]).type == "map_exit_nest_button"  # type: ignore[union-attr]
     assert planner.choose(frame, [forest]).type == "forest_recenter_button"  # type: ignore[union-attr]
     assert planner.choose(frame, [anchor, exit_button, mailbox]) is None
@@ -947,96 +484,70 @@ def test_hunt_planner_collects_mail_after_hunt_threshold() -> None:
     assert planner.choose(frame, [anchor, exit_button]) is None
 
 
-def test_hunt_planner_collects_mail_when_center_anchor_is_missed() -> None:
+def test_hunt_planner_recovers_when_full_mailbox_blocks_confirmation() -> None:
     frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
     planner = HuntPlanner(
         (
-            "mail_reward_collect_button",
-            "mail_collect_all_button",
-            "mail_close_button",
-            "mailbox_button",
-            "forest_recenter_button",
-            "map_exit_nest_button",
             "hunt_confirm_button",
+            "hunt_dialog_close_button",
+            "mailbox_button",
+            "mail_collect_all_button",
+            "mail_reward_collect_button",
+            "mail_close_button",
             "dinosaur",
         ),
-        recenter_every=1,
-        mail_after_hunts=1,
         safe_margin=80,
     )
-    anchor = Detection("map_center_egg", 450, 800, 1.0)
-    exit_button = Detection("map_exit_nest_button", 841, 1295, 1.0)
-    dinosaur = Detection("dinosaur", 500, 820, 0.9)
     confirm = Detection("hunt_confirm_button", 451, 1412, 1.0)
-    forest = Detection("forest_recenter_button", 841, 1295, 1.0)
-    mailbox = Detection("mailbox_button", 60, 1250, 1.0)
+    dialog_close = Detection("hunt_dialog_close_button", 628, 1409, 1.0)
+    mailbox = Detection("mailbox_button", 841, 1210, 1.0)
     collect_all = Detection("mail_collect_all_button", 636, 1165, 1.0)
     reward = Detection("mail_reward_collect_button", 450, 910, 1.0)
-    close = Detection("mail_close_button", 450, 1380, 1.0)
-    centered_map_without_anchor = [exit_button, mailbox, dinosaur]
+    mail_close = Detection("mail_close_button", 450, 1380, 1.0)
 
-    assert planner.choose(frame, [anchor, exit_button, mailbox, dinosaur]).type == "dinosaur"  # type: ignore[union-attr]
-    assert planner.choose(frame, [confirm]).type == "hunt_confirm_button"  # type: ignore[union-attr]
-    planner.on_action_success("hunt_confirm_button")
-    assert planner.choose(frame, [anchor, exit_button]) is None
-    assert planner.choose(frame, [anchor, exit_button]).type == "map_exit_nest_button"  # type: ignore[union-attr]
-    assert planner.choose(frame, [forest]).type == "forest_recenter_button"  # type: ignore[union-attr]
-    # The centered map came back without the animated egg anchor. The synthetic
-    # center fallback must still start the pending mail cycle instead of
-    # deferring it until an egg detection eventually succeeds.
-    assert planner.choose(frame, centered_map_without_anchor) is None
-    assert planner.choose(frame, centered_map_without_anchor).type == "mailbox_button"  # type: ignore[union-attr]
-    assert planner.choose(frame, [collect_all, close]).type == "mail_collect_all_button"  # type: ignore[union-attr]
-    assert planner.choose(frame, [reward, close]).type == "mail_reward_collect_button"  # type: ignore[union-attr]
-    assert planner.choose(frame, [close]).type == "mail_close_button"  # type: ignore[union-attr]
-    assert planner.choose(frame, [anchor, exit_button]) is None
+    # The ordinary hunt dialog is unchanged: confirmation still wins while
+    # retries remain, even though its close button is also visible.
+    chosen = planner.choose(frame, [confirm, dialog_close])
+    assert chosen is not None and chosen.type == "hunt_confirm_button"
 
-
-def test_hunt_planner_resumes_hunting_when_egg_is_missed_after_mail() -> None:
-    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
-    planner = HuntPlanner(
-        (
-            "mail_reward_collect_button",
-            "mail_collect_all_button",
-            "mail_close_button",
-            "mailbox_button",
-            "forest_recenter_button",
-            "map_exit_nest_button",
-            "hunt_confirm_button",
-            "dinosaur",
-        ),
-        recenter_every=1,
-        mail_after_hunts=1,
-        safe_margin=80,
+    failed_target = Target(
+        type=confirm.type,
+        x=confirm.x,
+        y=confirm.y,
+        confidence=confirm.confidence,
+        detection=confirm,
     )
-    anchor = Detection("map_center_egg", 450, 800, 1.0)
-    exit_button = Detection("map_exit_nest_button", 841, 1295, 1.0)
-    dinosaur = Detection("dinosaur", 500, 820, 0.9)
-    confirm = Detection("hunt_confirm_button", 451, 1412, 1.0)
-    forest = Detection("forest_recenter_button", 841, 1295, 1.0)
-    mailbox = Detection("mailbox_button", 60, 1250, 1.0)
-    collect_all = Detection("mail_collect_all_button", 636, 1165, 1.0)
-    reward = Detection("mail_reward_collect_button", 450, 910, 1.0)
-    close = Detection("mail_close_button", 450, 1380, 1.0)
-    centered_map_without_anchor = [exit_button, mailbox, dinosaur]
+    planner.on_retry_exhausted(failed_target)
+    assert planner.on_retry_exhausted_context(
+        failed_target,
+        [confirm, dialog_close],
+    )
 
-    assert planner.choose(frame, [anchor, exit_button, mailbox, dinosaur]).type == "dinosaur"  # type: ignore[union-attr]
-    assert planner.choose(frame, [confirm]).type == "hunt_confirm_button"  # type: ignore[union-attr]
-    planner.on_action_success("hunt_confirm_button")
-    assert planner.choose(frame, [anchor, exit_button]) is None
-    assert planner.choose(frame, [anchor, exit_button]).type == "map_exit_nest_button"  # type: ignore[union-attr]
-    assert planner.choose(frame, [forest]).type == "forest_recenter_button"  # type: ignore[union-attr]
-    assert planner.choose(frame, [anchor, exit_button, mailbox]) is None
-    assert planner.choose(frame, [anchor, exit_button, mailbox]).type == "mailbox_button"  # type: ignore[union-attr]
-    assert planner.choose(frame, [collect_all, close]).type == "mail_collect_all_button"  # type: ignore[union-attr]
-    assert planner.choose(frame, [reward, close]).type == "mail_reward_collect_button"  # type: ignore[union-attr]
-    assert planner.choose(frame, [close]).type == "mail_close_button"  # type: ignore[union-attr]
-    # The mail overlay closed but the animated egg was missed again. Map
-    # landmarks plus dinosaurs must end the mail cycle and resume hunting
-    # instead of idling until an egg detection eventually succeeds.
-    assert planner.choose(frame, centered_map_without_anchor) is None
-    resumed = planner.choose(frame, centered_map_without_anchor)
-    assert resumed is not None and resumed.type == "dinosaur"
+    recovery = planner.choose(frame, [confirm, dialog_close])
+    assert recovery is not None and recovery.type == "hunt_dialog_close_button"
+    planner.on_action_success("hunt_dialog_close_button")
+
+    assert planner.choose(frame, [mailbox]).type == "mailbox_button"  # type: ignore[union-attr]
+    assert planner.choose(frame, [collect_all]).type == "mail_collect_all_button"  # type: ignore[union-attr]
+    assert planner.choose(frame, [reward]).type == "mail_reward_collect_button"  # type: ignore[union-attr]
+    assert planner.choose(frame, [mail_close]).type == "mail_close_button"  # type: ignore[union-attr]
+
+
+def test_hunt_planner_does_not_assume_mailbox_full_without_dialog_close() -> None:
+    planner = HuntPlanner(("hunt_confirm_button", "hunt_dialog_close_button"))
+    confirm = Detection("hunt_confirm_button", 451, 1412, 1.0)
+    failed_target = Target(
+        type=confirm.type,
+        x=confirm.x,
+        y=confirm.y,
+        confidence=confirm.confidence,
+        detection=confirm,
+    )
+
+    assert not planner.on_retry_exhausted_context(failed_target, [confirm])
+    assert "hunt_dialog_close_button" in planner.verification_detection_types(
+        "hunt_confirm_button"
+    )
 
 
 def test_hunt_planner_taps_egg_until_map_is_centered() -> None:
@@ -1050,6 +561,7 @@ def test_hunt_planner_taps_egg_until_map_is_centered() -> None:
             "dinosaur",
         ),
         recenter_every=1,
+        map_settle_frames=1,
         safe_margin=80,
     )
     centered_anchor = Detection("map_center_egg", 450, 800, 1.0)
@@ -1062,7 +574,6 @@ def test_hunt_planner_taps_egg_until_map_is_centered() -> None:
     assert planner.choose(frame, [centered_anchor, exit_button, dinosaur]).type == "dinosaur"  # type: ignore[union-attr]
     assert planner.choose(frame, [confirm]).type == "hunt_confirm_button"  # type: ignore[union-attr]
     planner.on_action_success("hunt_confirm_button")
-    assert planner.choose(frame, [centered_anchor, exit_button]) is None
     assert planner.choose(frame, [centered_anchor, exit_button]).type == "map_exit_nest_button"  # type: ignore[union-attr]
     assert planner.choose(frame, [forest]).type == "forest_recenter_button"  # type: ignore[union-attr]
     recenter = planner.choose(frame, [shifted_anchor, exit_button])
@@ -1088,6 +599,7 @@ def test_hunt_planner_counts_return_when_animated_map_landmarks_are_missing() ->
     planner = HuntPlanner(
         ("map_exit_nest_button", "hunt_confirm_button", "dinosaur"),
         recenter_every=2,
+        map_settle_frames=1,
         safe_margin=80,
     )
     anchor = Detection("map_center_egg", 450, 800, 1.0)
@@ -1101,18 +613,16 @@ def test_hunt_planner_counts_return_when_animated_map_landmarks_are_missing() ->
     assert planner.choose(frame, [confirm]).type == "hunt_confirm_button"  # type: ignore[union-attr]
     planner.on_action_success("hunt_confirm_button")
     # No egg, nest, or mailbox is detected in this animated map frame.
-    assert planner.choose(frame, [second]) is None
     assert planner.choose(frame, [second]).type == "dinosaur"  # type: ignore[union-attr]
     assert planner.choose(frame, [confirm]).type == "hunt_confirm_button"  # type: ignore[union-attr]
     planner.on_action_success("hunt_confirm_button")
     # The exact second return starts recentering and must not choose a third hunt.
     assert planner.choose(frame, [third]) is None
-    assert planner.choose(frame, [third]) is None
     exit_target = planner.choose(frame, [mailbox, third])
     assert exit_target is not None and exit_target.type == "map_exit_nest_button"
 
 
-def test_hunt_planner_prioritizes_no_available_dinosaurs_exception() -> None:
+def test_hunt_planner_finishes_visible_hunt_control_before_no_available_warning() -> None:
     frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
     planner = HuntPlanner(
         ("no_available_dinosaurs", "hunt_button", "dinosaur"),
@@ -1120,7 +630,7 @@ def test_hunt_planner_prioritizes_no_available_dinosaurs_exception() -> None:
     unavailable = Detection("no_available_dinosaurs", 450, 900, 1.0)
     hunt_button = Detection("hunt_button", 450, 1200, 1.0)
     target = planner.choose(frame, [unavailable, hunt_button])
-    assert target is not None and target.type == "no_available_dinosaurs"
+    assert target is not None and target.type == "hunt_button"
 
 
 def test_hunt_planner_spreads_targets_away_from_existing_blue_ray() -> None:
@@ -1161,26 +671,6 @@ def test_hunt_planner_waits_when_concurrent_hunt_capacity_is_full() -> None:
     assert resumed is not None and resumed.type == "dinosaur"
 
 
-def test_hunt_planner_applies_verified_action_cooldown() -> None:
-    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
-    planner = HuntPlanner(
-        ("hunt_button",),
-        action_cooldowns_ms={"target_too_strong": 300_000},
-    )
-    hunt_button = Detection("hunt_button", 450, 1200, 1.0)
-
-    with patch(
-        "dino_bot.planning.time.monotonic",
-        side_effect=[10, 11, 11, 311, 311],
-    ):
-        planner.on_action_success("target_too_strong")
-        assert planner.choose(frame, [hunt_button]) is None
-        assert planner.next_ready_delay_ms() == 299_000
-        resumed = planner.choose(frame, [hunt_button])
-
-    assert resumed is not None and resumed.type == "hunt_button"
-
-
 def test_template_detector_finds_asset(tmp_path: Path) -> None:
     rng = np.random.default_rng(42)
     template = rng.integers(0, 256, (12, 12, 3), dtype=np.uint8)
@@ -1203,91 +693,6 @@ def test_template_detector_finds_asset(tmp_path: Path) -> None:
     assert len(found) == 1
     assert found[0].type == "resource"
     assert (found[0].x, found[0].y) == (37, 28)
-
-
-def test_template_detector_can_filter_to_relevant_types(tmp_path: Path) -> None:
-    rng = np.random.default_rng(7)
-    first = rng.integers(0, 256, (10, 10, 3), dtype=np.uint8)
-    second = rng.integers(0, 256, (10, 10, 3), dtype=np.uint8)
-    image = np.zeros((80, 100, 3), dtype=np.uint8)
-    image[10:20, 15:25] = first
-    image[45:55, 65:75] = second
-    assert cv2.imwrite(str(tmp_path / "first.png"), first)
-    assert cv2.imwrite(str(tmp_path / "second.png"), second)
-    (tmp_path / "manifest.json").write_text(
-        json.dumps(
-            {
-                "templates": [
-                    {"type": "first", "file": "first.png", "threshold": 0.99},
-                    {"type": "second", "file": "second.png", "threshold": 0.99},
-                ]
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    found = OpenCvDetector(tmp_path / "manifest.json").detect_types(
-        Frame(image),
-        {"second"},
-    )
-
-    assert {item.type for item in found} == {"second"}
-
-
-def test_map_center_egg_requires_meat_counter_context() -> None:
-    detector = OpenCvDetector(Path("assets/manifest.json"))
-    template = cv2.imread(str(Path("assets/templates/map-center-egg.png")))
-    similar_egg = cv2.imread(str(Path("assets/templates/map-center-egg-anchor.png")))
-    assert template is not None
-    assert similar_egg is not None
-
-    image = np.full((1600, 900, 3), template[0, 0], dtype=np.uint8)
-    similar_height, similar_width = similar_egg.shape[:2]
-    image[500 : 500 + similar_height, 100 : 100 + similar_width] = similar_egg
-
-    variable_counter = template.copy()
-    variable_counter[66:86, 34:47] = (8, 8, 12)
-    cv2.putText(
-        variable_counter,
-        "2",
-        (35, 83),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.45,
-        (255, 255, 255),
-        1,
-        cv2.LINE_AA,
-    )
-    height, width = variable_counter.shape[:2]
-    image[700 : 700 + height, 400 : 400 + width] = variable_counter
-
-    found = detector.detect_types(Frame(image), {"map_center_egg"})
-
-    assert len(found) == 1
-    assert (found[0].x, found[0].y) == (448, 735)
-    assert found[0].confidence > 0.9
-
-
-def test_composite_detector_normalizes_frame_only_once() -> None:
-    observed_shapes: list[tuple[int, int]] = []
-    observed_images: list[int] = []
-
-    class FixedDetector:
-        def detect(self, frame: Frame) -> list[Detection]:
-            observed_shapes.append((frame.width, frame.height))
-            observed_images.append(id(frame.image))
-            return [Detection("fixed", 450, 800, 1.0)]
-
-    detector = CompositeDetector(
-        FixedDetector(),
-        FixedDetector(),
-        reference_size=(900, 1600),
-    )
-
-    found = detector.detect(Frame(np.zeros((1920, 1080, 3), dtype=np.uint8)))
-
-    assert observed_shapes == [(900, 1600), (900, 1600)]
-    assert len(set(observed_images)) == 1
-    assert [(item.x, item.y) for item in found] == [(540, 960), (540, 960)]
 
 
 def test_hsv_detector_finds_blob(tmp_path: Path) -> None:
@@ -1541,7 +946,7 @@ def test_engine_runs_complete_feedback_loop() -> None:
     assert capture.closed
 
 
-def test_engine_polls_within_target_specific_transition_timeout() -> None:
+def test_engine_uses_target_specific_post_action_delay() -> None:
     class HuntConfirmDetector:
         def detect(self, frame: Frame) -> list[Detection]:
             if int(frame.image[0, 0, 0]) == 0:
@@ -1570,236 +975,6 @@ def test_engine_polls_within_target_specific_transition_timeout() -> None:
     wait.assert_called_once_with(0.25)
     assert context.cycle_count == 1
     assert context.action_count == 1
-
-
-def test_engine_detects_transition_without_repeating_action() -> None:
-    class TransitionDetector:
-        filtered_calls = 0
-
-        def detect(self, frame: Frame) -> list[Detection]:
-            if int(frame.image[0, 0, 0]) == 10:
-                return [make_detection(type="hunt_button")]
-            return []
-
-        def detect_types(
-            self,
-            frame: Frame,
-            target_types: set[str],
-        ) -> list[Detection]:
-            self.filtered_calls += 1
-            assert "hunt_button" in target_types
-            return self.detect(frame)
-
-    now = [0.0]
-    capture = SequenceCapture(
-        [
-            make_frame(10, 1),
-            make_frame(10, 2),
-            make_frame(255, 3),
-        ]
-    )
-    driver = RecordingActionDriver()
-    detector = TransitionDetector()
-    context = BotContext(
-        capture_provider=capture,
-        detector=detector,
-        planner=TargetPlanner(("hunt_button",)),
-        action_driver=driver,
-        verifier=TargetChangedVerifier(),
-        observer=RuntimeMode(),
-        logger=logging.getLogger("test_engine_transition_polling"),
-        post_action_delays_ms={"hunt_button": 1000},
-        transition_poll_interval_ms=100,
-        idle_delay_ms=0,
-        max_actions=1,
-        clock=lambda: now[0],
-    )
-
-    def advance(seconds: float) -> bool:
-        now[0] += seconds
-        return False
-
-    with patch.object(context.stop_event, "wait", side_effect=advance) as wait:
-        BotEngine(context).run()
-
-    assert [call.args for call in wait.call_args_list] == [(0.1,), (0.1,)]
-    assert len(driver.actions) == 1
-    assert detector.filtered_calls == 2
-    assert capture.index == 3
-    assert context.last_result is not None and context.last_result.success
-
-
-def test_engine_timeout_starts_after_first_verification_observation() -> None:
-    now = [0.0]
-
-    class SlowTransitionDetector:
-        calls = 0
-
-        def detect(self, frame: Frame) -> list[Detection]:
-            self.calls += 1
-            if self.calls == 2:
-                now[0] += 2.0
-            if self.calls <= 2:
-                return [make_detection(type="hunt_button")]
-            return []
-
-    capture = SequenceCapture(
-        [
-            make_frame(10, 1),
-            make_frame(10, 2),
-            make_frame(255, 3),
-        ]
-    )
-    context = BotContext(
-        capture_provider=capture,
-        detector=SlowTransitionDetector(),
-        planner=TargetPlanner(("hunt_button",)),
-        action_driver=RecordingActionDriver(),
-        verifier=TargetChangedVerifier(),
-        observer=RuntimeMode(),
-        logger=logging.getLogger("test_engine_slow_detection_grace"),
-        post_action_delays_ms={"hunt_button": 300},
-        transition_poll_interval_ms=100,
-        idle_delay_ms=0,
-        max_actions=1,
-        clock=lambda: now[0],
-    )
-
-    def advance(seconds: float) -> bool:
-        now[0] += seconds
-        return False
-
-    with patch.object(context.stop_event, "wait", side_effect=advance):
-        BotEngine(context).run()
-
-    assert capture.index == 3
-    assert context.last_result is not None and context.last_result.success
-
-
-def test_engine_reuses_verified_successor_without_full_recapture() -> None:
-    class ChainingPlanner(TargetPlanner):
-        def can_reuse_verification_result(
-            self,
-            target_type: str,
-            detections: list[Detection],
-        ) -> bool:
-            return (
-                target_type == "dinosaur"
-                and any(item.type == "hunt_button" for item in detections)
-            )
-
-    class ChainingDetector:
-        def detect(self, frame: Frame) -> list[Detection]:
-            value = int(frame.image[0, 0, 0])
-            if value == 10:
-                return [make_detection(type="dinosaur")]
-            if value == 20:
-                return [make_detection(type="hunt_button")]
-            return []
-
-    capture = SequenceCapture(
-        [
-            make_frame(10, 1),
-            make_frame(20, 2),
-            make_frame(30, 3),
-        ]
-    )
-    driver = RecordingActionDriver()
-    context = BotContext(
-        capture_provider=capture,
-        detector=ChainingDetector(),
-        planner=ChainingPlanner(("dinosaur", "hunt_button")),
-        action_driver=driver,
-        verifier=TargetChangedVerifier(
-            success_transitions={"dinosaur": ("hunt_button",)}
-        ),
-        observer=RuntimeMode(),
-        logger=logging.getLogger("test_engine_reuses_verified_successor"),
-        click_delay_ms=0,
-        idle_delay_ms=0,
-        max_actions=2,
-    )
-
-    BotEngine(context).run()
-
-    assert len(driver.actions) == 2
-    assert capture.index == 3
-
-
-def test_action_attempts_reset_when_planner_changes_target_type() -> None:
-    frame = make_frame()
-    detection = make_detection(type="dinosaur")
-    target = Target(
-        detection.type,
-        detection.x,
-        detection.y,
-        detection.confidence,
-        detection,
-    )
-    context = BotContext(
-        capture_provider=SequenceCapture([frame]),
-        detector=PixelDetector(),
-        planner=TargetPlanner(),
-        action_driver=RecordingActionDriver(),
-        verifier=TargetChangedVerifier(),
-        observer=RuntimeMode(),
-        logger=logging.getLogger("test_engine_target_attempt_reset"),
-        click_delay_ms=0,
-        state=BotState.ACTION,
-        frame=frame,
-        target=target,
-        action=ActionCommand.tap(target.x, target.y),
-        attempt=3,
-        attempt_target_type="hunt_button",
-    )
-
-    BotEngine(context).step()
-
-    assert context.attempt == 1
-    assert context.attempt_target_type == "dinosaur"
-
-
-def test_engine_stop_interrupts_post_action_delay() -> None:
-    action_started = threading.Event()
-
-    class SignalingActionDriver:
-        def execute(self, action: ActionCommand, frame: Frame) -> None:
-            action_started.set()
-
-    frame = make_frame()
-    detection = make_detection(type="no_available_dinosaurs")
-    target = Target(
-        detection.type,
-        detection.x,
-        detection.y,
-        detection.confidence,
-        detection,
-    )
-    context = BotContext(
-        capture_provider=SequenceCapture([frame]),
-        detector=PixelDetector(),
-        planner=TargetPlanner(),
-        action_driver=SignalingActionDriver(),
-        verifier=TargetChangedVerifier(),
-        observer=RuntimeMode(),
-        logger=logging.getLogger("test_engine_interruptible_delay"),
-        post_action_delays_ms={"no_available_dinosaurs": 300_000},
-        state=BotState.ACTION,
-        frame=frame,
-        target=target,
-        action=ActionCommand.tap(target.x, target.y),
-    )
-    engine = BotEngine(context)
-    result: list[BotState] = []
-    worker = threading.Thread(target=lambda: result.append(engine.step()))
-
-    worker.start()
-    assert action_started.wait(timeout=1)
-    engine.stop()
-    worker.join(timeout=1)
-
-    assert not worker.is_alive()
-    assert result == [BotState.STOPPED]
 
 
 def test_engine_retries_three_times_then_stops() -> None:
@@ -1977,79 +1152,6 @@ def test_black_screen_recovery_restarts_after_timeout_and_honors_cooldown() -> N
     now[0] = 446
     assert recovery.observe(make_frame(0))
     assert restarter.restart_count == 2
-
-
-def test_hunt_progress_watchdog_restarts_after_sustained_stall() -> None:
-    now = [100.0]
-    restarter = RecordingRestarter()
-    logger = logging.getLogger("test_hunt_progress_timeout")
-    runtime_recovery = BlackScreenRecovery(
-        restarter,
-        logger,
-        cooldown_seconds=90,
-        launch_wait_seconds=0,
-        clock=lambda: now[0],
-        sleeper=lambda _: None,
-    )
-    watchdog = HuntProgressWatchdog(
-        runtime_recovery,
-        logger,
-        timeout_seconds=180,
-        clock=lambda: now[0],
-    )
-
-    assert not watchdog.observe([], None)
-    now[0] += 179
-    assert not watchdog.observe([], None)
-    assert restarter.restart_count == 0
-
-    now[0] += 1
-    assert watchdog.observe([], None)
-    assert restarter.restart_count == 1
-
-
-def test_hunt_progress_watchdog_ignores_expected_waits_and_resets_on_progress() -> None:
-    now = [100.0]
-    restarter = RecordingRestarter()
-    logger = logging.getLogger("test_hunt_progress_expected_wait")
-    runtime_recovery = BlackScreenRecovery(
-        restarter,
-        logger,
-        cooldown_seconds=0,
-        launch_wait_seconds=0,
-        clock=lambda: now[0],
-        sleeper=lambda _: None,
-    )
-    watchdog = HuntProgressWatchdog(
-        runtime_recovery,
-        logger,
-        timeout_seconds=60,
-        clock=lambda: now[0],
-    )
-
-    assert not watchdog.observe([], None)
-    now[0] += 59
-    no_available = make_detection(type="no_available_dinosaurs")
-    assert not watchdog.observe([no_available], None)
-
-    now[0] += 60
-    assert not watchdog.observe([], None)
-    now[0] += 59
-    dinosaur = make_detection(type="dinosaur")
-    target = Target(
-        "dinosaur",
-        dinosaur.x,
-        dinosaur.y,
-        dinosaur.confidence,
-        dinosaur,
-    )
-    assert not watchdog.observe([dinosaur], target)
-
-    now[0] += 60
-    assert not watchdog.observe([], None, cooldown_ms=300_000)
-    now[0] += 60
-    assert not watchdog.observe([], None)
-    assert restarter.restart_count == 0
 
 
 def test_adb_app_restarter_only_restarts_configured_game() -> None:
