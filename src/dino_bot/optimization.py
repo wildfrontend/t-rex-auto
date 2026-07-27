@@ -40,7 +40,7 @@ _MINIMUM_SPAN_SECONDS = 60.0
 _STAGE_KNOBS: Mapping[str, str] = {
     "capacity_wait": "planner.capacity_wait_seconds",
     "map_settle": "planner.map_settle_frames, planner.map_settle_max_frames",
-    "recenter": "planner.recenter_every, planner.stalled_recenter_frames",
+    "recenter": "planner.recenter_every, planner.stalled_recenter_seconds",
     "mail": "planner.mail_after_hunts",
     # `action_cooldown` is deliberately absent. The game refuses a hunt while
     # the team is hurt, so that wait buys recovery the bot cannot shorten -
@@ -155,8 +155,39 @@ def _suggestions(
     verify_failed: int,
     retry_exhausted: int,
     detect_ms: Mapping[str, Any] | None,
+    blind_stalls: Mapping[str, Any],
+    span_seconds: float,
 ) -> list[dict[str, Any]]:
     found: list[dict[str, Any]] = []
+
+    episodes = blind_stalls.get("episodes")
+    seconds_total = blind_stalls.get("seconds_total")
+    if isinstance(episodes, int) and episodes > 0:
+        # Unlike the other entries this is not a tuning hint. A blind stall is
+        # the planner failing to recognise the screen, and no threshold value
+        # fixes that - the snapshot names it or nothing does.
+        found.append(
+            {
+                "code": "planner_blind_on_unknown_screen",
+                "severity": "warning",
+                "evidence": {
+                    "episodes": episodes,
+                    "seconds_total": seconds_total,
+                    "seconds_longest": blind_stalls.get("seconds_longest"),
+                    "stages": dict(blind_stalls.get("stages") or {}),
+                    "share": (
+                        round(float(seconds_total) / span_seconds, 3)
+                        if span_seconds > 0 and isinstance(seconds_total, (int, float))
+                        else None
+                    ),
+                },
+                "tuning": (
+                    "read logs/stalls/stall-*.png - the frame the planner could "
+                    "not act on; planner.blind_idle_seconds only changes how "
+                    "soon it is reported"
+                ),
+            }
+        )
 
     for stage, count in sorted(stage_counts.items(), key=lambda item: -item[1]):
         if stage not in _STAGE_KNOBS or planning_cycles <= 0:
@@ -246,8 +277,13 @@ def summarize_events(lines: Iterable[str]) -> dict[str, Any]:
     capture_ms: list[float] = []
     detect_ms: list[float] = []
     stage_counts: dict[str, int] = {}
+    stage_idle_counts: dict[str, int] = {}
     rejections: dict[str, int] = {}
     action_cycles: set[int] = set()
+    detect_cycles = 0
+    seen_cycles: dict[str, int] = {}
+    blind_stalls: list[float] = []
+    blind_stall_stages: dict[str, int] = {}
     planning_cycles = 0
     cycles: set[int] = set()
     hunts_confirmed = 0
@@ -291,11 +327,30 @@ def summarize_events(lines: Iterable[str]) -> dict[str, Any]:
             value = record.get("ms")
             if isinstance(value, (int, float)):
                 detect_ms.append(float(value))
+            detect_cycles += 1
+            # How often each control is actually on screen. A template that
+            # stops matching looks exactly like a game that stopped showing the
+            # button, and only this figure compared against a known-good run
+            # tells the two apart.
+            detected = record.get("det")
+            if isinstance(detected, Sequence) and not isinstance(detected, str):
+                present = {
+                    str(item.get("type"))
+                    for item in detected
+                    if isinstance(item, Mapping) and item.get("type")
+                }
+                for name in present:
+                    seen_cycles[name] = seen_cycles.get(name, 0) + 1
         elif kind == "plan":
             planning_cycles += 1
             stage = record.get("stage")
             if isinstance(stage, str) and stage:
                 stage_counts[stage] = stage_counts.get(stage, 0) + 1
+                # A stage that planned a target was working; one that planned
+                # nothing was waiting. Merging them hides which of the two a
+                # large share represents.
+                if record.get("target") is None:
+                    stage_idle_counts[stage] = stage_idle_counts.get(stage, 0) + 1
             reject = record.get("reject")
             if isinstance(reject, Mapping):
                 for rule, count in reject.items():
@@ -326,6 +381,22 @@ def summarize_events(lines: Iterable[str]) -> dict[str, Any]:
                 and target.get("type") == HUNT_CONFIRM_TYPE
             ):
                 hunts_confirmed += 1
+        elif kind == "blind_stall":
+            # An episode re-reports every `planner.blind_idle_seconds` until it
+            # ends, and each record covers only the interval since the previous
+            # one. Summing them gives the blind time; the `escapes` counter -
+            # which restarts at 1 - is what marks where one episode ends and
+            # the next begins.
+            seconds = record.get("seconds")
+            escapes = record.get("escapes")
+            elapsed = float(seconds) if isinstance(seconds, (int, float)) else 0.0
+            if escapes == 1 or not blind_stalls:
+                blind_stalls.append(elapsed)
+            else:
+                blind_stalls[-1] += elapsed
+            stage = record.get("stage")
+            if isinstance(stage, str) and stage:
+                blind_stall_stages[stage] = blind_stall_stages.get(stage, 0) + 1
         elif kind == "retry_exhausted":
             retry_exhausted += 1
         elif kind == "recovery":
@@ -340,6 +411,12 @@ def summarize_events(lines: Iterable[str]) -> dict[str, Any]:
         else None
     )
     detect_latency = _latency(detect_ms)
+    blind_summary = {
+        "episodes": len(blind_stalls),
+        "seconds_total": round(sum(blind_stalls), 1),
+        "seconds_longest": round(max(blind_stalls), 1) if blind_stalls else 0.0,
+        "stages": dict(sorted(blind_stall_stages.items(), key=lambda item: -item[1])),
+    }
 
     return {
         "available": True,
@@ -358,6 +435,19 @@ def summarize_events(lines: Iterable[str]) -> dict[str, Any]:
             round(len(action_cycles) / planning_cycles, 3) if planning_cycles else None
         ),
         "stage_cycles": dict(sorted(stage_counts.items(), key=lambda item: -item[1])),
+        "stage_idle_cycles": dict(
+            sorted(stage_idle_counts.items(), key=lambda item: -item[1])
+        ),
+        "blind_stalls": blind_summary,
+        "detection_visibility": {
+            "detect_cycles": detect_cycles,
+            "seen_share": {
+                name: round(count / detect_cycles, 3)
+                for name, count in sorted(seen_cycles.items(), key=lambda i: -i[1])
+            }
+            if detect_cycles
+            else {},
+        },
         "rejections": dict(sorted(rejections.items(), key=lambda item: -item[1])),
         "capture_ms": _latency(capture_ms),
         "detect_ms": detect_latency,
@@ -379,5 +469,7 @@ def summarize_events(lines: Iterable[str]) -> dict[str, Any]:
             verify_failed,
             retry_exhausted,
             detect_latency,
+            blind_summary,
+            span,
         ),
     }

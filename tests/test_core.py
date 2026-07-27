@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -37,6 +38,7 @@ from dino_bot.models import (
 from dino_bot.modes import DebugMode, RuntimeMode, TrainingMode
 from dino_bot.planning import HuntPlanner, TargetPlanner
 from dino_bot.recovery import AdbAppRestarter, BlackScreenRecovery
+from dino_bot.stalls import StallSnapshotWriter
 from dino_bot.verification import TargetChangedVerifier
 
 
@@ -485,6 +487,255 @@ def test_hunt_planner_recenters_when_only_own_paths_remain() -> None:
 
     assert reset is not None and reset.type == "map_exit_nest_button"
     assert reset.detection.metadata["detector"] == "map_landmark_fallback"
+
+
+def test_hunt_planner_escapes_a_stall_with_no_landmark_at_all() -> None:
+    """The stall every other guard is blind to, because they all need a landmark.
+
+    Reproduces the measured episode: a batch recenter arms stage 1, which waits
+    for the nest or forest button, and the screen shows neither - only dinosaur
+    labels. `_choose_map_exit`'s fallback needs an anchor the preceding restart
+    cleared, and the recenter timeout in the hunting branch never runs because
+    it is guarded on `on_collect_map`. One run held this for 519 seconds across
+    two game restarts.
+    """
+
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    now = [0.0]
+    planner = HuntPlanner(
+        ("map_exit_nest_button", "dinosaur"),
+        blind_idle_seconds=20.0,
+        clock=lambda: now[0],
+    )
+    # The state a batch recenter leaves behind, with the anchor cleared by the
+    # restart that preceded it.
+    planner._recenter_stage = 1
+    planner._last_anchor = None
+    blind_screen = [
+        Detection("dinosaur", 500, 620, 0.94),
+        Detection("dinosaur", 300, 700, 0.88),
+        Detection("own_hunt_path", 480, 640, 0.8),
+    ]
+
+    assert planner.choose(frame, blind_screen) is None
+    assert planner.last_stage() == "recenter"
+    assert planner.take_blind_escape() is None, "nothing to report yet"
+
+    now[0] = 19.0
+    assert planner.choose(frame, blind_screen) is None
+    assert planner.take_blind_escape() is None, "still inside the window"
+
+    now[0] = 20.0
+    assert planner.choose(frame, blind_screen) is None
+    escape = planner.take_blind_escape()
+
+    assert escape is not None
+    assert escape["stage"] == "recenter"
+    assert escape["escapes"] == 1
+    assert escape["seconds"] == pytest.approx(20.0)
+    assert planner.take_blind_escape() is None, "reported once, not every cycle"
+    assert planner._recenter_stage == 0, "the parked stage is released"
+
+    # Releasing the stage is not enough by itself. Without an anchor the
+    # hunting branch reads this same screen as "on the map, anchor lost" and
+    # arms the identical recenter again; replaying the measured stall went
+    # round that loop ten times. Adopting the frame centre is what lets the
+    # next cycle act - on a detected dinosaur, not on a blind coordinate.
+    now[0] = 22.0
+    recovered = planner.choose(frame, blind_screen)
+
+    assert recovered is not None and recovered.type == "dinosaur"
+
+
+def test_hunt_planner_blind_escape_re_arms_until_the_stall_ends() -> None:
+    """A release that does not reach the cause has to keep reporting.
+
+    Latching after the first escape would hide exactly the episodes worth
+    knowing about: the ones where nothing the planner can do is enough and the
+    watchdog has to restart the app.
+    """
+
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    now = [0.0]
+    planner = HuntPlanner(
+        ("map_exit_nest_button", "dinosaur"),
+        blind_idle_seconds=20.0,
+        clock=lambda: now[0],
+    )
+    planner._recenter_stage = 1
+    planner._last_anchor = None
+    # Nothing matched at all, so no release can produce a target.
+    blind_screen: list[Detection] = []
+
+    planner.choose(frame, blind_screen)
+    for elapsed, expected in ((20.0, 1), (40.0, 2), (60.0, 3)):
+        now[0] = elapsed
+        assert planner.choose(frame, blind_screen) is None
+        escape = planner.take_blind_escape()
+        assert escape is not None and escape["escapes"] == expected
+
+    # A cycle that plans something ends the episode, so the next one counts
+    # from one again rather than continuing to escalate.
+    now[0] = 61.0
+    assert planner.choose(frame, [Detection("dinosaur", 500, 620, 0.94)]) is not None
+    now[0] = 200.0
+    planner.choose(frame, blind_screen)
+    now[0] = 220.0
+    planner.choose(frame, blind_screen)
+
+    escape = planner.take_blind_escape()
+    assert escape is not None and escape["escapes"] == 1
+
+
+def test_hunt_planner_blind_timer_ignores_deliberate_waits() -> None:
+    """A cooldown the planner set itself is a wait, not a stall."""
+
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    now = [0.0]
+    planner = HuntPlanner(
+        ("dinosaur",),
+        blind_idle_seconds=20.0,
+        capacity_wait_seconds=300.0,
+        clock=lambda: now[0],
+    )
+    capacity_full = [Detection("hunt_capacity_full", 450, 800, 0.99)]
+
+    for elapsed in (0.0, 20.0, 100.0, 280.0):
+        now[0] = elapsed
+        assert planner.choose(frame, capacity_full) is None
+        assert planner.last_stage() == "capacity_wait"
+        assert planner.take_blind_escape() is None
+    assert planner.last_blind_seconds() == 0.0
+
+
+def test_hunt_planner_abandons_a_mail_flow_that_stops_advancing() -> None:
+    """55 consecutive cycles waited for a mailbox that was never on screen.
+
+    `_resume_hunting_after_mail` releases the flow only when a map landmark
+    and a dinosaur are both visible, so a screen with dinosaurs and no landmark
+    satisfies neither the stage nor its escape.
+    """
+
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    now = [0.0]
+    planner = HuntPlanner(
+        ("mailbox_button", "dinosaur"),
+        mail_stage_timeout_seconds=20.0,
+        clock=lambda: now[0],
+    )
+    planner._mail_stage = 1
+    planner._total_hunt_count = 30
+    blind_screen = [Detection("dinosaur", 500, 620, 0.94)]
+
+    assert planner.choose(frame, blind_screen) is None
+    assert planner.last_stage() == "mail"
+
+    now[0] = 19.0
+    assert planner.choose(frame, blind_screen) is None
+    assert planner._mail_stage == 1, "still inside the window"
+
+    now[0] = 20.0
+    assert planner.choose(frame, blind_screen) is None
+
+    assert planner._mail_stage == 0
+    # The counter has to go with the stage: left armed, the next recenter walks
+    # straight back into the same flow.
+    assert planner._total_hunt_count == 0
+    # A stage carrying its own deadline releases itself. Letting the generic
+    # blind timer fire here too would report a handled timeout as an
+    # unexplained stall, snapshot included.
+    assert planner.take_blind_escape() is None
+
+
+def test_hunt_planner_mail_retry_loop_does_not_hold_off_its_own_deadline() -> None:
+    """A re-offered button is a retry, not progress.
+
+    Stage 2 falls back to the mailbox when its own collect-all button is
+    missing, without advancing the stage. Counting any returned target as
+    progress let that fallback tap the mailbox for 117 measured seconds with
+    the deadline never once consulted.
+    """
+
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    now = [0.0]
+    planner = HuntPlanner(
+        ("mailbox_button", "mail_collect_all_button", "dinosaur"),
+        mail_stage_timeout_seconds=20.0,
+        clock=lambda: now[0],
+    )
+    planner._mail_stage = 2
+    planner._total_hunt_count = 30
+    # The collect-all button never appears - an already-emptied mailbox.
+    mailbox_only = [Detection("mailbox_button", 841, 1210, 0.99)]
+
+    for elapsed in (0.0, 6.0, 12.0, 18.0):
+        now[0] = elapsed
+        target = planner.choose(frame, mailbox_only)
+        assert target is not None and target.type == "mailbox_button"
+        assert planner._mail_stage == 2
+
+    now[0] = 20.0
+
+    assert planner.choose(frame, mailbox_only) is None, (
+        "the flow was abandoned, so its buttons stop being pressed"
+    )
+    assert planner._mail_stage == 0
+
+
+def test_hunt_planner_mail_timeout_outranks_the_blind_timer() -> None:
+    """A longer mail deadline has to survive the generic one, or it is fiction."""
+
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    now = [0.0]
+    planner = HuntPlanner(
+        ("mailbox_button", "dinosaur"),
+        mail_stage_timeout_seconds=60.0,
+        blind_idle_seconds=20.0,
+        clock=lambda: now[0],
+    )
+    planner._mail_stage = 1
+    planner._total_hunt_count = 30
+
+    for elapsed in (0.0, 21.0, 45.0, 59.0):
+        now[0] = elapsed
+        assert planner.choose(frame, []) is None
+        assert planner._mail_stage == 1, f"released early at {elapsed}s"
+        assert planner.take_blind_escape() is None
+
+    now[0] = 60.0
+    assert planner.choose(frame, []) is None
+    assert planner._mail_stage == 0
+
+    # Once mail lets go, the generic timer owns the stall again.
+    now[0] = 80.0
+    planner.choose(frame, [])
+    now[0] = 100.0
+    planner.choose(frame, [])
+
+    escape = planner.take_blind_escape()
+    assert escape is not None and escape["stage"] == "hunting"
+
+
+def test_hunt_planner_mail_timeout_measures_progress_not_duration() -> None:
+    """A slow mail flow is not a stalled one, so the clock restarts on progress."""
+
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    now = [0.0]
+    planner = HuntPlanner(
+        ("mailbox_button", "mail_collect_all_button", "dinosaur"),
+        mail_stage_timeout_seconds=20.0,
+        clock=lambda: now[0],
+    )
+    planner._mail_stage = 1
+    mailbox = Detection("mailbox_button", 841, 1210, 0.99)
+    collect_all = Detection("mail_collect_all_button", 450, 1200, 0.99)
+
+    now[0] = 15.0
+    assert planner.choose(frame, [mailbox]) is not None
+    now[0] = 30.0
+    assert planner.choose(frame, [collect_all]) is not None
+
+    assert planner._mail_stage == 3, "35 seconds in and the flow is still advancing"
 
 
 def test_hunt_planner_counts_only_verified_confirmation() -> None:
@@ -1408,6 +1659,135 @@ def test_engine_clears_transient_state_after_black_screen_recovery() -> None:
     assert context.target is None
     assert context.attempt == 0
     assert not planner._awaiting_hunt_button
+
+
+class RecordingStallSnapshots:
+    def __init__(self) -> None:
+        self.captures: list[dict[str, object]] = []
+
+    def capture(self, frame, detections, *, seconds, stage, escapes):
+        self.captures.append(
+            {
+                "detections": len(detections),
+                "seconds": seconds,
+                "stage": stage,
+                "escapes": escapes,
+            }
+        )
+        return Path("stall.png")
+
+
+def test_engine_records_the_frame_a_blind_stall_could_not_act_on() -> None:
+    """The event stream can only report what matched, which here is the problem.
+
+    These episodes are caused by a screen the detector has no name for, so the
+    frame is the only evidence that can identify it. Without it the diagnosis
+    stops at "17 dinosaur labels and no map control", which fits an overlay, a
+    zoomed-out view and a missing template equally well.
+    """
+
+    class BlindPlanner:
+        def __init__(self) -> None:
+            self.reported = False
+
+        def choose(self, frame: Frame, detections) -> Target | None:
+            return None
+
+        def last_stage(self) -> str:
+            return "recenter"
+
+        def take_blind_escape(self):
+            if self.reported:
+                return None
+            self.reported = True
+            return {"seconds": 20.0, "stage": "recenter", "escapes": 1}
+
+    snapshots = RecordingStallSnapshots()
+    events = RecordingEventLog()
+    context = BotContext(
+        capture_provider=SequenceCapture([make_frame(0)]),
+        detector=PixelDetector(),
+        planner=BlindPlanner(),
+        action_driver=RecordingActionDriver(),
+        verifier=TargetChangedVerifier(),
+        observer=RuntimeMode(),
+        logger=logging.getLogger("test_engine_blind_stall"),
+        idle_delay_ms=0,
+        stall_snapshots=snapshots,
+        event_log=events,
+        state=BotState.CAPTURE,
+    )
+    engine = BotEngine(context)
+    for _ in range(3):
+        engine.step()
+
+    assert snapshots.captures == [
+        {"detections": 1, "seconds": 20.0, "stage": "recenter", "escapes": 1}
+    ]
+    stall_events = [record for record in events.records if record["e"] == "blind_stall"]
+    assert stall_events == [
+        {"e": "blind_stall", "seconds": 20.0, "stage": "recenter", "escapes": 1}
+    ]
+
+
+def test_stall_snapshot_writer_keeps_the_newest_frames_only(tmp_path: Path) -> None:
+    now = [0.0]
+    writer = StallSnapshotWriter(
+        tmp_path / "stalls",
+        logging.getLogger("test_stall_writer"),
+        limit=2,
+        min_interval_seconds=60.0,
+        clock=lambda: now[0],
+        # Naive, so the local-time filename is the same wherever this runs.
+        now=lambda: datetime(2026, 7, 27, 20, int(now[0] // 60), 0),
+    )
+    frame = Frame(np.zeros((160, 90, 3), dtype=np.uint8))
+    detections = [Detection("dinosaur", 45, 80, 0.9), Detection("dinosaur", 20, 30, 0.8)]
+
+    first = writer.capture(frame, detections, seconds=20.0, stage="recenter", escapes=1)
+    assert first is not None
+
+    now[0] = 30.0
+    assert writer.capture(frame, detections, seconds=40.0, stage="recenter", escapes=2) is None, (
+        "an episode re-reports every 20s and must not overwrite itself nine times"
+    )
+
+    for minute in (2, 3):
+        now[0] = minute * 60.0
+        assert writer.capture(
+            frame, detections, seconds=20.0, stage="mail", escapes=1
+        ) is not None
+
+    written = sorted(path.name for path in (tmp_path / "stalls").glob("stall-*.png"))
+    assert written == ["stall-20260727-200200.png", "stall-20260727-200300.png"]
+    assert not (tmp_path / "stalls" / "stall-20260727-200000.json").exists()
+
+    sidecar = json.loads(
+        (tmp_path / "stalls" / "stall-20260727-200300.json").read_text(encoding="utf-8")
+    )
+    assert sidecar["stage"] == "mail"
+    assert sidecar["blind_seconds"] == 20.0
+    # What the detector *did* match is half the evidence: it separates "nothing
+    # was on screen" from "the map was there and the buttons were not".
+    assert sidecar["detections"] == {"dinosaur": 2}
+
+
+def test_stall_snapshot_failure_never_stops_the_run(tmp_path: Path) -> None:
+    writer = StallSnapshotWriter(
+        tmp_path / "file" / "stalls",
+        logging.getLogger("test_stall_writer_failure"),
+    )
+    tmp_path.joinpath("file").write_text("not a directory", encoding="utf-8")
+
+    result = writer.capture(
+        Frame(np.zeros((160, 90, 3), dtype=np.uint8)),
+        [],
+        seconds=20.0,
+        stage="recenter",
+        escapes=1,
+    )
+
+    assert result is None
 
 
 def test_template_matches_at_half_resolution_in_reference_coordinates(

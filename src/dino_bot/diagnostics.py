@@ -53,6 +53,14 @@ _CODEX_GUIDE = """# Dino Mutant Bot 診斷包
    - `stage_cycles`：規劃循環依階段分類的次數。`capacity_wait`（名額已滿的固定
      等待）、`map_settle`（等畫面穩定）、`recenter`（回中）、`mail`（收信）、
      `await_hunt`（等狩獵按鈕出現）都是等待，佔比高就是可回收的時間。
+   - `stage_idle_cycles`：同一階段中沒選出目標的次數。與 `stage_cycles` 相減才知道
+     這個階段是在做事還是在空等，兩者混在一起會把卡死看成正常流程。
+   - `blind_stalls`：規劃器既選不出目標、也講不出自己在等什麼的次數與秒數。
+     這不是可調參數的問題，是畫面上沒有任何認得的控制項；對應的畫面存在
+     `logs/stalls/stall-*.png`，要判斷原因就得看那張圖。
+   - `detection_visibility.seen_share`：每個型別在多少比例的偵測循環中出現。
+     模板失效與遊戲真的沒顯示該按鈕，在事件流裡長得一模一樣，只有拿這組數字跟
+     已知正常的一輪比較才分得出來。
    - `action_rate`：有送出操作的循環佔比；偏低代表多數循環在空轉。
    - `rejections`：八條恐龍拒絕規則各淘汰了幾個候選。
    - `capture_ms` / `detect_ms`：擷取與辨識耗時的 p50／p95，是循環速率的下限。
@@ -73,12 +81,19 @@ _CODEX_GUIDE = """# Dino Mutant Bot 診斷包
      `own_path_angle`、`exclusion_zone` 等）。
    - `action` / `verify`：實際送出的操作與驗證結果，含 `pixel_change`；`verify.phase`
      為 `pending` 代表仍在條件式等待，`final` 才是最終判定。
+   - `blind_stall`：規劃器空轉超過 `planner.blind_idle_seconds`，已強制解除所有
+     卡住的階段。`escapes` 從 1 重新起算代表這是新的一段；同一段會每隔一個門檻
+     再報一次，所以 `seconds` 相加才是這段的總長度。
    - `retry_exhausted` / `recovery` / `session`：重試耗盡、狀態重置與啟停。
    同一個 `c` 值的事件屬於同一個感知循環，可據此重建整段決策過程。
 4. `doctor.json`：執行環境、ADB、模擬器與辨識資源檢查。
 5. `logs/recent.log`：已遮蔽敏感資訊的近期人類可讀日誌。
 6. `settings.json`：已遮蔽路徑及秘密值的有效設定。
 7. `snapshot.png`：只有使用者明確選擇時才會包含。
+8. `logs/stalls/stall-*.png`（不在這個壓縮檔內，請向使用者索取）：`blind_stalls`
+   不為零時，這是規劃器當下看到的畫面。同名 `.json` 記著那一幀偵測到什麼。
+   這類卡死的成因是畫面上沒有任何認得的控制項，事件流只能報「有比對到什麼」，
+   本質上描述不了它——沒有這張圖就不要猜是哪個畫面。
 
 回答時請分成五部分：
 

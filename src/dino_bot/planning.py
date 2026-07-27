@@ -201,6 +201,29 @@ class TargetPlanner:
 class HuntPlanner(TargetPlanner):
     """Feature planner that never chains dinosaur taps while the map is moving."""
 
+    # Stages that plan nothing because they are deliberately waiting out a
+    # deadline they set themselves. Every other empty cycle is the planner
+    # failing to find work, which is what the blind-idle timer measures.
+    #
+    # `mail` is here because it carries its own deadline, not because it never
+    # stalls. A stage with a specific timeout has to own its own release: with
+    # both timers on the default 20 seconds they fired on the same cycle, so a
+    # mail flow that had just handled itself still raised a blind-stall event
+    # and a snapshot - and raising `mail_stage_timeout_seconds` above
+    # `blind_idle_seconds` did nothing at all, because the generic release got
+    # there first and abandoned the flow anyway.
+    _BOUNDED_WAIT_STAGES = frozenset(
+        {
+            "capacity_wait",
+            "action_cooldown",
+            "map_settle",
+            "blocked",
+            "hunt_unavailable",
+            "interrupt",
+            "mail",
+        }
+    )
+
     def __init__(
         self,
         *args: Any,
@@ -247,6 +270,8 @@ class HuntPlanner(TargetPlanner):
         ring_width: float = 150.0,
         own_path_angle_degrees: float = 7.0,
         stalled_recenter_seconds: float = 10.0,
+        blind_idle_seconds: float = 20.0,
+        mail_stage_timeout_seconds: float = 20.0,
         map_settle_frames: int = 2,
         map_settle_tolerance_px: float = 20.0,
         map_settle_max_frames: int = 12,
@@ -297,6 +322,8 @@ class HuntPlanner(TargetPlanner):
         self.ring_width = max(1.0, ring_width)
         self.own_path_angle_degrees = max(0.0, own_path_angle_degrees)
         self.stalled_recenter_seconds = max(0.001, stalled_recenter_seconds)
+        self.blind_idle_seconds = max(0.001, blind_idle_seconds)
+        self.mail_stage_timeout_seconds = max(0.001, mail_stage_timeout_seconds)
         self.map_settle_frames = max(1, map_settle_frames)
         self.map_settle_tolerance_px = max(0.0, map_settle_tolerance_px)
         self.map_settle_max_frames = max(
@@ -329,6 +356,11 @@ class HuntPlanner(TargetPlanner):
         self._map_idle_since: float | None = None
         self._last_map_idle_seconds = 0.0
         self._recenter_reason: str | None = None
+        self._no_target_since: float | None = None
+        self._last_blind_seconds = 0.0
+        self._blind_escapes = 0
+        self._pending_blind_escape: dict[str, Any] | None = None
+        self._mail_progress_since: float | None = None
         self._map_settle_active = False
         self._map_settle_observed_frames = 0
         self._map_settle_stable_frames = 0
@@ -468,6 +500,7 @@ class HuntPlanner(TargetPlanner):
         self._mail_failures = 0
         self._mailbox_full_recovery = False
         self._total_hunt_count = 0
+        self._mail_progress_since = None
 
     @property
     def _mail_stage_by_type(self) -> dict[str, int]:
@@ -498,6 +531,9 @@ class HuntPlanner(TargetPlanner):
         self._map_idle_since = None
         self._last_map_idle_seconds = 0.0
         self._recenter_reason = None
+        self._no_target_since = None
+        self._last_blind_seconds = 0.0
+        self._mail_progress_since = None
         # A relaunch walks back through the login and startup dialogs, and
         # those are exactly what a stage-scoped scan leaves out.
         self._scoped_idle_cycles = 0
@@ -876,6 +912,44 @@ class HuntPlanner(TargetPlanner):
         frame: Frame,
         detections: Sequence[Detection],
     ) -> Target | None:
+        """Advance the mail flow, and give up on it if it stops advancing.
+
+        Each stage waits for one specific button, and the release condition -
+        ``_resume_hunting_after_mail`` - needs a map landmark to fire. On a
+        screen showing neither, the flow waits forever: one run spent 55
+        consecutive cycles in stage 1 with no mailbox in sight. The deadline is
+        measured from the last stage change rather than from entry, so a slow
+        mail flow is never cut short, only a motionless one.
+
+        A returned target is not progress. Stages 2 to 4 deliberately re-offer
+        the *previous* stage's button when their own is missing, and stage 5
+        re-taps close for as long as the overlay is up, so "planned something"
+        describes a retry loop exactly as well as it describes advancing. With
+        the timer reset on every target, a mailbox that never opens its
+        collect-all button kept stage 2 tapping it for 117 measured seconds
+        without the deadline ever being consulted.
+        """
+
+        entry_stage = self._mail_stage
+        started = self.clock()
+        if self._mail_progress_since is None:
+            self._mail_progress_since = started
+        target = self._advance_mail_stage(frame, detections)
+        if self._mail_stage != entry_stage:
+            self._mail_progress_since = None if self._mail_stage == 0 else self.clock()
+            return target
+        if started - self._mail_progress_since >= self.mail_stage_timeout_seconds:
+            self._abandon_mail()
+            # Dropping the target with the flow: it is a mail button, and the
+            # decision just taken was to stop pressing those.
+            return None
+        return target
+
+    def _advance_mail_stage(
+        self,
+        frame: Frame,
+        detections: Sequence[Detection],
+    ) -> Target | None:
         by_type = {
             target_type: [item for item in detections if item.type == target_type]
             for target_type in (
@@ -1049,7 +1123,97 @@ class HuntPlanner(TargetPlanner):
             self._scoped_idle_cycles += 1
         else:
             self._scoped_idle_cycles = 0
+        self._observe_blind_idle(frame, target)
         return target
+
+    def _observe_blind_idle(self, frame: Frame, target: Target | None) -> None:
+        """Time the cycles where the planner can neither act nor name a wait.
+
+        Every stage escape is written as "leave once the expected control is
+        visible", so a screen carrying none of them holds all of them at once:
+        the recenter timeout at ``_choose_hunt_target`` only runs while a map
+        landmark is in frame, and ``_resume_hunting_after_mail`` needs the same
+        landmark to release the mail flow. A run measured 699 seconds - 42% of
+        its wall clock - spread over six such episodes, each ended only by the
+        watchdog restarting the game. This timer is deliberately gated on
+        nothing the screen has to supply.
+        """
+
+        if target is not None or self._stage in self._BOUNDED_WAIT_STAGES:
+            self._no_target_since = None
+            self._last_blind_seconds = 0.0
+            self._blind_escapes = 0
+            return
+
+        now = self.clock()
+        if self._no_target_since is None:
+            self._no_target_since = now
+            self._last_blind_seconds = 0.0
+            return
+
+        self._last_blind_seconds = max(0.0, now - self._no_target_since)
+        if self._last_blind_seconds < self.blind_idle_seconds:
+            return
+
+        self._blind_escapes += 1
+        self._pending_blind_escape = {
+            "seconds": round(self._last_blind_seconds, 1),
+            "stage": self._stage,
+            # Consecutive escapes within this episode. A second one means the
+            # release did not reach the cause, which is what the engine uses to
+            # decide the episode is worth a snapshot.
+            "escapes": self._blind_escapes,
+        }
+        self._release_stage_machines(frame)
+        # Re-arm rather than latch: an episode the release does not end has to
+        # keep reporting, both to escalate and to record how long it ran.
+        self._no_target_since = now
+
+    def _release_stage_machines(self, frame: Frame) -> None:
+        """Drop every stage that is parked waiting for a control it cannot see.
+
+        Releasing the stages is not enough on its own, and replaying a measured
+        stall is what showed why. With no anchor the hunting branch reads
+        dinosaurs-without-hunt-controls as "on the collection map, anchor lost"
+        and calls `_begin_recenter("missing_anchor")`; that recenter waits for
+        the nest or forest button; and the fallback which would tap the nest
+        coordinate anyway is itself gated on having an anchor. Releasing the
+        stage just feeds the same loop again - the replay went round it ten
+        times in four minutes.
+
+        Adopting the frame centre breaks it, and is the same move the recenter
+        path already makes after two dinosaur-only frames. It costs no blind
+        tap: the planner still has to find a dinosaur that passes every
+        rejection rule before it acts.
+        """
+
+        if self._last_anchor is None:
+            self._last_anchor = (frame.width / 2, frame.height / 2)
+        self._abandon_mail()
+        self._mail_progress_since = None
+        self._recenter_stage = 0
+        self._recenter_dinosaur_frames = 0
+        self._awaiting_hunt_button = False
+        self._waited_frames = 0
+        self._pending_hunt_return = False
+        self._map_settle_active = False
+        self._map_settle_observed_frames = 0
+        self._map_settle_stable_frames = 0
+        self._map_settle_anchor = None
+        self._map_settle_dinosaur = None
+        self._map_idle_since = None
+        self.clear_suppressed()
+
+    def take_blind_escape(self) -> dict[str, Any] | None:
+        """Hand the engine the escape it has not reported yet, once."""
+
+        escape, self._pending_blind_escape = self._pending_blind_escape, None
+        return escape
+
+    def last_blind_seconds(self) -> float:
+        """Seconds the planner has been unable to act or name a wait."""
+
+        return self._last_blind_seconds
 
     def _choose_target(
         self,

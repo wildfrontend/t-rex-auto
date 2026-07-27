@@ -24,6 +24,7 @@ from .models import ActionKind
 from .modes import create_mode
 from .planning import HuntPlanner
 from .recovery import AdbAppRestarter, BlackScreenRecovery, HuntProgressWatchdog
+from .stalls import StallSnapshotWriter
 from .verification import TargetChangedVerifier
 
 
@@ -93,6 +94,8 @@ def create_engine(config: AppConfig, *, verbose: bool = False) -> BotEngine:
         ring_width=config.planner.ring_width,
         own_path_angle_degrees=config.planner.own_path_angle_degrees,
         stalled_recenter_seconds=config.planner.stalled_recenter_seconds,
+        blind_idle_seconds=config.planner.blind_idle_seconds,
+        mail_stage_timeout_seconds=config.planner.mail_stage_timeout_seconds,
         map_settle_frames=config.planner.map_settle_frames,
         map_settle_tolerance_px=config.planner.map_settle_tolerance_px,
         map_settle_max_frames=config.planner.map_settle_max_frames,
@@ -152,6 +155,16 @@ def create_engine(config: AppConfig, *, verbose: bool = False) -> BotEngine:
         if config.event_log.enabled
         else NullEventLog()
     )
+    stall_snapshots = (
+        StallSnapshotWriter(
+            config.stalls_dir,
+            logger,
+            limit=config.stalls.snapshot_limit,
+            min_interval_seconds=config.stalls.snapshot_min_interval_seconds,
+        )
+        if config.stalls.snapshots_enabled
+        else None
+    )
     context = BotContext(
         capture_provider=capture,
         detector=detector,
@@ -175,6 +188,7 @@ def create_engine(config: AppConfig, *, verbose: bool = False) -> BotEngine:
         cycle_complete_targets=config.workflow.complete_on,
         runtime_recovery=runtime_recovery,
         hunt_progress_recovery=hunt_progress_recovery,
+        stall_snapshots=stall_snapshots,
         event_log=event_log,
     )
     return BotEngine(context)

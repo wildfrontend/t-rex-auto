@@ -27,6 +27,7 @@ from .interfaces import (
     ModeObserver,
     Planner,
     RuntimeRecovery,
+    StallRecorder,
     Verifier,
 )
 from .models import (
@@ -73,6 +74,7 @@ class BotContext:
     cycle_complete_targets: tuple[str, ...] = ()
     runtime_recovery: RuntimeRecovery | None = None
     hunt_progress_recovery: HuntProgressRecovery | None = None
+    stall_snapshots: StallRecorder | None = None
     event_log: EventLog = field(default_factory=NullEventLog, repr=False)
     state: BotState = BotState.IDLE
     stop_requested: bool = False
@@ -250,6 +252,10 @@ class PlanningState:
         last_recenter_reason = getattr(context.planner, "last_recenter_reason", None)
         if callable(last_recenter_reason):
             recenter_reason = last_recenter_reason()
+        blind_ms = 0
+        last_blind_seconds = getattr(context.planner, "last_blind_seconds", None)
+        if callable(last_blind_seconds):
+            blind_ms = round(float(last_blind_seconds()) * 1000)
         context.event_log.emit(
             "plan",
             stage=stage or None,
@@ -257,8 +263,10 @@ class PlanningState:
             reject=rejections or None,
             cooldown_ms=cooldown_ms or None,
             idle_ms=idle_ms or None,
+            blind_ms=blind_ms or None,
             recenter_reason=recenter_reason,
         )
+        _report_blind_stall(context, stage)
         if (
             context.hunt_progress_recovery is not None
             and context.hunt_progress_recovery.observe(
@@ -634,6 +642,38 @@ class RecoverState:
 class StoppedState:
     def execute(self, context: BotContext) -> BotState:
         return BotState.STOPPED
+
+
+def _report_blind_stall(context: BotContext, stage: str) -> None:
+    """Record a stall the planner could neither act on nor name a wait for.
+
+    The planner has already released its stage machines by the time this runs;
+    what is left to do is leave evidence. The snapshot is the point: the cause
+    of these episodes is a screen the detector has no name for, so the event
+    stream - which can only report what matched - cannot describe it.
+    """
+
+    take_blind_escape = getattr(context.planner, "take_blind_escape", None)
+    if not callable(take_blind_escape):
+        return
+    escape = take_blind_escape()
+    if not escape:
+        return
+    context.event_log.emit("blind_stall", **escape)
+    context.logger.warning(
+        "Planning | no actionable target for %.0fs | stage=%s | releasing stages",
+        float(escape.get("seconds", 0.0)),
+        escape.get("stage") or stage or "unknown",
+    )
+    if context.stall_snapshots is None or context.frame is None:
+        return
+    context.stall_snapshots.capture(
+        context.frame,
+        context.detections,
+        seconds=float(escape.get("seconds", 0.0)),
+        stage=str(escape.get("stage") or stage or ""),
+        escapes=int(escape.get("escapes", 0)),
+    )
 
 
 def _reset_after_runtime_recovery(context: BotContext) -> None:
