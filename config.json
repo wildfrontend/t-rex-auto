@@ -143,7 +143,7 @@
     "retry_exhausted_cooldown_ms": 60000,
     "suppression_radius": 60,
     "action_cooldowns_ms": {
-      "target_too_strong": 300000,
+      "target_too_strong": 30000,
       "no_available_dinosaurs": 90000
     }
   },

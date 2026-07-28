@@ -603,6 +603,29 @@ class VerifyState:
             context.attempt = 0
             context.attempt_target_type = None
             return BotState.IDLE
+        on_blocked_action_context = getattr(
+            context.planner,
+            "on_blocked_action_context",
+            None,
+        )
+        if callable(on_blocked_action_context) and on_blocked_action_context(
+            context.target,
+            context.after_detections,
+            context.attempt,
+        ):
+            context.logger.warning(
+                "Recovery | hunt confirmation remained blocked after %d attempts; "
+                "closing the hunt dialog and collecting mailbox rewards",
+                context.attempt,
+            )
+            context.event_log.emit(
+                "mailbox_full_recovery",
+                target=target_payload(context.target),
+                attempts=context.attempt,
+            )
+            context.attempt = 0
+            context.attempt_target_type = None
+            return BotState.IDLE
         if context.attempt <= context.verify_retries:
             return BotState.RECOVER
         context.logger.error("Verify | retry limit exhausted after %d attempts", context.attempt)

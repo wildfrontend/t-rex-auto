@@ -983,6 +983,24 @@ def test_hunt_planner_does_not_assume_mailbox_full_without_dialog_close() -> Non
     )
 
 
+def test_hunt_planner_does_not_recover_blocked_confirmation_without_dialog_close() -> None:
+    planner = HuntPlanner(("hunt_confirm_button", "hunt_dialog_close_button"))
+    confirm = Detection("hunt_confirm_button", 451, 1412, 1.0)
+    failed_target = Target(
+        type=confirm.type,
+        x=confirm.x,
+        y=confirm.y,
+        confidence=confirm.confidence,
+        detection=confirm,
+    )
+
+    assert not planner.on_blocked_action_context(
+        failed_target,
+        [confirm],
+        attempt=2,
+    )
+
+
 def test_hunt_planner_taps_egg_until_map_is_centered() -> None:
     frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
     planner = HuntPlanner(
@@ -1571,6 +1589,44 @@ def test_engine_retries_three_times_then_stops() -> None:
     BotEngine(context).run()
     assert len(driver.actions) == 4
     assert context.state == BotState.STOPPED
+
+
+def test_engine_short_circuits_repeated_blocked_hunt_confirmation() -> None:
+    class BlockedConfirmationDetector:
+        def detect(self, frame: Frame) -> list[Detection]:
+            return [
+                make_detection(80, 50, "hunt_confirm_button"),
+                make_detection(100, 70, "hunt_dialog_close_button"),
+            ]
+
+    planner = HuntPlanner(
+        ("hunt_confirm_button", "hunt_dialog_close_button"),
+        safe_margin=0,
+    )
+    context = BotContext(
+        capture_provider=SequenceCapture([make_frame()]),
+        detector=BlockedConfirmationDetector(),
+        planner=planner,
+        action_driver=RecordingActionDriver(),
+        verifier=AlwaysFailsVerifier(),
+        observer=RuntimeMode(),
+        logger=logging.getLogger("test_engine_blocked_confirmation"),
+        click_delay_ms=0,
+        idle_delay_ms=0,
+        verify_retries=3,
+    )
+    engine = BotEngine(context)
+
+    for _ in range(30):
+        engine.step()
+        if context.action_count == 2 and context.state == BotState.IDLE:
+            break
+
+    assert context.action_count == 2
+    assert context.attempt == 0
+    assert context.state == BotState.IDLE
+    recovery = planner.choose(make_frame(), BlockedConfirmationDetector().detect(make_frame()))
+    assert recovery is not None and recovery.type == "hunt_dialog_close_button"
 
 
 def test_debug_mode_saves_action_bundle(tmp_path: Path) -> None:

@@ -472,24 +472,42 @@ class HuntPlanner(TargetPlanner):
             # retries it instead of waiting for a screen it never reached.
             self._mail_stage = self._mail_stage_by_type[target_type]
 
+    def on_blocked_action_context(
+        self,
+        target: Target,
+        detections: Sequence[Detection],
+        attempt: int,
+    ) -> bool:
+        """Recover once hunt confirmation remains blocked for two attempts.
+
+        The game does not expose a stable machine-readable error flag. The
+        reliable evidence from the real failure screen is the combination of a
+        repeatedly failed hunt-confirm action and the hunt dialog's red close
+        button still being present. One retry remains available for an
+        occasional missed tap; a second failure switches directly to mailbox
+        cleanup instead of spending the full four-attempt budget.
+        """
+
+        if attempt < 2 or target.type != self.completion_type or not any(
+            item.type == self.hunt_dialog_close_type for item in detections
+        ):
+            return False
+        return self._arm_mailbox_full_recovery()
+
     def on_retry_exhausted_context(
         self,
         target: Target,
         detections: Sequence[Detection],
     ) -> bool:
-        """Turn the observed full-mailbox hunt failure into a recovery flow.
-
-        The game does not expose a stable machine-readable error flag. The
-        reliable evidence from the real failure screen is the combination of
-        an exhausted hunt-confirm action and the hunt dialog's red close
-        button still being present. Normal confirmation dialogs are unaffected
-        because recovery is armed only after the retry budget is exhausted.
-        """
+        """Fallback for callers that only report context after all retries."""
 
         if target.type != self.completion_type or not any(
             item.type == self.hunt_dialog_close_type for item in detections
         ):
             return False
+        return self._arm_mailbox_full_recovery()
+
+    def _arm_mailbox_full_recovery(self) -> bool:
         self._mailbox_full_recovery = True
         self._mail_stage = 0
         self._mail_failures = 0
