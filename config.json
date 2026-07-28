@@ -62,7 +62,7 @@
     ]
   },
   "adb": {
-    "executable": null,
+    "executable": "C:\\Users\\Louis\\AppData\\Local\\Android\\Sdk\\platform-tools\\adb.exe",
     "connect_on_start": true,
     "timeout": 30.0,
     "serial": "127.0.0.1:16384"
