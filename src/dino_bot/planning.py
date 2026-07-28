@@ -277,6 +277,7 @@ class HuntPlanner(TargetPlanner):
         map_settle_tolerance_px: float = 20.0,
         map_settle_max_frames: int = 12,
         safe_margin: int = 80,
+        max_center_distance_px: float = 600.0,
         bottom_exclusion_px: int = 180,
         exclusion_zones: Sequence[ExclusionZone] = (),
         action_cooldowns_ms: dict[str, int] | None = None,
@@ -336,6 +337,13 @@ class HuntPlanner(TargetPlanner):
             map_settle_max_frames,
         )
         self.safe_margin = max(0, safe_margin)
+        # Tapping a dinosaur recenters the map on it, and the further the tap
+        # lands from the viewport center the less often the hunt panel opens
+        # at all. A measured 161-minute run: taps within 300 px succeeded 86%
+        # of the time, 300-500 px 69%, and beyond 500 px only 21%. Past 600 px
+        # the whole band produced 2 hunts out of 31 taps, so the candidates it
+        # removes are almost pure waste. 0 disables the limit.
+        self.max_center_distance_px = max(0.0, max_center_distance_px)
         self.bottom_exclusion_px = max(0, bottom_exclusion_px)
         self.exclusion_zones = tuple(exclusion_zones)
         self.action_cooldowns_ms = dict(action_cooldowns_ms or {})
@@ -771,6 +779,15 @@ class HuntPlanner(TargetPlanner):
             <= self.anchor_exclusion_radius
         ):
             return "screen_center"
+        # The outer counterpart to that guard. Distance from the viewport
+        # center is how far the map has to travel when the tap lands, and the
+        # measured success rate falls off a cliff with it. Rejecting the far
+        # band costs almost nothing because those taps rarely open the panel.
+        if self.max_center_distance_px and (
+            hypot(item.x - frame.width / 2, item.y - frame.height / 2)
+            > self.max_center_distance_px
+        ):
+            return "center_distance"
         # Would tapping this dinosaur push the egg off screen? That only
         # disqualifies it while the egg is the thing being protected, and it
         # is not: recentering exists to restore the supply of reachable

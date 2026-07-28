@@ -112,6 +112,10 @@ class PlannerConfig:
     map_settle_frames: int = 2
     map_settle_tolerance_px: float = 20.0
     map_settle_max_frames: int = 12
+    # How far from the viewport center a dinosaur may sit and still be worth
+    # tapping. Beyond it the tap mostly just recenters the map without opening
+    # the hunt panel. 0 disables the limit.
+    max_center_distance_px: float = 600.0
     bottom_exclusion_px: int = 180
     exclusion_zones: tuple[ExclusionZone, ...] = ()
     retry_exhausted_cooldown_ms: int = 60_000
@@ -464,6 +468,9 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
             map_settle_max_frames=int(
                 planner_data.get("map_settle_max_frames", 12)
             ),
+            max_center_distance_px=float(
+                planner_data.get("max_center_distance_px", 600)
+            ),
             bottom_exclusion_px=int(planner_data.get("bottom_exclusion_px", 180)),
             exclusion_zones=_exclusion_zones(planner_data),
             retry_exhausted_cooldown_ms=int(
@@ -662,6 +669,8 @@ def _validate(config: AppConfig) -> None:
         raise ConfigError(
             "planner.map_settle_max_frames must be at least map_settle_frames"
         )
+    if config.planner.max_center_distance_px < 0:
+        raise ConfigError("planner.max_center_distance_px cannot be negative")
     if config.planner.bottom_exclusion_px < 0:
         raise ConfigError("planner.bottom_exclusion_px cannot be negative")
     if config.planner.retry_exhausted_cooldown_ms < 0:

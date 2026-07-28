@@ -100,6 +100,7 @@ def create_engine(config: AppConfig, *, verbose: bool = False) -> BotEngine:
         map_settle_frames=config.planner.map_settle_frames,
         map_settle_tolerance_px=config.planner.map_settle_tolerance_px,
         map_settle_max_frames=config.planner.map_settle_max_frames,
+        max_center_distance_px=config.planner.max_center_distance_px,
         bottom_exclusion_px=config.planner.bottom_exclusion_px,
         exclusion_zones=config.planner.exclusion_zones,
         retry_exhausted_cooldown_ms=config.planner.retry_exhausted_cooldown_ms,

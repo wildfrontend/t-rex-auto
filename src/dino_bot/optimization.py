@@ -56,6 +56,7 @@ _REJECTION_KNOBS: Mapping[str, str] = {
     "screen_center": "planner.anchor_exclusion_radius",
     "anchor_radius": "planner.anchor_exclusion_radius",
     "screen_margin": "planner.bottom_exclusion_px",
+    "center_distance": "planner.max_center_distance_px",
     "exclusion_zone": "planner.exclusion_zones",
     "failure_cooldown": (
         "planner.dinosaur_failure_radius, planner.dinosaur_failure_cooldown_ms"

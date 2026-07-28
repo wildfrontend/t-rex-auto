@@ -125,6 +125,7 @@
     "map_settle_frames": 2,
     "map_settle_tolerance_px": 20,
     "map_settle_max_frames": 12,
+    "max_center_distance_px": 600,
     "bottom_exclusion_px": 180,
     "exclusion_zones": [
       {
