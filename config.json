@@ -145,7 +145,7 @@
     "suppression_radius": 60,
     "action_cooldowns_ms": {
       "target_too_strong": 30000,
-      "no_available_dinosaurs": 90000
+      "no_available_dinosaurs": 30000
     }
   },
   "verify": {
