@@ -33,6 +33,7 @@ def create_engine(config: AppConfig, *, verbose: bool = False) -> BotEngine:
         config.logs_dir,
         verbose=verbose,
         max_bytes=config.log_max_bytes,
+        backup_count=config.log_backup_count,
     )
     logger.info(
         "Timing | poll=%dms | click=%dms | dinosaur=%dms | hunt=%dms"
@@ -153,7 +154,11 @@ def create_engine(config: AppConfig, *, verbose: bool = False) -> BotEngine:
             ),
         )
     event_log: EventLog = (
-        JsonlEventLog(config.logs_dir, max_bytes=config.event_log.max_bytes)
+        JsonlEventLog(
+            config.logs_dir,
+            max_bytes=config.event_log.max_bytes,
+            backup_count=config.event_log.backup_count,
+        )
         if config.event_log.enabled
         else NullEventLog()
     )

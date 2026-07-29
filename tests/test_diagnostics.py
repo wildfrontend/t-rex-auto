@@ -58,7 +58,7 @@ def test_diagnostic_bundle_contains_sanitized_evidence(tmp_path: Path) -> None:
         "settings.json",
         "logs/recent.log",
     } <= names
-    assert manifest["bot_version"] == "0.2.22"
+    assert manifest["bot_version"] == "0.2.23"
     assert manifest["snapshot_included"] is False
     assert status["successful_hunts"] == 1
     assert settings["root"] == "<app-root>"
@@ -245,3 +245,77 @@ def test_redact_text_removes_bearer_and_home_paths(tmp_path: Path) -> None:
     assert "person@example.org" not in value
     assert "Bearer <redacted>" in value
     assert "<app-root>/logs" in value
+
+
+def test_event_log_keeps_deep_history_as_gzipped_generations(tmp_path: Path) -> None:
+    """A seven-hour run must not lose its first six hours.
+
+    The 16 MB cap fills in about 97 minutes of real running, so one generation
+    covered barely three hours. Generations past the first are gzipped, which
+    is what makes keeping twenty of them cost 21 MB instead of 320 MB.
+    """
+
+    import gzip
+
+    from dino_bot.events import JsonlEventLog
+
+    logs_dir = tmp_path / "logs"
+    log = JsonlEventLog(logs_dir, max_bytes=200, backup_count=4)
+    for index in range(60):
+        log.emit("plan", marker=index)
+    log.close()
+
+    date = datetime.now().strftime("%Y%m%d")
+    live = logs_dir / f"events-{date}.jsonl"
+    first = logs_dir / f"events-{date}.1.jsonl"
+    assert live.exists(), "the live file is always plain"
+    assert first.exists(), "the newest backup stays plain for the readers"
+    assert not first.name.endswith(".gz")
+
+    archived = sorted(logs_dir.glob(f"events-{date}.*.jsonl.gz"))
+    assert archived, "older generations are compressed"
+    assert len(archived) <= 3, "nothing is kept past backup_count"
+    # A higher generation number is older, the way logrotate numbers them and
+    # the way the pre-existing `.1` already behaved, so chronological order is
+    # the reverse of filename order.
+    markers = []
+    for path in reversed(archived):
+        with gzip.open(path, "rt", encoding="utf-8") as handle:
+            markers += [json.loads(line)["marker"] for line in handle if line.strip()]
+    assert markers == sorted(markers), "history stays in order across generations"
+    assert markers, "the archives carry real events, not empty files"
+
+    # The diagnostic bundle globs events-*.jsonl; the archives must not match
+    # it, or it would ship gzip bytes as text.
+    assert sorted(p.name for p in logs_dir.glob("events-*.jsonl")) == [
+        f"events-{date}.1.jsonl",
+        f"events-{date}.jsonl",
+    ]
+
+
+def test_text_log_rolls_into_compressed_generations(tmp_path: Path) -> None:
+    import gzip
+    import logging as std_logging
+
+    from dino_bot.logging import DailyFileHandler
+
+    logs_dir = tmp_path / "logs"
+    handler = DailyFileHandler(logs_dir, max_bytes=200, backup_count=3)
+    handler.setFormatter(std_logging.Formatter("%(message)s"))
+    for index in range(60):
+        handler.emit(
+            std_logging.LogRecord(
+                "dino_bot", std_logging.INFO, __file__, index, f"line {index:04d}", None, None
+            )
+        )
+    handler.close()
+
+    date = datetime.now().strftime("%Y%m%d")
+    assert (logs_dir / f"{date}.log").exists()
+    assert (logs_dir / f"{date}.1.log").exists()
+    archived = sorted(logs_dir.glob(f"{date}.*.log.gz"))
+    assert archived and len(archived) <= 2
+    with gzip.open(archived[0], "rt", encoding="utf-8") as handle:
+        assert handle.read().startswith("line ")
+    # _recent_log_text globs 20*.log and must not pick up the archives.
+    assert all(not p.name.endswith(".gz") for p in logs_dir.glob("20*.log"))

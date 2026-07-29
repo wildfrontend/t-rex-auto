@@ -159,6 +159,11 @@ class EventLogConfig:
 
     enabled: bool = True
     max_bytes: int = 16 * 1024 * 1024
+    # Generations kept behind the live file. The cap fills in about 97 minutes,
+    # so one generation covered barely three hours and an overnight run lost
+    # everything before the last stretch. Generations past the first are
+    # gzipped to 6.5%, so twenty of them cost about 21 MB instead of 320 MB.
+    backup_count: int = 20
 
 
 @dataclass(frozen=True, slots=True)
@@ -209,6 +214,9 @@ class AppConfig:
     # The text log is read back by the control window and the diagnostic
     # bundle, so its size is a latency budget, not just disk.
     log_max_bytes: int = 32 * 1024 * 1024
+    # Same reasoning as event_log.backup_count; the text log fills its cap in
+    # roughly two hours and compresses to 4.4%.
+    log_backup_count: int = 12
     transition_poll_interval: int = 250
     speed_profiles: dict[str, dict[str, int]] = field(
         default_factory=_default_speed_profiles
@@ -393,6 +401,7 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
         save_debug_image=bool(data.get("save_debug_image", False)),
         idle_delay=int(data.get("idle_delay", 500)),
         log_max_bytes=int(data.get("log_max_bytes", 32 * 1024 * 1024)),
+        log_backup_count=int(data.get("log_backup_count", 12)),
         transition_poll_interval=int(data.get("transition_poll_interval", 250)),
         speed_profiles=speed_profiles,
         max_actions=int(data.get("max_actions", 0)),
@@ -550,6 +559,7 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
         event_log=EventLogConfig(
             enabled=bool(event_log_data.get("enabled", True)),
             max_bytes=int(event_log_data.get("max_bytes", 16 * 1024 * 1024)),
+            backup_count=int(event_log_data.get("backup_count", 20)),
         ),
         stalls=StallConfig(
             snapshots_enabled=bool(stalls_data.get("snapshots_enabled", True)),
@@ -683,6 +693,10 @@ def _validate(config: AppConfig) -> None:
         )
     if config.event_log.max_bytes < 0:
         raise ConfigError("event_log.max_bytes cannot be negative")
+    if config.event_log.backup_count < 1:
+        raise ConfigError("event_log.backup_count must be at least one")
+    if config.log_backup_count < 1:
+        raise ConfigError("log_backup_count must be at least one")
     if not 0 <= config.detector.default_threshold <= 1:
         raise ConfigError("detector.default_threshold must be between zero and one")
     if not 0 <= config.detector.nms_iou <= 1:

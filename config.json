@@ -50,6 +50,7 @@
   "save_debug_image": false,
   "idle_delay": 500,
   "log_max_bytes": 33554432,
+  "log_backup_count": 12,
   "max_actions": 0,
   "capture": {
     "backend": "adb",
@@ -213,7 +214,8 @@
   },
   "event_log": {
     "enabled": true,
-    "max_bytes": 16777216
+    "max_bytes": 16777216,
+    "backup_count": 20
   },
   "stalls": {
     "snapshots_enabled": true,
