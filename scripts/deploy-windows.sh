@@ -19,6 +19,7 @@ cp -a \
   "${project_root}/pyproject.toml" \
   "${project_root}/src" \
   "${project_root}/assets" \
+  "${project_root}/tools" \
   "${runtime_app}/"
 cp -a \
   "${project_root}/scripts/run-windows.ps1" \
