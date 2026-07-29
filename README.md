@@ -6,13 +6,13 @@
 目前完成 Auto Hunt MVP：辨識恐龍、選擇最大隊伍、發動狩獵並驗證結果。後續功能以
 Feature 方式加入，不需要修改核心狀態機。
 
-目前版本：`v0.2.23`。這一版讓日誌與事件流保留多個壓縮世代，通宵執行不再只剩最後三小時，
-並保留 v0.2.17 的錨點／供給量規劃、卡死逃生與半解析度比對，
+目前版本：`v0.2.24`。這一版新增只重啟 Dino Mutant App 的本機 AI 控制接口，
+並保留多世代壓縮日誌、v0.2.17 的錨點／供給量規劃、卡死逃生與半解析度比對，
 以及雙視窗啟動器、可調整狩獵速度及本機 AI 狀態接口：
 
 - 使用者只需雙擊 `start-bot.cmd`；啟動器會先檢查 Python、ADB、素材及畫面擷取。
 - 一個視窗顯示原始即時 LOG，另一個繁體中文互動視窗提供統計、調速、重啟與診斷工具。
-- `127.0.0.1:8765` 提供結構化狀態與白名單停止接口，讓同一台電腦上的 AI 安全操作。
+- `127.0.0.1:8765` 提供結構化狀態與白名單控制接口，讓同一台電腦上的 AI 安全操作。
 - Repository 內附 `.agents/skills/control-dino-bot`，限制 AI 使用固定接口與控制命令。
 - 控制視窗按 `E` 會輸出經過敏感資訊遮蔽的診斷 ZIP，不需要提供遠端控制權。
 - 診斷包包含環境檢查、最新工作階段、近期日誌、有效設定及 Codex 分析指引；截圖必須另外明確選擇。
@@ -257,7 +257,7 @@ Bot 執行期間會阻止 Windows 系統睡眠，但不阻止螢幕依電源設�
 
 ### 本機 AI 狀態與安全控制接口
 
-Bot 執行時只監聽 `127.0.0.1`。查詢端點為唯讀，控制端只接受固定的安全停止動作：
+Bot 執行時只監聽 `127.0.0.1`。查詢端點為唯讀，控制端只接受固定的安全動作：
 
 ```text
 http://127.0.0.1:8765/health
@@ -265,6 +265,7 @@ http://127.0.0.1:8765/status
 http://127.0.0.1:8765/actions
 http://127.0.0.1:8765/settings
 POST http://127.0.0.1:8765/control/stop
+POST http://127.0.0.1:8765/control/restart-game
 ```
 
 AI 或本機工具可直接讀取 `/status`，取得本次工作階段的成功狩獵數、信箱循環、
@@ -282,12 +283,15 @@ Port。啟動或切換時若 Port 被占用，控制視窗會顯示占用程式�
 $control-dino-bot 幫我查狩獵進度
 $control-dino-bot 用 8877 Port 查詢目前狀態
 $control-dino-bot 請停止 Bot
+$control-dino-bot 請重新啟動 Dino Mutant App
 ```
 
-Skill 只允許 `status/start/stop/restart/doctor/diagnostics/snapshot`。啟動、停止及重啟必須由使用者
-當次明確要求，控制腳本也會強制檢查 `-Confirm`；不允許 AI 自行執行 ADB 點擊、
-掃描 Port 或探索遊戲。控制腳本會先驗證 `/health` 服務身分；停止與重啟還會確認
-API PID、Port 占用者與 Bot 命令列一致，驗證失敗時不會送出控制請求。
+Skill 只允許 `status/start/stop/restart/restart-game/doctor/diagnostics/snapshot`。啟動、停止、
+重啟 Bot 或重啟遊戲 App 都必須由使用者當次明確要求，控制腳本也會強制檢查 `-Confirm`；
+不允許 AI 自行執行 ADB 點擊、掃描 Port 或探索遊戲。`restart-game` 只會重啟設定中固定的
+Dino Mutant package，不接受外部 package、activity 或 ADB 指令。控制腳本會先驗證
+`/health` 服務身分；控制前還會確認 API PID、Port 占用者與 Bot 命令列一致，驗證失敗時
+不會送出控制請求。
 
 不啟動 HTTP 服務也能從 CLI 查詢同一份結構化資料：
 

@@ -103,12 +103,19 @@ class BlackScreenRecovery:
             self._black_since = None
         return restarted
 
-    def request_restart(self, reason: str, *, reason_key: str) -> bool:
+    def request_restart(
+        self,
+        reason: str,
+        *,
+        reason_key: str,
+        bypass_cooldown: bool = False,
+    ) -> bool:
         """Restart the configured app while sharing one cross-cause cooldown."""
 
         now = self.clock()
         if (
-            self._last_restart_at is not None
+            not bypass_cooldown
+            and self._last_restart_at is not None
             and now - self._last_restart_at < self.cooldown_seconds
         ):
             if reason_key not in self._deferred_reasons:
@@ -129,12 +136,14 @@ class BlackScreenRecovery:
             self.logger.error("Recovery | game restart failed: %s", exc)
             return False
         self._last_restart_at = now
+        self._black_since = None
+        self._is_black = False
         self._deferred_reasons.clear()
+        self.logger.info(
+            "Recovery | game restarted; waiting %.0fs for launch",
+            self.launch_wait_seconds,
+        )
         if self.launch_wait_seconds:
-            self.logger.info(
-                "Recovery | game restarted; waiting %.0fs for launch",
-                self.launch_wait_seconds,
-            )
             self.sleeper(self.launch_wait_seconds)
         return True
 

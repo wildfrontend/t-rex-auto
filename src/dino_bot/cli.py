@@ -43,7 +43,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--status-port",
         type=int,
         default=8765,
-        help="read-only localhost status API port; use 0 to disable",
+        help="localhost status and allowlisted control API port; use 0 to disable",
     )
     run.add_argument("--verbose", action="store_true")
 
@@ -334,10 +334,13 @@ def main(argv: list[str] | None = None) -> int:
         engine = create_engine(config, verbose=args.verbose)
         status_server = None
         if args.status_port > 0:
+            control_handlers = {"stop": engine.stop}
+            if engine.context.runtime_recovery is not None:
+                control_handlers["restart-game"] = engine.request_game_restart
             status_server = LocalStatusServer(
                 config.logs_dir,
                 args.status_port,
-                control_handlers={"stop": engine.stop},
+                control_handlers=control_handlers,
             )
             try:
                 status_server.start()

@@ -1838,6 +1838,28 @@ def test_black_screen_recovery_restarts_after_timeout_and_honors_cooldown() -> N
     assert restarter.restart_count == 2
 
 
+def test_manual_game_restart_bypasses_automatic_recovery_cooldown() -> None:
+    now = [100.0]
+    restarter = RecordingRestarter()
+    recovery = BlackScreenRecovery(
+        restarter,
+        logging.getLogger("test_manual_restart_cooldown"),
+        cooldown_seconds=300,
+        launch_wait_seconds=0,
+        clock=lambda: now[0],
+    )
+
+    assert recovery.request_restart("automatic", reason_key="black_screen")
+    now[0] += 1
+    assert not recovery.request_restart("automatic", reason_key="black_screen")
+    assert recovery.request_restart(
+        "manual control request",
+        reason_key="manual_control",
+        bypass_cooldown=True,
+    )
+    assert restarter.restart_count == 2
+
+
 def test_adb_app_restarter_only_restarts_configured_game() -> None:
     client = FakeAdbClient()
     restarter = AdbAppRestarter(client, "game.package", "GameActivity")  # type: ignore[arg-type]
@@ -1846,6 +1868,67 @@ def test_adb_app_restarter_only_restarts_configured_game() -> None:
         ["shell", "am", "force-stop", "game.package"],
         ["shell", "am", "start", "-n", "game.package/GameActivity"],
     ]
+
+
+def test_engine_queues_manual_game_restart_on_bot_thread() -> None:
+    class ManualRecovery:
+        def __init__(self) -> None:
+            self.requests: list[tuple[str, str, bool]] = []
+
+        def observe(self, frame: Frame) -> bool:
+            return False
+
+        def request_restart(
+            self,
+            reason: str,
+            *,
+            reason_key: str,
+            bypass_cooldown: bool = False,
+        ) -> bool:
+            self.requests.append((reason, reason_key, bypass_cooldown))
+            return True
+
+    recovery = ManualRecovery()
+    planner = HuntPlanner(("dinosaur",))
+    planner._awaiting_hunt_button = True
+    context = BotContext(
+        capture_provider=SequenceCapture([make_frame(255)]),
+        detector=PixelDetector(),
+        planner=planner,
+        action_driver=RecordingActionDriver(),
+        verifier=TargetChangedVerifier(),
+        observer=RuntimeMode(),
+        logger=logging.getLogger("test_manual_game_restart"),
+        runtime_recovery=recovery,
+        state=BotState.VERIFY,
+        target=Target("resource", 80, 50, 0.9, make_detection()),
+        attempt=2,
+    )
+    engine = BotEngine(context)
+
+    assert engine.request_game_restart()
+    assert not engine.request_game_restart()
+    assert recovery.requests == []
+
+    assert engine.step() == BotState.IDLE
+    assert recovery.requests == [("manual control request", "manual_control", True)]
+    assert context.target is None
+    assert context.attempt == 0
+    assert not planner._awaiting_hunt_button
+
+
+def test_engine_rejects_manual_game_restart_without_recovery() -> None:
+    context = BotContext(
+        capture_provider=SequenceCapture([make_frame(255)]),
+        detector=PixelDetector(),
+        planner=HuntPlanner(("dinosaur",)),
+        action_driver=RecordingActionDriver(),
+        verifier=TargetChangedVerifier(),
+        observer=RuntimeMode(),
+        logger=logging.getLogger("test_manual_game_restart_unavailable"),
+    )
+
+    assert not BotEngine(context).request_game_restart()
 
 
 def test_engine_clears_transient_state_after_black_screen_recovery() -> None:

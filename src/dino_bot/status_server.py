@@ -13,6 +13,22 @@ from urllib.parse import urlparse
 
 from .status import build_runtime_status
 
+_CONTROL_PATHS = {
+    "/control/stop": "stop",
+    "/control/restart-game": "restart-game",
+}
+
+
+def _is_loopback_origin(origin: str) -> bool:
+    if not origin:
+        return True
+    parsed = urlparse(origin)
+    return parsed.scheme in {"http", "https"} and parsed.hostname in {
+        "127.0.0.1",
+        "::1",
+        "localhost",
+    }
+
 
 class _StatusHttpServer(ThreadingHTTPServer):
     daemon_threads = True
@@ -21,7 +37,7 @@ class _StatusHttpServer(ThreadingHTTPServer):
         self,
         address: tuple[str, int],
         logs_dir: Path,
-        control_handlers: dict[str, Callable[[], None]],
+        control_handlers: dict[str, Callable[[], bool | None]],
     ) -> None:
         self.logs_dir = logs_dir
         self.control_handlers = control_handlers
@@ -48,7 +64,7 @@ class _StatusHandler(BaseHTTPRequestHandler):
                 {
                     "ok": True,
                     "service": "dino-mutant-bot-status",
-                    "api_version": 1,
+                    "api_version": 2,
                     "process_id": os.getpid(),
                 },
             )
@@ -72,7 +88,11 @@ class _StatusHandler(BaseHTTPRequestHandler):
                 {
                     "service": "Dino Mutant Bot local status and control API",
                     "read_endpoints": ["/health", "/status", "/actions", "/settings"],
-                    "control_endpoints": ["POST /control/stop"],
+                    "control_endpoints": [
+                        f"POST {path}"
+                        for path, action in _CONTROL_PATHS.items()
+                        if action in self.server.control_handlers
+                    ],
                 },
             )
         else:
@@ -81,10 +101,10 @@ class _StatusHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         path = urlparse(self.path).path.rstrip("/") or "/"
         origin = self.headers.get("Origin", "")
-        if origin and not origin.startswith(("http://127.0.0.1", "http://localhost")):
+        if not _is_loopback_origin(origin):
             self._send_json(403, {"error": "forbidden_origin"})
             return
-        action = "stop" if path == "/control/stop" else None
+        action = _CONTROL_PATHS.get(path)
         if action is None:
             self._send_json(404, {"error": "not_found"})
             return
@@ -92,7 +112,10 @@ class _StatusHandler(BaseHTTPRequestHandler):
         if handler is None:
             self._send_json(503, {"error": "control_unavailable", "action": action})
             return
-        handler()
+        accepted = handler()
+        if accepted is False:
+            self._send_json(409, {"error": "control_rejected", "action": action})
+            return
         self._send_json(202, {"accepted": True, "action": action})
 
     def log_message(self, format: str, *args: object) -> None:
@@ -107,7 +130,7 @@ class LocalStatusServer:
         logs_dir: Path,
         port: int = 8765,
         *,
-        control_handlers: dict[str, Callable[[], None]] | None = None,
+        control_handlers: dict[str, Callable[[], bool | None]] | None = None,
     ) -> None:
         self.logs_dir = logs_dir
         self.port = port

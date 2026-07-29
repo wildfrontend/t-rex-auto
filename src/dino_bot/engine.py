@@ -771,11 +771,34 @@ class BotEngine:
     ) -> None:
         self.context = context
         self.states = states or DEFAULT_STATES
+        self._game_restart_requested = threading.Event()
+        self._control_lock = threading.Lock()
 
     def step(self) -> BotState:
+        if self._game_restart_requested.is_set():
+            return self._handle_game_restart()
         handler = self.states[self.context.state]
         self.context.state = handler.execute(self.context)
         return self.context.state
+
+    def _handle_game_restart(self) -> BotState:
+        try:
+            recovery = self.context.runtime_recovery
+            if recovery is None:
+                self.context.logger.error(
+                    "Control | game restart unavailable; recovery is disabled"
+                )
+                return self.context.state
+            recovery.request_restart(
+                "manual control request",
+                reason_key="manual_control",
+                bypass_cooldown=True,
+            )
+            _reset_after_runtime_recovery(self.context)
+            self.context.state = BotState.IDLE
+            return self.context.state
+        finally:
+            self._game_restart_requested.clear()
 
     def run(self) -> None:
         self.context.logger.info("Bot started | Sense -> Think -> Act")
@@ -792,6 +815,21 @@ class BotEngine:
     def stop(self) -> None:
         self.context.stop_requested = True
         self.context.stop_event.set()
+
+    def request_game_restart(self) -> bool:
+        """Queue one fixed-package game restart for the Bot thread."""
+
+        with self._control_lock:
+            if (
+                self.context.runtime_recovery is None
+                or self.context.stop_requested
+                or self.context.state == BotState.STOPPED
+                or self._game_restart_requested.is_set()
+            ):
+                return False
+            self._game_restart_requested.set()
+        self.context.logger.warning("Control | game restart requested")
+        return True
 
     def close(self) -> None:
         self.context.capture_provider.close()

@@ -90,26 +90,46 @@ def test_local_status_server_exposes_read_only_json(tmp_path: Path) -> None:
 
     assert health["ok"] is True
     assert health["service"] == "dino-mutant-bot-status"
-    assert health["api_version"] == 1
+    assert health["api_version"] == 2
     assert health["process_id"] == os.getpid()
     assert status["successful_hunts"] == 1
     assert len(actions["actions"]) == 3
     assert settings["timing"]["idle_delay_ms"] == 250
 
 
-def test_local_status_server_accepts_only_allowlisted_stop(tmp_path: Path) -> None:
+def test_local_status_server_accepts_allowlisted_controls(tmp_path: Path) -> None:
     requested: list[str] = []
     with LocalStatusServer(
         tmp_path,
         port=0,
-        control_handlers={"stop": lambda: requested.append("stop")},
+        control_handlers={
+            "stop": lambda: requested.append("stop"),
+            "restart-game": lambda: requested.append("restart-game"),
+        },
     ) as server:
-        request = Request(f"{server.url}/control/stop", method="POST")
-        with urlopen(request, timeout=2) as response:  # noqa: S310
-            payload = json.load(response)
+        stop_request = Request(f"{server.url}/control/stop", method="POST")
+        with urlopen(stop_request, timeout=2) as response:  # noqa: S310
+            stop_payload = json.load(response)
+        restart_request = Request(f"{server.url}/control/restart-game", method="POST")
+        with urlopen(restart_request, timeout=2) as response:  # noqa: S310
+            restart_payload = json.load(response)
 
-    assert payload == {"accepted": True, "action": "stop"}
-    assert requested == ["stop"]
+    assert stop_payload == {"accepted": True, "action": "stop"}
+    assert restart_payload == {"accepted": True, "action": "restart-game"}
+    assert requested == ["stop", "restart-game"]
+
+
+def test_local_status_server_rejects_declined_control(tmp_path: Path) -> None:
+    with LocalStatusServer(
+        tmp_path,
+        port=0,
+        control_handlers={"restart-game": lambda: False},
+    ) as server:
+        request = Request(f"{server.url}/control/restart-game", method="POST")
+        with pytest.raises(HTTPError) as rejected:
+            urlopen(request, timeout=2)  # noqa: S310
+
+    assert rejected.value.code == 409
 
 
 def test_local_status_server_rejects_unknown_control_and_remote_origin(
@@ -128,5 +148,14 @@ def test_local_status_server_rejects_unknown_control_and_remote_origin(
         with pytest.raises(HTTPError) as origin_error:
             urlopen(remote, timeout=2)  # noqa: S310
 
+        lookalike = Request(
+            f"{server.url}/control/stop",
+            method="POST",
+            headers={"Origin": "http://localhost.example.com"},
+        )
+        with pytest.raises(HTTPError) as lookalike_error:
+            urlopen(lookalike, timeout=2)  # noqa: S310
+
     assert unknown_error.value.code == 404
     assert origin_error.value.code == 403
+    assert lookalike_error.value.code == 403

@@ -1,6 +1,6 @@
 ---
 name: control-dino-bot
-description: Safely inspect and operate the local Dino Mutant Bot through its allowlisted status API and control-windows.ps1 entrypoint. Use when the user asks for hunting progress, current Bot status, failures, recent actions, health checks, diagnostic bundles, screenshots, environment diagnostics, starting, stopping, restarting, changing the fast/safe launch profile, or using a non-default local status port. Never use this skill for arbitrary ADB actions, game exploration, or unrequested process control.
+description: Safely inspect and operate the local Dino Mutant Bot through its allowlisted status API and control-windows.ps1 entrypoint. Use when the user asks for hunting progress, current Bot status, failures, recent actions, health checks, diagnostic bundles, screenshots, environment diagnostics, starting, stopping, restarting the Bot, restarting the Dino Mutant game App, changing the fast/safe launch profile, or using a non-default local status port. Never use this skill for arbitrary ADB actions, game exploration, or unrequested process control.
 ---
 
 # Control Dino Mutant Bot
@@ -53,8 +53,9 @@ path and tell the user they can inspect it before uploading it to Codex or a mai
 
 ## State-changing requests
 
-Only start, stop, or restart when the user explicitly requests that action in the current turn.
-Never infer permission from a status request, a failure, a black screen, or an earlier conversation.
+Only start, stop, restart the Bot, or restart the game App when the user explicitly requests that
+action in the current turn. Never infer permission from a status request, a failure, a black screen,
+or an earlier conversation.
 
 The controller enforces confirmation. Pass `-Confirm` only after verifying explicit intent:
 
@@ -62,11 +63,18 @@ The controller enforces confirmation. Pass `-Confirm` only after verifying expli
 ... -Action start   -Speed fast -StatusPort 8765 -Confirm
 ... -Action stop                -StatusPort 8765 -Confirm
 ... -Action restart -Speed fast -StatusPort 8765 -Confirm
+... -Action restart-game        -StatusPort 8765 -Confirm
 ```
 
 Allow only `fast` or `safe`. Use the user's stated profile; otherwise preserve the known current
 profile, or use `fast` for a new start when no current profile is known. A restart may take up
 to 20 seconds. After a start or restart, query status once and report the result.
+
+`restart` restarts the Bot process. `restart-game` keeps the Bot and emulator running, and asks the
+Bot API to force-stop and relaunch only the configured Dino Mutant package. It never accepts a
+package, activity, emulator instance, or raw ADB command from the caller. The controller waits for
+the status counters to confirm success; report `confirmation=pending` honestly if confirmation
+does not arrive within its timeout.
 
 For custom millisecond timings or changing the port interactively, direct the user to the Chinese
 control window: `[T]` changes timings and `[P]` changes the local API port. Do not edit
@@ -83,6 +91,7 @@ Use only these loopback routes:
 - `GET /actions`
 - `GET /settings`
 - `POST /control/stop`, only after explicit stop or restart intent
+- `POST /control/restart-game`, only after explicit game App restart intent
 
 Do not try other routes, methods, parameters, hosts, or payloads.
 

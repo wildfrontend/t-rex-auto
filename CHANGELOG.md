@@ -1,5 +1,14 @@
 # 版本紀錄
 
+## v0.2.24 — 2026-07-29
+
+- 新增本機白名單 `POST /control/restart-game`，讓 AI 不必操作 CMD 選單即可要求 Bot
+  重啟固定的 Dino Mutant App；不接受任意 package、activity 或 ADB 指令。
+- 重啟請求會排入 Bot 主迴圈，避免 HTTP 執行緒與狩獵動作同時使用 ADB。手動請求會略過
+  自動復原冷卻時間，完成後清理暫存工作流狀態。
+- `control-windows.ps1` 與 `control-dino-bot` Skill 新增 `restart-game`，維持本回合明確
+  授權、`-Confirm`、本機 API 身分及程序身分驗證，並用狀態計數確認執行結果。
+
 ## v0.2.23 — 2026-07-29
 
 - 日誌與事件流改成保留多個世代，第二代以後 gzip 壓縮。原本兩者都只留一代，

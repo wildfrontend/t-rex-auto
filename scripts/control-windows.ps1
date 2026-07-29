@@ -1,7 +1,7 @@
 ﻿[CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("status", "start", "stop", "restart", "doctor", "diagnostics", "snapshot")]
+    [ValidateSet("status", "start", "stop", "restart", "restart-game", "doctor", "diagnostics", "snapshot")]
     [string]$Action,
     [ValidateSet("fast", "safe")]
     [string]$Speed = "fast",
@@ -30,7 +30,7 @@ function Assert-MutationConfirmed {
         Write-JsonResult @{
             ok = $false
             error = "confirmation_required"
-            message = "start, stop, and restart require -Confirm"
+            message = "start, stop, restart, and restart-game require -Confirm"
         }
         exit 2
     }
@@ -109,6 +109,14 @@ function Request-GracefulStop {
         -TimeoutSec 3
 }
 
+function Request-GameRestart {
+    [void](Assert-DinoBotApiIdentity -RequireProcessIdentity)
+    return Invoke-RestMethod `
+        -Method Post `
+        -Uri "$ApiRoot/control/restart-game" `
+        -TimeoutSec 3
+}
+
 function Start-BotLauncher {
     if ((Get-BotProcesses).Count -gt 0) {
         return @{ ok = $true; action = "start"; result = "already_running" }
@@ -181,6 +189,38 @@ try {
         $Result = Start-BotLauncher
         $Result.action = "restart"
         Write-JsonResult $Result
+    } elseif ($Action -eq "restart-game") {
+        Assert-MutationConfirmed
+        $Before = Get-ApiStatus
+        $PreviousRestarts = [int]$Before.game_restarts
+        $PreviousFailures = [int]$Before.game_restart_failures
+        $Response = Request-GameRestart
+        $Deadline = (Get-Date).AddSeconds(20)
+        do {
+            Start-Sleep -Milliseconds 500
+            $Status = Get-ApiStatus
+            if ([int]$Status.game_restart_failures -gt $PreviousFailures) {
+                throw "game_restart_failed"
+            }
+            if ([int]$Status.game_restarts -gt $PreviousRestarts) {
+                Write-JsonResult @{
+                    ok = $true
+                    action = "restart-game"
+                    result = "game_restarted"
+                    response = $Response
+                    status = $Status
+                }
+                exit 0
+            }
+        } while ((Get-Date) -lt $Deadline)
+        Write-JsonResult @{
+            ok = $true
+            action = "restart-game"
+            result = "restart_requested"
+            confirmation = "pending"
+            response = $Response
+            status = $Status
+        }
     } elseif ($Action -eq "doctor") {
         $PythonExecutable = Resolve-PythonExecutable
         & $PythonExecutable `
