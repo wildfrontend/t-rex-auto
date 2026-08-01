@@ -158,6 +158,8 @@ class HatchConfig:
     require_home_anchor: bool = True
     home_failure_limit: int = 3
     home_backoff_seconds: float = 30.0
+    # Phase C: cull only when the cave-view N/350 readout exceeds this.
+    cull_threshold: int = 300
 
 
 @dataclass(frozen=True, slots=True)
@@ -584,6 +586,7 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
             require_home_anchor=bool(hatch_data.get("require_home_anchor", True)),
             home_failure_limit=int(hatch_data.get("home_failure_limit", 3)),
             home_backoff_seconds=float(hatch_data.get("home_backoff_seconds", 30)),
+            cull_threshold=int(hatch_data.get("cull_threshold", 300)),
         ),
         training=TrainingConfig(
             fps=float(training_data.get("fps", 2)),
@@ -684,6 +687,8 @@ def _validate(config: AppConfig) -> None:
         raise ConfigError("hatch.home_failure_limit must be greater than zero")
     if config.hatch.home_backoff_seconds < 0:
         raise ConfigError("hatch.home_backoff_seconds cannot be negative")
+    if config.hatch.cull_threshold < 0:
+        raise ConfigError("hatch.cull_threshold cannot be negative")
     if config.verify_retry < 0:
         raise ConfigError("verify_retry cannot be negative")
     if config.verify.minimum_checks <= 0:
