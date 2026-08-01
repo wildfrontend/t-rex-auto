@@ -13,7 +13,10 @@
       "type": "hatch_label",
       "file": "templates/hatch-label.png",
       "threshold": 0.85,
-      "click_offset": [29, -99]
+      "click_offset": [
+        29,
+        -99
+      ]
     },
     {
       "type": "hatch_close_button",
@@ -39,6 +42,91 @@
       "type": "hatch_home_anchor",
       "file": "templates/hatch-home-anchor.png",
       "threshold": 0.88
+    },
+    {
+      "type": "hatch_tag_all",
+      "file": "templates/hatch-tag-all.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_tag_mass",
+      "file": "templates/hatch-tag-mass.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_tag_top",
+      "file": "templates/hatch-tag-top.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_tag_hp",
+      "file": "templates/hatch-tag-hp.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_tag_attack",
+      "file": "templates/hatch-tag-attack.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_sort_hp",
+      "file": "templates/hatch-sort-hp.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_sort_attack",
+      "file": "templates/hatch-sort-attack.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_place_sort_best",
+      "file": "templates/hatch-place-sort-best.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_place_sort_level",
+      "file": "templates/hatch-place-sort-level.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_place_hdr_best",
+      "file": "templates/hatch-place-hdr-best.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_place_hdr_level",
+      "file": "templates/hatch-place-hdr-level.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_tag_hdr_attack",
+      "file": "templates/hatch-tag-hdr-attack.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_tag_hdr_top",
+      "file": "templates/hatch-tag-hdr-top.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_tag_hdr_hp",
+      "file": "templates/hatch-tag-hdr-hp.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_tag_hdr_all",
+      "file": "templates/hatch-tag-hdr-all.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_tag_hdr_mass",
+      "file": "templates/hatch-tag-hdr-mass.png",
+      "threshold": 0.85
+    },
+    {
+      "type": "hatch_sort_hdr_attack",
+      "file": "templates/hatch-sort-hdr-attack.png",
+      "threshold": 0.85
     }
   ]
 }
