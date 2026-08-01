@@ -501,8 +501,23 @@
     事件log/卡死快照；不掛狩獵進度看門狗）。
   - `assets/hatch/`：空 manifest ＋ 素材需求 README（7 個 template）。
   - `tests/test_hatch.py`：10 個離線測試（全綠；全套件 130 綠）。
-- 待辦：截素材（T1–T3 前置）→ 實測校準 egg_pile 座標與 scroll 參數
-  → Phase B/C（需數字模板/OCR，另開實作輪）。
+- 2026-08-01 素材完成：從使用者素材庫
+  （`C:\Users\Louis\Documents\MuMuSharedFolder\Screenshots`，48 張
+  900×1600，MuMu 模擬器）裁出 Phase A 全部 7 個 template 並離線驗證：
+  - 孵化器頁：標題/X/「孵化」標籤全中（標籤 threshold 調 0.85，
+    黃光暈變體也抓得到；空孵化器 0 誤報）。
+  - 詳細頁只中「孵化」鈕；結果頁「獲取」「驅逐」分明，互不誤匹配；
+    洞穴結算頁的「獲取」也能中（Phase C 可沿用）。
+  - 主頁面（含洞穴視角）home anchor 全中 1.00。
+  - 已知現象：「我的巢」開著時 home anchor 仍可見（Phase A 不會進
+    該畫面，屆時 Phase B 要另加畫面判斷）；某恐龍資訊頁的紅 X 會被
+    close 模板匹配（planner 只在孵化器標題可見時才點 X，安全）。
+- 素材庫闕漏（Phase B/C 用，之後補截）：
+  1. 「選擇恐龍」排序欄位下拉**展開**的畫面（名稱/等級/攻擊力/HP/速度
+     選項清單）。
+  2. 「我的巢」的關閉方式截圖（X 鈕位置或點外部遮罩）。
+- 待辦：實機測試 T1–T5（校準 egg_pile 座標與 scroll 參數；MuMu 記得
+  `emulator: "mumu"`）→ Phase B/C（需數字模板/OCR，另開實作輪）。
 
 ## 9. 小事件測試計畫
 

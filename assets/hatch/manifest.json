@@ -3,5 +3,41 @@
     900,
     1600
   ],
-  "templates": []
+  "templates": [
+    {
+      "type": "hatch_incubator_title",
+      "file": "templates/hatch-incubator-title.png",
+      "threshold": 0.88
+    },
+    {
+      "type": "hatch_label",
+      "file": "templates/hatch-label.png",
+      "threshold": 0.85
+    },
+    {
+      "type": "hatch_close_button",
+      "file": "templates/hatch-close-button.png",
+      "threshold": 0.88
+    },
+    {
+      "type": "hatch_button",
+      "file": "templates/hatch-button.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_claim_button",
+      "file": "templates/hatch-claim-button.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_expel_button",
+      "file": "templates/hatch-expel-button.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_home_anchor",
+      "file": "templates/hatch-home-anchor.png",
+      "threshold": 0.88
+    }
+  ]
 }
