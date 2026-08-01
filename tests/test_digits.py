@@ -8,8 +8,8 @@ import pytest
 
 from dino_bot.digits import (
     GLYPH_SIZE,
-    DigitReadError,
     DigitReader,
+    DigitReadError,
     segment_glyphs,
 )
 
