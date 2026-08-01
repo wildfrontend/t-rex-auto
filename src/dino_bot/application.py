@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import logging
 
+from . import attack_replacement as attack_replacement_feature
 from . import hatch as hatch_feature
 from . import nest_filter as nest_filter_feature
+from . import parent_open as parent_open_feature
 from . import select_sort as select_sort_feature
 from .actions import AdbActionDriver, AdbClient
 from .capture import AdbScreencapCapture, MssEmulatorCapture
@@ -27,7 +29,9 @@ from .hatch import HatchPlanner
 from .logging import configure_logging
 from .models import ActionKind
 from .modes import create_mode
+from .attack_replacement import AttackReplacementTestPlanner
 from .nest_filter import NestTagFilterTestPlanner
+from .parent_open import ParentOpenTestPlanner
 from .planning import HuntPlanner
 from .recovery import AdbAppRestarter, BlackScreenRecovery, HuntProgressWatchdog
 from .select_sort import SelectSortTestPlanner
@@ -47,6 +51,10 @@ def create_engine(
         return _create_hatch_engine(config, verbose=verbose, filter_test=True)
     if feature == "hatch-sort-test":
         return _create_hatch_engine(config, verbose=verbose, sort_test=True)
+    if feature == "hatch-parent-test":
+        return _create_hatch_engine(config, verbose=verbose, parent_test=True)
+    if feature == "hatch-attack-test":
+        return _create_hatch_engine(config, verbose=verbose, attack_test=True)
     if feature != "hunt":
         raise ValueError(f"unknown feature: {feature}")
     return _create_hunt_engine(config, verbose=verbose)
@@ -231,6 +239,8 @@ def _create_hatch_engine(
     verbose: bool = False,
     filter_test: bool = False,
     sort_test: bool = False,
+    parent_test: bool = False,
+    attack_test: bool = False,
 ) -> BotEngine:
     """Wire the Auto Hatch feature onto the shared capture/act/verify core.
 
@@ -248,7 +258,13 @@ def _create_hatch_engine(
         backup_count=config.log_backup_count,
     )
     hatch = config.hatch
-    if sort_test:
+    if attack_test:
+        logger.info(
+            "Feature | hatch-attack-test | both parents + strict upgrade | T10/T11"
+        )
+    elif parent_test:
+        logger.info("Feature | hatch-parent-test | read parents + open left | safe T10 subset")
+    elif sort_test:
         logger.info("Feature | hatch-sort-test | all tags + attack descending | safe T7")
     elif filter_test:
         logger.info("Feature | hatch-filter-test | target=攻擊特化 | safe T7 subset")
@@ -290,7 +306,19 @@ def _create_hatch_engine(
         open_cv_detector,
         reference_size=open_cv_detector.reference_size,
     )
-    if sort_test:
+    if attack_test:
+        planner = AttackReplacementTestPlanner(
+            DigitReader(hatch.manifest.parent / "digits"),
+            reference_width=hatch.reference_width,
+            logger=logger,
+        )
+    elif parent_test:
+        planner = ParentOpenTestPlanner(
+            DigitReader(hatch.manifest.parent / "digits"),
+            reference_width=hatch.reference_width,
+            logger=logger,
+        )
+    elif sort_test:
         planner = SelectSortTestPlanner(
             DigitReader(hatch.manifest.parent / "digits"),
             reference_width=hatch.reference_width,
@@ -313,7 +341,11 @@ def _create_hatch_engine(
         )
     action = AdbActionDriver(adb)
     defaults = (
-        select_sort_feature
+        attack_replacement_feature
+        if attack_test
+        else parent_open_feature
+        if parent_test
+        else select_sort_feature
         if sort_test
         else nest_filter_feature
         if filter_test

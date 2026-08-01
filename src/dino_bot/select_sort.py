@@ -149,7 +149,10 @@ class SelectSortTestPlanner:
                     *self._scaled(frame, self.sort_header_point),
                 )
 
-        rows = read_candidate_rows(frame.image, self.reader, max_rows=5)
+        # Read the whole visible panel. Attack-heavy accounts can have a long
+        # equal-value plateau at the top, so five rows may contain no usable
+        # direction signal even though a lower value is visible farther down.
+        rows = read_candidate_rows(frame.image, self.reader, max_rows=9)
         direction = self._descending_direction([row.attack for row in rows])
         if direction is None:
             self._stage = "direction_unreadable"

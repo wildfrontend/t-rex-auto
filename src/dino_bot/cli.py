@@ -29,7 +29,14 @@ def build_parser() -> argparse.ArgumentParser:
     run = subcommands.add_parser("run", help="start the bot loop")
     run.add_argument(
         "--feature",
-        choices=["hunt", "hatch", "hatch-filter-test", "hatch-sort-test"],
+        choices=[
+            "hunt",
+            "hatch",
+            "hatch-filter-test",
+            "hatch-sort-test",
+            "hatch-parent-test",
+            "hatch-attack-test",
+        ],
         default="hunt",
         help="which automation to run: hunt (default) or the egg hatch loop",
     )

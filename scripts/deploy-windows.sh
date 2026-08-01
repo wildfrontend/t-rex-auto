@@ -40,6 +40,12 @@ cp -a \
 cp -a \
   "${project_root}/scripts/start-hatch-sort-test.cmd" \
   "${runtime_root}/start-hatch-sort-test.cmd"
+cp -a \
+  "${project_root}/scripts/start-hatch-parent-test.cmd" \
+  "${runtime_root}/start-hatch-parent-test.cmd"
+cp -a \
+  "${project_root}/scripts/start-hatch-attack-test.cmd" \
+  "${runtime_root}/start-hatch-attack-test.cmd"
 cp -a "${project_root}/使用教學.md" "${runtime_root}/使用教學.md"
 cp -a "${project_root}/.agents" "${runtime_root}/"
 

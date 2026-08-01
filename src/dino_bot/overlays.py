@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from .models import Detection
 
 SELECT_CONFIRM_PROMPT = "hatch_select_confirm_prompt"
+NESTED_PARENT_WARNING = "hatch_nested_parent_warning"
 AUTOPLACE_NOTICE = "hatch_autoplace_notice"
 CONFIRM_YES = "hatch_confirm_yes"
 CONFIRM_NO = "hatch_confirm_no"
@@ -46,7 +47,15 @@ def next_safe_step(detections: Sequence[Detection]) -> OverlayStep:
         by_type.setdefault(detection.type, []).append(detection)
 
     prompt_type = next(
-        (kind for kind in (SELECT_CONFIRM_PROMPT, AUTOPLACE_NOTICE) if kind in by_type),
+        (
+            kind
+            for kind in (
+                SELECT_CONFIRM_PROMPT,
+                NESTED_PARENT_WARNING,
+                AUTOPLACE_NOTICE,
+            )
+            if kind in by_type
+        ),
         None,
     )
     if prompt_type is not None:

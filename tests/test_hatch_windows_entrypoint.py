@@ -24,6 +24,8 @@ def test_windows_deploy_includes_hatch_entrypoint() -> None:
     assert 'scripts/start-hatch-bot.cmd"' in deploy
     assert 'scripts/start-hatch-filter-test.cmd"' in deploy
     assert 'scripts/start-hatch-sort-test.cmd"' in deploy
+    assert 'scripts/start-hatch-parent-test.cmd"' in deploy
+    assert 'scripts/start-hatch-attack-test.cmd"' in deploy
 
 
 def test_filter_test_entrypoint_is_isolated_and_cycle_limited() -> None:
@@ -42,3 +44,27 @@ def test_sort_test_entrypoint_is_isolated_and_read_only() -> None:
     assert '-StatusPort "8768"' in command
     assert '-MaxActions "0"' in command
     assert '-MaxCycles "0"' in command
+
+
+def test_parent_test_entrypoint_is_isolated_and_one_tap_limited() -> None:
+    command = (REPO / "scripts/start-hatch-parent-test.cmd").read_text(
+        encoding="utf-8"
+    )
+
+    assert '-Feature "hatch-parent-test"' in command
+    assert '-StatusPort "8769"' in command
+    assert '-MaxActions "1"' in command
+    assert '-MaxCycles "1"' in command
+    assert "will not select or replace any dinosaur" in command
+
+
+def test_attack_entrypoint_is_isolated_and_strictly_upgrades() -> None:
+    command = (REPO / "scripts/start-hatch-attack-test.cmd").read_text(
+        encoding="utf-8"
+    )
+
+    assert '-Feature "hatch-attack-test"' in command
+    assert '-StatusPort "8770"' in command
+    assert '-MaxActions "20"' in command
+    assert '-MaxCycles "2"' in command
+    assert "ONLY when its attack is strictly higher" in command

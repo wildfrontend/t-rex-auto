@@ -134,6 +134,11 @@
       "threshold": 0.9
     },
     {
+      "type": "hatch_nested_parent_warning",
+      "file": "templates/hatch-nested-parent-warning.png",
+      "threshold": 0.9
+    },
+    {
       "type": "hatch_confirm_yes",
       "file": "templates/hatch-confirm-yes.png",
       "threshold": 0.9

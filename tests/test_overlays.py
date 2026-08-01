@@ -7,6 +7,7 @@ from dino_bot.overlays import (
     DISMISS,
     INCUBATOR_FULL_TOAST,
     INFO,
+    NESTED_PARENT_WARNING,
     NONE,
     SELECT_CONFIRM_PROMPT,
     next_safe_step,
@@ -24,6 +25,14 @@ def test_known_confirmation_is_cancelled_only_through_detected_no_button() -> No
             detection(CONFIRM_YES, 100, 200),
             detection(CONFIRM_NO, 300, 400),
         ]
+    )
+    assert step.kind == DISMISS
+    assert step.point == (300, 400)
+
+
+def test_nested_parent_warning_is_safely_cancelled_by_generic_overlay_policy() -> None:
+    step = next_safe_step(
+        [detection(NESTED_PARENT_WARNING), detection(CONFIRM_NO, 300, 400)]
     )
     assert step.kind == DISMISS
     assert step.point == (300, 400)
