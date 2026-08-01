@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 from . import hatch as hatch_feature
+from . import nest_filter as nest_filter_feature
 from .actions import AdbActionDriver, AdbClient
 from .capture import AdbScreencapCapture, MssEmulatorCapture
 from .config import AppConfig
@@ -24,6 +25,7 @@ from .hatch import HatchPlanner
 from .logging import configure_logging
 from .models import ActionKind
 from .modes import create_mode
+from .nest_filter import NestTagFilterTestPlanner
 from .planning import HuntPlanner
 from .recovery import AdbAppRestarter, BlackScreenRecovery, HuntProgressWatchdog
 from .stalls import StallSnapshotWriter
@@ -38,6 +40,8 @@ def create_engine(
 ) -> BotEngine:
     if feature == "hatch":
         return _create_hatch_engine(config, verbose=verbose)
+    if feature == "hatch-filter-test":
+        return _create_hatch_engine(config, verbose=verbose, filter_test=True)
     if feature != "hunt":
         raise ValueError(f"unknown feature: {feature}")
     return _create_hunt_engine(config, verbose=verbose)
@@ -216,7 +220,12 @@ def _create_hunt_engine(config: AppConfig, *, verbose: bool = False) -> BotEngin
     return BotEngine(context)
 
 
-def _create_hatch_engine(config: AppConfig, *, verbose: bool = False) -> BotEngine:
+def _create_hatch_engine(
+    config: AppConfig,
+    *,
+    verbose: bool = False,
+    filter_test: bool = False,
+) -> BotEngine:
     """Wire the Auto Hatch feature onto the shared capture/act/verify core.
 
     Everything platform-shaped (ADB, capture, modes, black-screen recovery,
@@ -233,14 +242,17 @@ def _create_hatch_engine(config: AppConfig, *, verbose: bool = False) -> BotEngi
         backup_count=config.log_backup_count,
     )
     hatch = config.hatch
-    logger.info(
-        "Feature | hatch | rescan=%.0fs | egg_pile=(%.0f,%.0f)@%.0fw | scrolls<=%d",
-        hatch.rescan_interval_seconds,
-        hatch.egg_pile[0],
-        hatch.egg_pile[1],
-        hatch.reference_width,
-        hatch.max_scrolls,
-    )
+    if filter_test:
+        logger.info("Feature | hatch-filter-test | target=攻擊特化 | safe T7 subset")
+    else:
+        logger.info(
+            "Feature | hatch | rescan=%.0fs | egg_pile=(%.0f,%.0f)@%.0fw | scrolls<=%d",
+            hatch.rescan_interval_seconds,
+            hatch.egg_pile[0],
+            hatch.egg_pile[1],
+            hatch.reference_width,
+            hatch.max_scrolls,
+        )
     adb = AdbClient(config.adb)
     device = adb.ensure_ready()
     logger.info("ADB | device=%s | %s", device.serial, device.description)
@@ -270,20 +282,25 @@ def _create_hatch_engine(config: AppConfig, *, verbose: bool = False) -> BotEngi
         open_cv_detector,
         reference_size=open_cv_detector.reference_size,
     )
-    planner = HatchPlanner(
-        egg_pile_point=(hatch.egg_pile[0], hatch.egg_pile[1]),
-        reference_width=hatch.reference_width,
-        scroll_vector=hatch.scroll_vector,
-        scroll_duration_ms=hatch.scroll_duration_ms,
-        max_scrolls=hatch.max_scrolls,
-        rescan_interval_seconds=hatch.rescan_interval_seconds,
-        require_home_anchor=hatch.require_home_anchor,
-        home_failure_limit=hatch.home_failure_limit,
-        home_backoff_seconds=hatch.home_backoff_seconds,
-        logger=logger,
+    planner = (
+        NestTagFilterTestPlanner(reference_width=hatch.reference_width)
+        if filter_test
+        else HatchPlanner(
+            egg_pile_point=(hatch.egg_pile[0], hatch.egg_pile[1]),
+            reference_width=hatch.reference_width,
+            scroll_vector=hatch.scroll_vector,
+            scroll_duration_ms=hatch.scroll_duration_ms,
+            max_scrolls=hatch.max_scrolls,
+            rescan_interval_seconds=hatch.rescan_interval_seconds,
+            require_home_anchor=hatch.require_home_anchor,
+            home_failure_limit=hatch.home_failure_limit,
+            home_backoff_seconds=hatch.home_backoff_seconds,
+            logger=logger,
+        )
     )
     action = AdbActionDriver(adb)
-    success_transitions = dict(hatch_feature.DEFAULT_SUCCESS_TRANSITIONS)
+    defaults = nest_filter_feature if filter_test else hatch_feature
+    success_transitions = dict(defaults.DEFAULT_SUCCESS_TRANSITIONS)
     success_transitions.update(config.verify.success_transitions)
     verifier = TargetChangedVerifier(
         max_distance=config.verify.max_distance,
@@ -333,9 +350,9 @@ def _create_hatch_engine(config: AppConfig, *, verbose: bool = False) -> BotEngi
         if config.stalls.snapshots_enabled
         else None
     )
-    post_action_delays = dict(hatch_feature.DEFAULT_POST_ACTION_DELAYS_MS)
+    post_action_delays = dict(defaults.DEFAULT_POST_ACTION_DELAYS_MS)
     post_action_delays.update(config.post_action_delays)
-    target_actions = dict(hatch_feature.DEFAULT_TARGET_ACTIONS)
+    target_actions = dict(defaults.DEFAULT_TARGET_ACTIONS)
     target_actions.update(config.target_actions)
     context = BotContext(
         capture_provider=capture,
@@ -360,7 +377,7 @@ def _create_hatch_engine(config: AppConfig, *, verbose: bool = False) -> BotEngi
         # Hatch cycles are completed only by a verified claim. The shared
         # config normally contains hunt's mailbox completion target, which
         # must not leak into this feature or --max-cycles can never stop it.
-        cycle_complete_targets=hatch_feature.DEFAULT_CYCLE_COMPLETE_TARGETS,
+        cycle_complete_targets=defaults.DEFAULT_CYCLE_COMPLETE_TARGETS,
         runtime_recovery=runtime_recovery,
         hunt_progress_recovery=None,
         stall_snapshots=stall_snapshots,

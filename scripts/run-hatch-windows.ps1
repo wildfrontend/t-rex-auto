@@ -1,5 +1,7 @@
 [CmdletBinding()]
 param(
+    [ValidateSet("hatch", "hatch-filter-test")]
+    [string]$Feature = "hatch",
     [ValidateSet("runtime", "debug")]
     [string]$Mode = "debug",
     [ValidateRange(0, [int]::MaxValue)]
@@ -45,7 +47,7 @@ $RunArguments = @(
     $MainScript,
     "--config", $ConfigPath,
     "run",
-    "--feature", "hatch",
+    "--feature", $Feature,
     "--mode", $Mode,
     "--max-actions", $MaxActions,
     "--max-cycles", $MaxCycles,
@@ -54,8 +56,8 @@ $RunArguments = @(
     "--verbose"
 )
 
-Write-Host "Dino Mutant Bot - Hatch only" -ForegroundColor Cyan
-Write-Host "Mode: $Mode | Speed: $Speed | Max actions: $MaxActions"
+Write-Host "Dino Mutant Bot - $Feature" -ForegroundColor Cyan
+Write-Host "Mode: $Mode | Speed: $Speed | Max actions: $MaxActions | Max cycles: $MaxCycles"
 Write-Host "Local Hatch status API: http://127.0.0.1:$StatusPort/status"
 
 Add-Type -TypeDefinition @"

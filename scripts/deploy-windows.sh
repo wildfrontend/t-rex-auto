@@ -34,6 +34,9 @@ cp -a \
   "${runtime_app}/scripts/"
 cp -a "${project_root}/scripts/start-bot.cmd" "${runtime_root}/start-bot.cmd"
 cp -a "${project_root}/scripts/start-hatch-bot.cmd" "${runtime_root}/start-hatch-bot.cmd"
+cp -a \
+  "${project_root}/scripts/start-hatch-filter-test.cmd" \
+  "${runtime_root}/start-hatch-filter-test.cmd"
 cp -a "${project_root}/使用教學.md" "${runtime_root}/使用教學.md"
 cp -a "${project_root}/.agents" "${runtime_root}/"
 

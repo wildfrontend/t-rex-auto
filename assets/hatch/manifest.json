@@ -164,6 +164,11 @@
         1.0,
         1.05
       ]
+    },
+    {
+      "type": "hatch_nest_title",
+      "file": "templates/hatch-nest-title.png",
+      "threshold": 0.9
     }
   ]
 }

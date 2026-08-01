@@ -10,7 +10,8 @@ def test_hatch_entrypoint_is_separate_and_fixed_to_hatch() -> None:
     runner = (REPO / "scripts/run-hatch-windows.ps1").read_text(encoding="utf-8")
 
     assert "run-hatch-windows.ps1" in command
-    assert '"--feature", "hatch"' in runner
+    assert '[string]$Feature = "hatch"' in runner
+    assert '"--feature", $Feature' in runner
     assert "$StatusPort = 8766" in runner
     assert "Another Bot is already running" in runner
     assert '-MaxCycles "%hatch_max_cycles%"' in command
@@ -21,3 +22,13 @@ def test_windows_deploy_includes_hatch_entrypoint() -> None:
 
     assert 'scripts/run-hatch-windows.ps1"' in deploy
     assert 'scripts/start-hatch-bot.cmd"' in deploy
+    assert 'scripts/start-hatch-filter-test.cmd"' in deploy
+
+
+def test_filter_test_entrypoint_is_isolated_and_cycle_limited() -> None:
+    command = (REPO / "scripts/start-hatch-filter-test.cmd").read_text(encoding="utf-8")
+
+    assert '-Feature "hatch-filter-test"' in command
+    assert '-StatusPort "8767"' in command
+    assert '-MaxActions "0"' in command
+    assert '-MaxCycles "1"' in command
