@@ -59,17 +59,32 @@ def test_home_anchor_triggers_scaled_egg_pile_tap() -> None:
     assert (target.x, target.y) == (225, 665)
 
 
-def test_incubator_prefers_topmost_label() -> None:
+def test_incubator_prefers_leftmost_label_in_top_row() -> None:
     planner, _ = make_planner()
     detections = [
         detection(hatch.INCUBATOR_TITLE, y=40),
-        detection(hatch.HATCH_LABEL, x=300, y=900),
-        detection(hatch.HATCH_LABEL, x=600, y=400),
+        detection(hatch.HATCH_LABEL, x=270, y=404),
+        detection(hatch.HATCH_LABEL, x=448, y=400),
+        detection(hatch.HATCH_LABEL, x=627, y=396),
+        detection(hatch.HATCH_LABEL, x=270, y=668),
     ]
     target = planner.choose(make_frame(), detections)
     assert target is not None
     assert target.type == hatch.HATCH_LABEL
-    assert target.y == 400
+    assert (target.x, target.y) == (270, 404)
+
+
+def test_incubator_moves_to_next_row_after_top_row_is_gone() -> None:
+    planner, _ = make_planner()
+    detections = [
+        detection(hatch.INCUBATOR_TITLE, y=40),
+        detection(hatch.HATCH_LABEL, x=627, y=672),
+        detection(hatch.HATCH_LABEL, x=270, y=680),
+        detection(hatch.HATCH_LABEL, x=448, y=676),
+    ]
+    target = planner.choose(make_frame(), detections)
+    assert target is not None
+    assert (target.x, target.y) == (270, 680)
 
 
 def test_incubator_without_labels_scrolls_then_closes() -> None:
@@ -106,6 +121,10 @@ def test_claim_button_takes_priority_and_counts() -> None:
     assert target is not None and target.type == hatch.CLAIM_BUTTON
     planner.on_action_success(hatch.CLAIM_BUTTON)
     assert planner.hatched == 1
+
+
+def test_hatch_cycle_completes_only_after_claim() -> None:
+    assert hatch.DEFAULT_CYCLE_COMPLETE_TARGETS == (hatch.CLAIM_BUTTON,)
 
 
 def test_expel_button_is_never_a_target() -> None:

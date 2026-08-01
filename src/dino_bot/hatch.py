@@ -57,6 +57,11 @@ DEFAULT_SUCCESS_TRANSITIONS: dict[str, tuple[str, ...]] = {
     CLOSE_BUTTON: (HOME_ANCHOR,),
 }
 
+# One successfully claimed dinosaur is one hatch workflow cycle. This stays
+# feature-local because the shared config's cycle target normally belongs to
+# hunt (mail_reward_collect_button).
+DEFAULT_CYCLE_COMPLETE_TARGETS: tuple[str, ...] = (CLAIM_BUTTON,)
+
 
 class HatchPlanner:
     """Reactive planner for the hatch loop.
@@ -162,9 +167,10 @@ class HatchPlanner:
             labels = by_type.get(HATCH_LABEL)
             if labels:
                 self._stage = "grid"
-                # Topmost first: the scan proceeds down the grid, so finishing
-                # the visible rows before scrolling keeps coverage complete.
-                return self._target(min(labels, key=lambda item: item.y))
+                # Template hits in one visual row can differ by a few pixels
+                # vertically. Lock onto the top row first, then choose its
+                # leftmost egg so processing is deterministic row-major.
+                return self._target(self._top_left(labels, frame))
             if self._scrolls_done < self.max_scrolls:
                 self._stage = "scroll"
                 return self._scroll_target(frame)
@@ -198,6 +204,13 @@ class HatchPlanner:
         if not items:
             return None
         return max(items, key=lambda item: item.confidence)
+
+    @staticmethod
+    def _top_left(items: list[Detection], frame: Frame) -> Detection:
+        top_y = min(item.y for item in items)
+        row_tolerance = max(12, int(frame.width * 0.06))
+        top_row = [item for item in items if item.y <= top_y + row_tolerance]
+        return min(top_row, key=lambda item: item.x)
 
     @staticmethod
     def _target(detection: Detection) -> Target:

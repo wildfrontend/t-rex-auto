@@ -11,6 +11,7 @@ Feature 方式加入，不需要修改核心狀態機。
 以及雙視窗啟動器、可調整狩獵速度及本機 AI 狀態接口：
 
 - 使用者只需雙擊 `start-bot.cmd`；啟動器會先檢查 Python、ADB、素材及畫面擷取。
+- 孵蛋使用獨立的 `start-hatch-bot.cmd`，固定啟動 hatch feature，不會落入狩獵流程。
 - 一個視窗顯示原始即時 LOG，另一個繁體中文互動視窗提供統計、調速、重啟與診斷工具。
 - `127.0.0.1:8765` 提供結構化狀態與白名單控制接口，讓同一台電腦上的 AI 安全操作。
 - Repository 內附 `.agents/skills/control-dino-bot`，限制 AI 使用固定接口與控制命令。

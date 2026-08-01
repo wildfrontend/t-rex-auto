@@ -337,7 +337,6 @@ def _create_hatch_engine(config: AppConfig, *, verbose: bool = False) -> BotEngi
     post_action_delays.update(config.post_action_delays)
     target_actions = dict(hatch_feature.DEFAULT_TARGET_ACTIONS)
     target_actions.update(config.target_actions)
-    cycle_targets = config.workflow.complete_on or (hatch_feature.CLAIM_BUTTON,)
     context = BotContext(
         capture_provider=capture,
         detector=detector,
@@ -358,7 +357,10 @@ def _create_hatch_engine(config: AppConfig, *, verbose: bool = False) -> BotEngi
         verify_retries=config.verify_retry,
         max_actions=config.max_actions,
         max_cycles=config.workflow.max_cycles,
-        cycle_complete_targets=tuple(cycle_targets),
+        # Hatch cycles are completed only by a verified claim. The shared
+        # config normally contains hunt's mailbox completion target, which
+        # must not leak into this feature or --max-cycles can never stop it.
+        cycle_complete_targets=hatch_feature.DEFAULT_CYCLE_COMPLETE_TARGETS,
         runtime_recovery=runtime_recovery,
         hunt_progress_recovery=None,
         stall_snapshots=stall_snapshots,
