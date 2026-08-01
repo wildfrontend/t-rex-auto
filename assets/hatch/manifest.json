@@ -12,7 +12,8 @@
     {
       "type": "hatch_label",
       "file": "templates/hatch-label.png",
-      "threshold": 0.85
+      "threshold": 0.85,
+      "click_offset": [29, -99]
     },
     {
       "type": "hatch_close_button",

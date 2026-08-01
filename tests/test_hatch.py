@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import numpy as np
 
 from dino_bot import hatch
@@ -119,6 +122,18 @@ def test_repeated_egg_pile_failures_back_off() -> None:
     assert planner.choose(make_frame(), home) is None
     clock.now += 31
     assert planner.choose(make_frame(), home) is not None
+
+
+def test_hatch_label_click_offset_targets_egg_body() -> None:
+    # 2026-08-01 實機 T5:點「孵化」標籤文字本身不會開詳細頁,必須點標籤
+    # 上方的蛋本體(標籤 bbox 左上 + (29,-99) ≈ 蛋中心)。
+    manifest = json.loads(
+        (Path(__file__).parent.parent / "assets/hatch/manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    label = next(t for t in manifest["templates"] if t["type"] == "hatch_label")
+    assert label["click_offset"] == [29, -99]
 
 
 def test_hatch_config_defaults_load(tmp_path) -> None:
