@@ -23,6 +23,7 @@ def test_windows_deploy_includes_hatch_entrypoint() -> None:
     assert 'scripts/run-hatch-windows.ps1"' in deploy
     assert 'scripts/start-hatch-bot.cmd"' in deploy
     assert 'scripts/start-hatch-filter-test.cmd"' in deploy
+    assert 'scripts/start-hatch-sort-test.cmd"' in deploy
 
 
 def test_filter_test_entrypoint_is_isolated_and_cycle_limited() -> None:
@@ -32,3 +33,12 @@ def test_filter_test_entrypoint_is_isolated_and_cycle_limited() -> None:
     assert '-StatusPort "8767"' in command
     assert '-MaxActions "0"' in command
     assert '-MaxCycles "1"' in command
+
+
+def test_sort_test_entrypoint_is_isolated_and_read_only() -> None:
+    command = (REPO / "scripts/start-hatch-sort-test.cmd").read_text(encoding="utf-8")
+
+    assert '-Feature "hatch-sort-test"' in command
+    assert '-StatusPort "8768"' in command
+    assert '-MaxActions "0"' in command
+    assert '-MaxCycles "0"' in command

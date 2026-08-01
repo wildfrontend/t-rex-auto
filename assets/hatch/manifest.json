@@ -169,6 +169,11 @@
       "type": "hatch_nest_title",
       "file": "templates/hatch-nest-title.png",
       "threshold": 0.9
+    },
+    {
+      "type": "hatch_select_title",
+      "file": "templates/hatch-select-title.png",
+      "threshold": 0.9
     }
   ]
 }

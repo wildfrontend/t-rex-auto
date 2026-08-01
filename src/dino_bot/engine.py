@@ -143,6 +143,10 @@ class IdleState:
     def execute(self, context: BotContext) -> BotState:
         if context.stop_requested or context.stop_event.is_set():
             return BotState.STOPPED
+        is_complete = getattr(context.planner, "is_complete", None)
+        if callable(is_complete) and is_complete():
+            context.logger.info("Stop | planner completed its bounded workflow")
+            return BotState.STOPPED
         if context.max_actions and context.action_count >= context.max_actions:
             context.logger.info("Stop | max_actions=%d reached", context.max_actions)
             return BotState.STOPPED

@@ -1506,6 +1506,29 @@ def test_engine_runs_complete_feedback_loop() -> None:
     assert capture.closed
 
 
+def test_engine_stops_when_bounded_planner_reports_complete() -> None:
+    class CompletePlanner(TargetPlanner):
+        def is_complete(self) -> bool:
+            return True
+
+    capture = SequenceCapture([make_frame(0, 1)])
+    driver = RecordingActionDriver()
+    context = BotContext(
+        capture_provider=capture,
+        detector=PixelDetector(),
+        planner=CompletePlanner(),
+        action_driver=driver,
+        verifier=TargetChangedVerifier(),
+        observer=RuntimeMode(),
+        logger=logging.getLogger("test_planner_complete"),
+        idle_delay_ms=0,
+    )
+    BotEngine(context).run()
+    assert driver.actions == []
+    assert context.action_count == 0
+    assert capture.closed
+
+
 def test_engine_uses_target_specific_post_action_delay() -> None:
     class HuntConfirmDetector:
         def detect(self, frame: Frame) -> list[Detection]:

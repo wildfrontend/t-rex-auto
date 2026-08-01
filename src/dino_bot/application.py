@@ -6,6 +6,7 @@ import logging
 
 from . import hatch as hatch_feature
 from . import nest_filter as nest_filter_feature
+from . import select_sort as select_sort_feature
 from .actions import AdbActionDriver, AdbClient
 from .capture import AdbScreencapCapture, MssEmulatorCapture
 from .config import AppConfig
@@ -19,6 +20,7 @@ from .detection import (
     StartupLayoutGuard,
     TargetTooStrongDetector,
 )
+from .digits import DigitReader
 from .engine import BotContext, BotEngine
 from .events import EventLog, JsonlEventLog, NullEventLog
 from .hatch import HatchPlanner
@@ -28,6 +30,7 @@ from .modes import create_mode
 from .nest_filter import NestTagFilterTestPlanner
 from .planning import HuntPlanner
 from .recovery import AdbAppRestarter, BlackScreenRecovery, HuntProgressWatchdog
+from .select_sort import SelectSortTestPlanner
 from .stalls import StallSnapshotWriter
 from .verification import TargetChangedVerifier
 
@@ -42,6 +45,8 @@ def create_engine(
         return _create_hatch_engine(config, verbose=verbose)
     if feature == "hatch-filter-test":
         return _create_hatch_engine(config, verbose=verbose, filter_test=True)
+    if feature == "hatch-sort-test":
+        return _create_hatch_engine(config, verbose=verbose, sort_test=True)
     if feature != "hunt":
         raise ValueError(f"unknown feature: {feature}")
     return _create_hunt_engine(config, verbose=verbose)
@@ -225,6 +230,7 @@ def _create_hatch_engine(
     *,
     verbose: bool = False,
     filter_test: bool = False,
+    sort_test: bool = False,
 ) -> BotEngine:
     """Wire the Auto Hatch feature onto the shared capture/act/verify core.
 
@@ -242,7 +248,9 @@ def _create_hatch_engine(
         backup_count=config.log_backup_count,
     )
     hatch = config.hatch
-    if filter_test:
+    if sort_test:
+        logger.info("Feature | hatch-sort-test | all tags + attack descending | safe T7")
+    elif filter_test:
         logger.info("Feature | hatch-filter-test | target=攻擊特化 | safe T7 subset")
     else:
         logger.info(
@@ -282,10 +290,16 @@ def _create_hatch_engine(
         open_cv_detector,
         reference_size=open_cv_detector.reference_size,
     )
-    planner = (
-        NestTagFilterTestPlanner(reference_width=hatch.reference_width)
-        if filter_test
-        else HatchPlanner(
+    if sort_test:
+        planner = SelectSortTestPlanner(
+            DigitReader(hatch.manifest.parent / "digits"),
+            reference_width=hatch.reference_width,
+            logger=logger,
+        )
+    elif filter_test:
+        planner = NestTagFilterTestPlanner(reference_width=hatch.reference_width)
+    else:
+        planner = HatchPlanner(
             egg_pile_point=(hatch.egg_pile[0], hatch.egg_pile[1]),
             reference_width=hatch.reference_width,
             scroll_vector=hatch.scroll_vector,
@@ -297,9 +311,14 @@ def _create_hatch_engine(
             home_backoff_seconds=hatch.home_backoff_seconds,
             logger=logger,
         )
-    )
     action = AdbActionDriver(adb)
-    defaults = nest_filter_feature if filter_test else hatch_feature
+    defaults = (
+        select_sort_feature
+        if sort_test
+        else nest_filter_feature
+        if filter_test
+        else hatch_feature
+    )
     success_transitions = dict(defaults.DEFAULT_SUCCESS_TRANSITIONS)
     success_transitions.update(config.verify.success_transitions)
     verifier = TargetChangedVerifier(
