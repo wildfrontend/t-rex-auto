@@ -26,6 +26,7 @@ def test_windows_deploy_includes_hatch_entrypoint() -> None:
     assert 'scripts/start-hatch-sort-test.cmd"' in deploy
     assert 'scripts/start-hatch-parent-test.cmd"' in deploy
     assert 'scripts/start-hatch-attack-test.cmd"' in deploy
+    assert 'scripts/start-hatch-hp-test.cmd"' in deploy
 
 
 def test_filter_test_entrypoint_is_isolated_and_cycle_limited() -> None:
@@ -68,3 +69,13 @@ def test_attack_entrypoint_is_isolated_and_strictly_upgrades() -> None:
     assert '-MaxActions "20"' in command
     assert '-MaxCycles "2"' in command
     assert "ONLY when its attack is strictly higher" in command
+
+
+def test_hp_entrypoint_is_isolated_and_strictly_upgrades() -> None:
+    command = (REPO / "scripts/start-hatch-hp-test.cmd").read_text(encoding="utf-8")
+
+    assert '-Feature "hatch-hp-test"' in command
+    assert '-StatusPort "8771"' in command
+    assert '-MaxActions "20"' in command
+    assert '-MaxCycles "2"' in command
+    assert "ONLY when its HP is strictly higher" in command

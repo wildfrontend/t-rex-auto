@@ -48,14 +48,17 @@ HEADER_LABELS: dict[str, str] = {
 DEFAULT_TARGET_ACTIONS: dict[str, str] = {
     FILTER_HEADER: "tap",
     TAG_ATTACK: "tap",
+    TAG_HP: "tap",
 }
 DEFAULT_POST_ACTION_DELAYS_MS: dict[str, int] = {
     FILTER_HEADER: 2500,
     TAG_ATTACK: 2500,
+    TAG_HP: 2500,
 }
 DEFAULT_SUCCESS_TRANSITIONS: dict[str, tuple[str, ...]] = {
     FILTER_HEADER: tuple(OPTION_LABELS),
     TAG_ATTACK: (TAG_HDR_ATTACK,),
+    TAG_HP: (TAG_HDR_HP,),
 }
 DEFAULT_CYCLE_COMPLETE_TARGETS: tuple[str, ...] = (TAG_ATTACK,)
 
@@ -68,11 +71,17 @@ class NestTagFilterTestPlanner:
         *,
         reference_width: float = 900.0,
         header_point: tuple[float, float] = (228.0, 168.0),
+        target_label: str = TARGET_LABEL,
+        target_option_type: str = TAG_ATTACK,
+        target_header_type: str = TAG_HDR_ATTACK,
     ) -> None:
         if reference_width <= 0:
             raise ValueError("reference_width must be greater than zero")
         self.reference_width = reference_width
         self.header_point = header_point
+        self.target_label = target_label
+        self.target_option_type = target_option_type
+        self.target_header_type = target_header_type
         self._stage = "start"
         self._complete = False
 
@@ -80,7 +89,7 @@ class NestTagFilterTestPlanner:
         return self._stage
 
     def on_action_success(self, target_type: str) -> None:
-        if target_type == TAG_ATTACK:
+        if target_type == self.target_option_type:
             self._complete = True
 
     def on_action_failure(self, target_type: str) -> None:
@@ -111,14 +120,18 @@ class NestTagFilterTestPlanner:
                 for item in by_type.get(target_type, ())
             )
 
-        step = next_step(TARGET_LABEL, sightings, self._scaled_header_point(frame))
+        step = next_step(
+            self.target_label,
+            sightings,
+            self._scaled_header_point(frame),
+        )
         if step.kind == SELECT:
-            attack = self._best(by_type.get(TAG_ATTACK))
-            if attack is None:
-                self._stage = "menu_missing_attack"
+            option = self._best(by_type.get(self.target_option_type))
+            if option is None:
+                self._stage = "menu_missing_target"
                 return None
-            self._stage = "select_attack"
-            return self._target(attack)
+            self._stage = "select_target"
+            return self._target(option)
 
         # Even when the header already says attack, open and reselect it once.
         # This verifies both menu expansion and option selection on device.

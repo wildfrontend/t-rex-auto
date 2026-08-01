@@ -45,6 +45,30 @@ def planner_for(attacks: tuple[int, ...]) -> tuple[SelectSortTestPlanner, Frame]
     return SelectSortTestPlanner(reader), frame  # type: ignore[arg-type]
 
 
+def hp_planner_for(values: tuple[int, ...]) -> tuple[SelectSortTestPlanner, Frame]:
+    image = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    codes = {value: index + 10 for index, value in enumerate(dict.fromkeys(values))}
+    for index, hp in enumerate(values):
+        regions = tuple(
+            (x0, y0 + index * SELECT_ROW_PITCH, x1, y1 + index * SELECT_ROW_PITCH)
+            for x0, y0, x1, y1 in SELECT_FIRST_ROW_REGIONS
+        )
+        for region, value in zip(regions, (hp, 1, 1), strict=True):
+            code = codes.get(value, 1)
+            x0, y0, x1, y1 = map(int, region)
+            image[y0:y1, x0:x1] = code
+    reader = EncodedReader({1: 1, **{code: value for value, code in codes.items()}})
+    planner = SelectSortTestPlanner(
+        reader,  # type: ignore[arg-type]
+        sort_option_type=select_sort.SORT_HP,
+        sort_header_type=select_sort.SORT_HP,
+        sort_menu_point=(650.0, 501.0),
+        primary_attr="hp",
+        sort_label="HP",
+    )
+    return planner, Frame(image)
+
+
 def test_wrong_screen_never_taps() -> None:
     planner, frame = planner_for((276, 270))
     assert planner.choose(frame, [detection(select_sort.TAG_HDR_ALL, 228, 204)]) is None
@@ -131,11 +155,35 @@ def test_equal_values_fail_closed_without_arrow_tap() -> None:
     assert planner.last_stage() == "direction_unreadable"
 
 
+def test_hp_sort_uses_detected_menu_option_then_verifies_hp_descending() -> None:
+    planner, frame = hp_planner_for((2300, 2250, 2200))
+    option = planner.choose(
+        frame,
+        select_screen(
+            detection(select_sort.TAG_HDR_ALL, 228, 204),
+            detection(select_sort.SORT_HP, 650, 501),
+        ),
+    )
+    assert option is not None and option.type == select_sort.SORT_HP
+    assert (option.x, option.y) == (650, 501)
+    planner.on_action_success(option.type)
+
+    assert planner.choose(
+        frame,
+        select_screen(
+            detection(select_sort.TAG_HDR_ALL, 228, 204),
+            detection(select_sort.SORT_HP, 650, 355),
+        ),
+    ) is None
+    assert planner.is_complete()
+
+
 def test_no_dinosaur_row_can_become_an_action() -> None:
     assert set(select_sort.DEFAULT_TARGET_ACTIONS) == {
         select_sort.TAG_HEADER,
         select_sort.TAG_ALL,
         select_sort.SORT_HEADER,
         select_sort.SORT_ATTACK,
+        select_sort.SORT_HP,
         select_sort.SORT_DIRECTION,
     }

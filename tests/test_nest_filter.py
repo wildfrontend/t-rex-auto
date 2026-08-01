@@ -68,11 +68,33 @@ def test_successful_attack_selection_completes_planner() -> None:
     assert planner.last_stage() == "filter_done"
 
 
+def test_configurable_hp_filter_selects_hp_and_completes() -> None:
+    planner = NestTagFilterTestPlanner(
+        target_label="HP特化",
+        target_option_type=nest_filter.TAG_HP,
+        target_header_type=nest_filter.TAG_HDR_HP,
+    )
+    target = planner.choose(
+        frame(),
+        nest(
+            detection(nest_filter.TAG_ALL, 227, 211),
+            detection(nest_filter.TAG_HP, 228, 340),
+        ),
+    )
+    assert target is not None and target.type == nest_filter.TAG_HP
+    planner.on_action_success(nest_filter.TAG_HP)
+    assert planner.choose(
+        frame(),
+        nest(detection(nest_filter.TAG_HDR_HP, 218, 168)),
+    ) is None
+
+
 def test_filter_cycle_and_transitions_are_nondestructive() -> None:
     assert nest_filter.DEFAULT_CYCLE_COMPLETE_TARGETS == (nest_filter.TAG_ATTACK,)
     assert set(nest_filter.DEFAULT_TARGET_ACTIONS) == {
         nest_filter.FILTER_HEADER,
         nest_filter.TAG_ATTACK,
+        nest_filter.TAG_HP,
     }
     assert nest_filter.DEFAULT_SUCCESS_TRANSITIONS[nest_filter.TAG_ATTACK] == (
         nest_filter.TAG_HDR_ATTACK,

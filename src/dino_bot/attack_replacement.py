@@ -18,14 +18,14 @@ from .digits import DigitReader
 from .models import Detection, Frame, Target
 from .nest_filter import NestTagFilterTestPlanner
 from .nest_readout import SELECT_ROW_PITCH, read_attack_parents, read_candidate_rows
-from .nests import ATTACK_RULE, Stats, pick_replacement
+from .nests import ATTACK_RULE, ReplacementRule, Stats, pick_replacement, primary_of
 from .overlays import CONFIRM_YES, NESTED_PARENT_WARNING, SELECT_CONFIRM_PROMPT
-from .parent_open import NEST_TITLE, OPEN_TAG_OPTIONS, SELECT_TITLE, TAG_HDR_ATTACK
+from .parent_open import NEST_TITLE, OPEN_TAG_OPTIONS, SELECT_TITLE
 from .select_sort import SelectSortTestPlanner
 
-PARENT_LEFT = "hatch_attack_parent_left"
-PARENT_RIGHT = "hatch_attack_parent_right"
-CANDIDATE_ROW = "hatch_attack_candidate_row"
+PARENT_LEFT = "hatch_parent_left"
+PARENT_RIGHT = "hatch_parent_right"
+CANDIDATE_ROW = "hatch_candidate_row"
 NESTED_PARENT_YES = "hatch_nested_parent_yes"
 SELECT_MASK_CLOSE = "hatch_select_mask_close"
 
@@ -75,6 +75,12 @@ class AttackReplacementTestPlanner:
         attack_header_point: tuple[float, float] = (217.0, 166.0),
         candidate_point: tuple[float, float] = (350.0, 435.0),
         mask_close_point: tuple[float, float] = (50.0, 800.0),
+        rule: ReplacementRule = ATTACK_RULE,
+        nest_filter_option: str = nest_filter_feature.TAG_ATTACK,
+        nest_filter_header: str = nest_filter_feature.TAG_HDR_ATTACK,
+        select_sort_option: str = select_sort_feature.SORT_ATTACK,
+        select_sort_header: str = select_sort_feature.SORT_HDR_ATTACK,
+        select_sort_menu_point: tuple[float, float] = (649.0, 550.0),
         logger: logging.Logger | None = None,
     ) -> None:
         if reference_width <= 0:
@@ -85,11 +91,22 @@ class AttackReplacementTestPlanner:
         self.attack_header_point = attack_header_point
         self.candidate_point = candidate_point
         self.mask_close_point = mask_close_point
+        self.rule = rule
+        self.nest_filter_option = nest_filter_option
+        self.nest_filter_header = nest_filter_header
+        self.select_sort_option = select_sort_option
+        self.select_sort_header = select_sort_header
+        self.select_sort_menu_point = select_sort_menu_point
         self.logger = logger or logging.getLogger("dino_bot")
         self._stage = "filter_attack"
         self._side = 0
         self._current_parent: Stats | None = None
-        self._filter_planner = NestTagFilterTestPlanner(reference_width=reference_width)
+        self._filter_planner = NestTagFilterTestPlanner(
+            reference_width=reference_width,
+            target_label=rule.tag,
+            target_option_type=nest_filter_option,
+            target_header_type=nest_filter_header,
+        )
         self._select_planner: SelectSortTestPlanner | None = None
         self._complete = False
 
@@ -102,7 +119,7 @@ class AttackReplacementTestPlanner:
     def on_action_success(self, target_type: str) -> None:
         if self._stage.startswith("filter_"):
             self._filter_planner.on_action_success(target_type)
-            if target_type == nest_filter_feature.TAG_ATTACK:
+            if target_type == self.nest_filter_option:
                 self._stage = "nest_left"
             return
         if target_type in (PARENT_LEFT, PARENT_RIGHT):
@@ -110,6 +127,11 @@ class AttackReplacementTestPlanner:
             self._select_planner = SelectSortTestPlanner(
                 self.reader,
                 reference_width=self.reference_width,
+                sort_option_type=self.select_sort_option,
+                sort_header_type=self.select_sort_header,
+                sort_menu_point=self.select_sort_menu_point,
+                primary_attr=self.rule.primary,
+                sort_label=self.rule.sort_option,
                 logger=self.logger,
             )
             return
@@ -161,18 +183,25 @@ class AttackReplacementTestPlanner:
         if any(target_type in by_type for target_type in OPEN_TAG_OPTIONS):
             self._stage = "tag_menu_open"
             return None
-        if not self._attack_header_is_foreground(frame, by_type.get(TAG_HDR_ATTACK)):
-            self._stage = "attack_filter_required"
+        if not self._nest_filter_header_is_foreground(
+            frame,
+            by_type.get(self.nest_filter_header),
+        ):
+            self._stage = "target_filter_required"
             return None
 
         parents = read_attack_parents(frame.image, self.reader)
         if parents is None:
             self._stage = "parent_stats_unreadable"
-            self.logger.warning("Hatch attack | parent stats unreadable; refusing tap")
+            self.logger.warning(
+                "Hatch %s | parent stats unreadable; refusing tap",
+                self.rule.tag,
+            )
             return None
         self._current_parent = parents[self._side]
         self.logger.info(
-            "Hatch attack | side=%s | parent=%s | pair=%s,%s",
+            "Hatch %s | side=%s | parent=%s | pair=%s,%s",
+            self.rule.tag,
             self._side_name,
             self._format_stats(self._current_parent),
             self._format_stats(parents[0]),
@@ -206,10 +235,12 @@ class AttackReplacementTestPlanner:
                 plateau_rows = read_candidate_rows(frame.image, self.reader)
                 if self._equal_parent_plateau(plateau_rows):
                     self.logger.info(
-                        "Hatch attack | side=%s | equal attack plateau=%s"
+                        "Hatch %s | side=%s | equal %s plateau=%s"
                         " | decision=keep parent without further search",
+                        self.rule.tag,
                         self._side_name,
-                        [row.attack for row in plateau_rows],
+                        self.rule.sort_option,
+                        [primary_of(row, self.rule) for row in plateau_rows],
                     )
                     return self._close_list(frame)
             return None
@@ -217,13 +248,17 @@ class AttackReplacementTestPlanner:
         rows = read_candidate_rows(frame.image, self.reader)
         if not rows:
             self._stage = "candidate_stats_unreadable"
-            self.logger.warning("Hatch attack | candidate stats unreadable; stopping")
+            self.logger.warning(
+                "Hatch %s | candidate stats unreadable; stopping",
+                self.rule.tag,
+            )
             self._complete = True
             return None
-        replacement_index = pick_replacement(self._current_parent, rows, ATTACK_RULE)
+        replacement_index = pick_replacement(self._current_parent, rows, self.rule)
         if replacement_index is None:
             self.logger.info(
-                "Hatch attack | side=%s | candidates=%s | decision=keep parent",
+                "Hatch %s | side=%s | candidates=%s | decision=keep parent",
+                self.rule.tag,
                 self._side_name,
                 [self._format_stats(row) for row in rows],
             )
@@ -231,7 +266,8 @@ class AttackReplacementTestPlanner:
 
         replacement = rows[replacement_index]
         self.logger.info(
-            "Hatch attack | side=%s | candidates=%s | decision=select row %d (%s)",
+            "Hatch %s | side=%s | candidates=%s | decision=select row %d (%s)",
+            self.rule.tag,
             self._side_name,
             [self._format_stats(row) for row in rows],
             replacement_index + 1,
@@ -300,17 +336,20 @@ class AttackReplacementTestPlanner:
             self._select_planner = None
             self._stage = "nest_right"
         else:
-            self._stage = "attack_done"
+            self._stage = "replacement_done"
             self._complete = True
 
     def _equal_parent_plateau(self, rows: list[Stats]) -> bool:
         return (
             self._current_parent is not None
             and len(rows) >= 5
-            and all(row.attack == self._current_parent.attack for row in rows)
+            and all(
+                primary_of(row, self.rule) == primary_of(self._current_parent, self.rule)
+                for row in rows
+            )
         )
 
-    def _attack_header_is_foreground(
+    def _nest_filter_header_is_foreground(
         self,
         frame: Frame,
         items: list[Detection] | None,

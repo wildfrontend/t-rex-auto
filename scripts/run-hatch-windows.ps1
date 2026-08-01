@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("hatch", "hatch-filter-test", "hatch-sort-test", "hatch-parent-test", "hatch-attack-test")]
+    [ValidateSet("hatch", "hatch-filter-test", "hatch-sort-test", "hatch-parent-test", "hatch-attack-test", "hatch-hp-test")]
     [string]$Feature = "hatch",
     [ValidateSet("runtime", "debug")]
     [string]$Mode = "debug",

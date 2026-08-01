@@ -26,6 +26,7 @@ def test_autoplace_sort_options() -> None:
 def test_replacement_sort_options() -> None:
     assert ATTACK_RULE.sort_option == "攻擊力"
     assert ATTACK_RULE.primary == "attack"
+    assert HP_RULE.sort_option == "HP"
     assert HP_RULE.primary == "hp"
 
 

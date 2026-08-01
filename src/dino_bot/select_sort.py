@@ -31,6 +31,7 @@ DEFAULT_TARGET_ACTIONS: dict[str, str] = {
     TAG_ALL: "tap",
     SORT_HEADER: "tap",
     SORT_ATTACK: "tap",
+    SORT_HP: "tap",
     SORT_DIRECTION: "tap",
 }
 DEFAULT_POST_ACTION_DELAYS_MS: dict[str, int] = {
@@ -38,6 +39,7 @@ DEFAULT_POST_ACTION_DELAYS_MS: dict[str, int] = {
     TAG_ALL: 2500,
     SORT_HEADER: 2500,
     SORT_ATTACK: 2500,
+    SORT_HP: 2500,
     SORT_DIRECTION: 2500,
 }
 DEFAULT_SUCCESS_TRANSITIONS: dict[str, tuple[str, ...]] = {
@@ -45,6 +47,7 @@ DEFAULT_SUCCESS_TRANSITIONS: dict[str, tuple[str, ...]] = {
     TAG_ALL: (TAG_HDR_ALL,),
     SORT_HEADER: (SORT_HP, SORT_ATTACK),
     SORT_ATTACK: (SORT_HDR_ATTACK,),
+    SORT_HP: (SORT_HP,),
 }
 DEFAULT_CYCLE_COMPLETE_TARGETS: tuple[str, ...] = ()
 
@@ -60,6 +63,11 @@ class SelectSortTestPlanner:
         tag_header_point: tuple[float, float] = (228.0, 204.0),
         sort_header_point: tuple[float, float] = (649.0, 355.0),
         direction_point: tuple[float, float] = (552.0, 355.0),
+        sort_option_type: str = SORT_ATTACK,
+        sort_header_type: str = SORT_HDR_ATTACK,
+        sort_menu_point: tuple[float, float] = (649.0, 550.0),
+        primary_attr: str = "attack",
+        sort_label: str = "attack",
         logger: logging.Logger | None = None,
     ) -> None:
         if reference_width <= 0:
@@ -69,6 +77,11 @@ class SelectSortTestPlanner:
         self.tag_header_point = tag_header_point
         self.sort_header_point = sort_header_point
         self.direction_point = direction_point
+        self.sort_option_type = sort_option_type
+        self.sort_header_type = sort_header_type
+        self.sort_menu_point = sort_menu_point
+        self.primary_attr = primary_attr
+        self.sort_label = sort_label
         self.logger = logger or logging.getLogger("dino_bot")
         self._stage = "start"
         self._tag_ready = False
@@ -85,7 +98,7 @@ class SelectSortTestPlanner:
     def on_action_success(self, target_type: str) -> None:
         if target_type == TAG_ALL:
             self._tag_ready = True
-        elif target_type == SORT_ATTACK:
+        elif target_type == self.sort_option_type:
             self._sort_ready = True
         elif target_type == SORT_DIRECTION:
             self._direction_taps += 1
@@ -128,19 +141,20 @@ class SelectSortTestPlanner:
                 )
 
         if not self._sort_ready:
-            menu_attack = self._closest(
-                by_type.get(SORT_ATTACK),
-                self._scaled(frame, (649.0, 550.0)),
+            menu_option = self._closest(
+                by_type.get(self.sort_option_type),
+                self._scaled(frame, self.sort_menu_point),
+                max_distance=self._scaled_distance(frame, 50.0),
             )
-            if menu_attack is not None:
-                self._stage = "select_attack_sort"
-                return self._target(menu_attack)
-            header_attack = self._closest(
-                by_type.get(SORT_HDR_ATTACK),
+            if menu_option is not None:
+                self._stage = "select_primary_sort"
+                return self._target(menu_option)
+            header_option = self._closest(
+                by_type.get(self.sort_header_type),
                 self._scaled(frame, self.sort_header_point),
                 max_distance=self._scaled_distance(frame, 50.0),
             )
-            if header_attack is not None:
+            if header_option is not None:
                 self._sort_ready = True
             else:
                 self._stage = "open_sort"
@@ -153,17 +167,20 @@ class SelectSortTestPlanner:
         # equal-value plateau at the top, so five rows may contain no usable
         # direction signal even though a lower value is visible farther down.
         rows = read_candidate_rows(frame.image, self.reader, max_rows=9)
-        direction = self._descending_direction([row.attack for row in rows])
+        values = [int(getattr(row, self.primary_attr)) for row in rows]
+        direction = self._descending_direction(values)
         if direction is None:
             self._stage = "direction_unreadable"
             self.logger.warning(
-                "Hatch filter | cannot verify attack direction | rows=%s",
-                [row.attack for row in rows],
+                "Hatch filter | cannot verify %s direction | rows=%s",
+                self.sort_label,
+                values,
             )
             return None
         self.logger.info(
-            "Hatch filter | attack order=%s | descending=%s",
-            [row.attack for row in rows],
+            "Hatch filter | %s order=%s | descending=%s",
+            self.sort_label,
+            values,
             direction,
         )
         if direction:

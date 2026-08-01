@@ -45,8 +45,7 @@ class AutoPlaceRule:
 
 
 ATTACK_RULE = ReplacementRule(tag="攻擊特化", sort_option="攻擊力", primary="attack")
-# 排序選項的實際名稱待截圖確認(推測「生命」),見計畫 §8 2026-07-30 HP特化條目。
-HP_RULE = ReplacementRule(tag="HP特化", sort_option="生命", primary="hp")
+HP_RULE = ReplacementRule(tag="HP特化", sort_option="HP", primary="hp")
 TOP_RULE = AutoPlaceRule(tag="頂尖", sort_option="最佳屬性組合")
 MASS_RULE = AutoPlaceRule(tag="量產", sort_option="等級")
 

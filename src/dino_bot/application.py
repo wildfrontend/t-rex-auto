@@ -31,6 +31,7 @@ from .models import ActionKind
 from .modes import create_mode
 from .attack_replacement import AttackReplacementTestPlanner
 from .nest_filter import NestTagFilterTestPlanner
+from .nests import HP_RULE
 from .parent_open import ParentOpenTestPlanner
 from .planning import HuntPlanner
 from .recovery import AdbAppRestarter, BlackScreenRecovery, HuntProgressWatchdog
@@ -55,6 +56,8 @@ def create_engine(
         return _create_hatch_engine(config, verbose=verbose, parent_test=True)
     if feature == "hatch-attack-test":
         return _create_hatch_engine(config, verbose=verbose, attack_test=True)
+    if feature == "hatch-hp-test":
+        return _create_hatch_engine(config, verbose=verbose, hp_test=True)
     if feature != "hunt":
         raise ValueError(f"unknown feature: {feature}")
     return _create_hunt_engine(config, verbose=verbose)
@@ -241,6 +244,7 @@ def _create_hatch_engine(
     sort_test: bool = False,
     parent_test: bool = False,
     attack_test: bool = False,
+    hp_test: bool = False,
 ) -> BotEngine:
     """Wire the Auto Hatch feature onto the shared capture/act/verify core.
 
@@ -258,7 +262,9 @@ def _create_hatch_engine(
         backup_count=config.log_backup_count,
     )
     hatch = config.hatch
-    if attack_test:
+    if hp_test:
+        logger.info("Feature | hatch-hp-test | both parents + strict HP upgrade | T11")
+    elif attack_test:
         logger.info(
             "Feature | hatch-attack-test | both parents + strict upgrade | T10/T11"
         )
@@ -306,7 +312,19 @@ def _create_hatch_engine(
         open_cv_detector,
         reference_size=open_cv_detector.reference_size,
     )
-    if attack_test:
+    if hp_test:
+        planner = AttackReplacementTestPlanner(
+            DigitReader(hatch.manifest.parent / "digits"),
+            reference_width=hatch.reference_width,
+            rule=HP_RULE,
+            nest_filter_option=nest_filter_feature.TAG_HP,
+            nest_filter_header=nest_filter_feature.TAG_HDR_HP,
+            select_sort_option=select_sort_feature.SORT_HP,
+            select_sort_header=select_sort_feature.SORT_HP,
+            select_sort_menu_point=(650.0, 501.0),
+            logger=logger,
+        )
+    elif attack_test:
         planner = AttackReplacementTestPlanner(
             DigitReader(hatch.manifest.parent / "digits"),
             reference_width=hatch.reference_width,
@@ -342,7 +360,7 @@ def _create_hatch_engine(
     action = AdbActionDriver(adb)
     defaults = (
         attack_replacement_feature
-        if attack_test
+        if attack_test or hp_test
         else parent_open_feature
         if parent_test
         else select_sort_feature

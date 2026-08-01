@@ -10,7 +10,7 @@ from dino_bot.nest_readout import (
     SELECT_FIRST_ROW_REGIONS,
     SELECT_ROW_PITCH,
 )
-from dino_bot.nests import Stats
+from dino_bot.nests import HP_RULE, Stats
 from dino_bot.overlays import CONFIRM_YES, NESTED_PARENT_WARNING, SELECT_CONFIRM_PROMPT
 
 
@@ -41,7 +41,7 @@ def detection(target_type: str, x: int, y: int) -> Detection:
 def nest_detections(*items: Detection) -> list[Detection]:
     return [
         detection(attack_replacement.NEST_TITLE, 451, 261),
-        detection(attack_replacement.TAG_HDR_ATTACK, 217, 166),
+        detection(nest_filter.TAG_HDR_ATTACK, 217, 166),
         *items,
     ]
 
@@ -51,6 +51,23 @@ def select_detections(*items: Detection) -> list[Detection]:
         detection(attack_replacement.SELECT_TITLE, 451, 299),
         detection(select_sort.TAG_HDR_ALL, 228, 204),
         detection(select_sort.SORT_HDR_ATTACK, 637, 355),
+        *items,
+    ]
+
+
+def hp_nest_detections(*items: Detection) -> list[Detection]:
+    return [
+        detection(attack_replacement.NEST_TITLE, 451, 261),
+        detection(nest_filter.TAG_HDR_HP, 217, 166),
+        *items,
+    ]
+
+
+def hp_select_detections(*items: Detection) -> list[Detection]:
+    return [
+        detection(attack_replacement.SELECT_TITLE, 451, 299),
+        detection(select_sort.TAG_HDR_ALL, 228, 204),
+        detection(select_sort.SORT_HP, 650, 355),
         *items,
     ]
 
@@ -87,6 +104,18 @@ def select_frame(reader: EncodedReader, rows: list[Stats]) -> Frame:
 
 def finish_main_filter(planner: AttackReplacementTestPlanner) -> None:
     planner.on_action_success(nest_filter.TAG_ATTACK)
+
+
+def hp_planner(reader: EncodedReader) -> AttackReplacementTestPlanner:
+    return AttackReplacementTestPlanner(
+        reader,  # type: ignore[arg-type]
+        rule=HP_RULE,
+        nest_filter_option=nest_filter.TAG_HP,
+        nest_filter_header=nest_filter.TAG_HDR_HP,
+        select_sort_option=select_sort.SORT_HP,
+        select_sort_header=select_sort.SORT_HP,
+        select_sort_menu_point=(650.0, 501.0),
+    )
 
 
 def test_starts_by_converging_main_nest_filter_to_attack() -> None:
@@ -256,6 +285,41 @@ def test_equal_parent_plateau_stops_without_searching_or_selecting() -> None:
     planner.on_action_success(parent.type)
 
     close = planner.choose(candidates, select_detections())
+    assert close is not None and close.type == attack_replacement.SELECT_MASK_CLOSE
+
+
+def test_hp_workflow_selects_highest_hp_with_lowest_secondary_load() -> None:
+    reader = EncodedReader()
+    parents = nest_frame(reader, Stats(2230, 2, 1), Stats(2230, 2, 1))
+    candidates = select_frame(
+        reader,
+        [Stats(2300, 10, 10), Stats(2300, 2, 1), Stats(2250, 1, 1)],
+    )
+    planner = hp_planner(reader)
+    planner.on_action_success(nest_filter.TAG_HP)
+    parent = planner.choose(parents, hp_nest_detections())
+    assert parent is not None and parent.type == attack_replacement.PARENT_LEFT
+    planner.on_action_success(parent.type)
+
+    candidate = planner.choose(candidates, hp_select_detections())
+    assert candidate is not None and candidate.type == attack_replacement.CANDIDATE_ROW
+    assert (candidate.x, candidate.y) == (350, 520)
+
+
+def test_hp_equal_plateau_keeps_parent_without_searching() -> None:
+    reader = EncodedReader()
+    parents = nest_frame(reader, Stats(2300, 2, 1), Stats(2300, 2, 1))
+    candidates = select_frame(
+        reader,
+        [Stats(2300, index + 1, 1) for index in range(9)],
+    )
+    planner = hp_planner(reader)
+    planner.on_action_success(nest_filter.TAG_HP)
+    parent = planner.choose(parents, hp_nest_detections())
+    assert parent is not None
+    planner.on_action_success(parent.type)
+
+    close = planner.choose(candidates, hp_select_detections())
     assert close is not None and close.type == attack_replacement.SELECT_MASK_CLOSE
 
 

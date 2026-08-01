@@ -36,6 +36,7 @@ def build_parser() -> argparse.ArgumentParser:
             "hatch-sort-test",
             "hatch-parent-test",
             "hatch-attack-test",
+            "hatch-hp-test",
         ],
         default="hunt",
         help="which automation to run: hunt (default) or the egg hatch loop",
