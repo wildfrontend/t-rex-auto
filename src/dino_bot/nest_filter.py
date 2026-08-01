@@ -47,16 +47,25 @@ HEADER_LABELS: dict[str, str] = {
 
 DEFAULT_TARGET_ACTIONS: dict[str, str] = {
     FILTER_HEADER: "tap",
+    TAG_ALL: "tap",
+    TAG_MASS: "tap",
+    TAG_TOP: "tap",
     TAG_ATTACK: "tap",
     TAG_HP: "tap",
 }
 DEFAULT_POST_ACTION_DELAYS_MS: dict[str, int] = {
     FILTER_HEADER: 2500,
+    TAG_ALL: 2500,
+    TAG_MASS: 2500,
+    TAG_TOP: 2500,
     TAG_ATTACK: 2500,
     TAG_HP: 2500,
 }
 DEFAULT_SUCCESS_TRANSITIONS: dict[str, tuple[str, ...]] = {
     FILTER_HEADER: tuple(OPTION_LABELS),
+    TAG_ALL: (TAG_HDR_ALL,),
+    TAG_MASS: (TAG_HDR_MASS,),
+    TAG_TOP: (TAG_HDR_TOP,),
     TAG_ATTACK: (TAG_HDR_ATTACK,),
     TAG_HP: (TAG_HDR_HP,),
 }
@@ -87,6 +96,9 @@ class NestTagFilterTestPlanner:
 
     def last_stage(self) -> str:
         return self._stage
+
+    def is_complete(self) -> bool:
+        return self._complete
 
     def on_action_success(self, target_type: str) -> None:
         if target_type == self.target_option_type:

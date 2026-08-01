@@ -93,6 +93,9 @@ def test_filter_cycle_and_transitions_are_nondestructive() -> None:
     assert nest_filter.DEFAULT_CYCLE_COMPLETE_TARGETS == (nest_filter.TAG_ATTACK,)
     assert set(nest_filter.DEFAULT_TARGET_ACTIONS) == {
         nest_filter.FILTER_HEADER,
+        nest_filter.TAG_ALL,
+        nest_filter.TAG_MASS,
+        nest_filter.TAG_TOP,
         nest_filter.TAG_ATTACK,
         nest_filter.TAG_HP,
     }

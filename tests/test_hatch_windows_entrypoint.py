@@ -22,6 +22,7 @@ def test_windows_deploy_includes_hatch_entrypoint() -> None:
 
     assert 'scripts/run-hatch-windows.ps1"' in deploy
     assert 'scripts/start-hatch-bot.cmd"' in deploy
+    assert 'scripts/start-hatch-full.cmd"' in deploy
     assert 'scripts/start-hatch-filter-test.cmd"' in deploy
     assert 'scripts/start-hatch-sort-test.cmd"' in deploy
     assert 'scripts/start-hatch-parent-test.cmd"' in deploy
@@ -79,3 +80,16 @@ def test_hp_entrypoint_is_isolated_and_strictly_upgrades() -> None:
     assert '-MaxActions "20"' in command
     assert '-MaxCycles "2"' in command
     assert "ONLY when its HP is strictly higher" in command
+
+
+def test_full_hatch_entrypoint_is_separate_unbounded_and_not_hunt() -> None:
+    command = (REPO / "scripts/start-hatch-full.cmd").read_text(encoding="utf-8")
+    runner = (REPO / "scripts/run-hatch-windows.ps1").read_text(encoding="utf-8")
+
+    assert '-Feature "hatch-full"' in command
+    assert '-StatusPort "%hatch_status_port%"' in command
+    assert 'set "hatch_status_port=8772"' in command
+    assert 'set "hatch_max_actions=0"' in command
+    assert '-MaxCycles "0"' in command
+    assert '"hatch-full"' in runner
+    assert "Full Auto Hatch" in command

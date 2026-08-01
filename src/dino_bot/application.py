@@ -5,11 +5,13 @@ from __future__ import annotations
 import logging
 
 from . import attack_replacement as attack_replacement_feature
+from . import full_hatch as full_hatch_feature
 from . import hatch as hatch_feature
 from . import nest_filter as nest_filter_feature
 from . import parent_open as parent_open_feature
 from . import select_sort as select_sort_feature
 from .actions import AdbActionDriver, AdbClient
+from .attack_replacement import AttackReplacementTestPlanner
 from .capture import AdbScreencapCapture, MssEmulatorCapture
 from .config import AppConfig
 from .detection import (
@@ -25,11 +27,11 @@ from .detection import (
 from .digits import DigitReader
 from .engine import BotContext, BotEngine
 from .events import EventLog, JsonlEventLog, NullEventLog
+from .full_hatch import FullHatchPlanner
 from .hatch import HatchPlanner
 from .logging import configure_logging
 from .models import ActionKind
 from .modes import create_mode
-from .attack_replacement import AttackReplacementTestPlanner
 from .nest_filter import NestTagFilterTestPlanner
 from .nests import HP_RULE
 from .parent_open import ParentOpenTestPlanner
@@ -48,6 +50,8 @@ def create_engine(
 ) -> BotEngine:
     if feature == "hatch":
         return _create_hatch_engine(config, verbose=verbose)
+    if feature == "hatch-full":
+        return _create_hatch_engine(config, verbose=verbose, full=True)
     if feature == "hatch-filter-test":
         return _create_hatch_engine(config, verbose=verbose, filter_test=True)
     if feature == "hatch-sort-test":
@@ -245,6 +249,7 @@ def _create_hatch_engine(
     parent_test: bool = False,
     attack_test: bool = False,
     hp_test: bool = False,
+    full: bool = False,
 ) -> BotEngine:
     """Wire the Auto Hatch feature onto the shared capture/act/verify core.
 
@@ -262,7 +267,13 @@ def _create_hatch_engine(
         backup_count=config.log_backup_count,
     )
     hatch = config.hatch
-    if hp_test:
+    if full:
+        logger.info(
+            "Feature | hatch-full | hatch -> Attack -> HP -> Top -> Mass"
+            " -> collect -> cave | cull>%d",
+            hatch.cull_threshold,
+        )
+    elif hp_test:
         logger.info("Feature | hatch-hp-test | both parents + strict HP upgrade | T11")
     elif attack_test:
         logger.info(
@@ -312,7 +323,22 @@ def _create_hatch_engine(
         open_cv_detector,
         reference_size=open_cv_detector.reference_size,
     )
-    if hp_test:
+    if full:
+        planner = FullHatchPlanner(
+            DigitReader(hatch.manifest.parent / "digits"),
+            egg_pile_point=(hatch.egg_pile[0], hatch.egg_pile[1]),
+            reference_width=hatch.reference_width,
+            scroll_vector=hatch.scroll_vector,
+            scroll_duration_ms=hatch.scroll_duration_ms,
+            max_scrolls=hatch.max_scrolls,
+            rescan_interval_seconds=hatch.rescan_interval_seconds,
+            require_home_anchor=hatch.require_home_anchor,
+            home_failure_limit=hatch.home_failure_limit,
+            home_backoff_seconds=hatch.home_backoff_seconds,
+            cull_threshold=hatch.cull_threshold,
+            logger=logger,
+        )
+    elif hp_test:
         planner = AttackReplacementTestPlanner(
             DigitReader(hatch.manifest.parent / "digits"),
             reference_width=hatch.reference_width,
@@ -359,7 +385,9 @@ def _create_hatch_engine(
         )
     action = AdbActionDriver(adb)
     defaults = (
-        attack_replacement_feature
+        full_hatch_feature
+        if full
+        else attack_replacement_feature
         if attack_test or hp_test
         else parent_open_feature
         if parent_test

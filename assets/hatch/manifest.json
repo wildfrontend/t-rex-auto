@@ -179,6 +179,56 @@
       "type": "hatch_select_title",
       "file": "templates/hatch-select-title.png",
       "threshold": 0.9
+    },
+    {
+      "type": "hatch_nest_gear",
+      "file": "templates/hatch-nest-gear.png",
+      "threshold": 0.88
+    },
+    {
+      "type": "hatch_autoplace_title",
+      "file": "templates/hatch-autoplace-title.png",
+      "threshold": 0.88
+    },
+    {
+      "type": "hatch_autoplace_button",
+      "file": "templates/hatch-autoplace-button.png",
+      "threshold": 0.88
+    },
+    {
+      "type": "hatch_collect_eggs_button",
+      "file": "templates/hatch-collect-eggs-button.png",
+      "threshold": 0.88
+    },
+    {
+      "type": "hatch_cave_select_button",
+      "file": "templates/hatch-cave-select-button.png",
+      "threshold": 0.88
+    },
+    {
+      "type": "hatch_cave_continuous_button",
+      "file": "templates/hatch-cave-continuous-button.png",
+      "threshold": 0.88
+    },
+    {
+      "type": "hatch_select_weakest_button",
+      "file": "templates/hatch-select-weakest-button.png",
+      "threshold": 0.88
+    },
+    {
+      "type": "hatch_select_choose_button",
+      "file": "templates/hatch-select-choose-button.png",
+      "threshold": 0.88
+    },
+    {
+      "type": "hatch_autoplace_prompt",
+      "file": "templates/hatch-autoplace-prompt.png",
+      "threshold": 0.88
+    },
+    {
+      "type": "hatch_cave_close_button",
+      "file": "templates/hatch-cave-close-button.png",
+      "threshold": 0.9
     }
   ]
 }
