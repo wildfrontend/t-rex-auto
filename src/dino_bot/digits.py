@@ -1,0 +1,139 @@
+"""Template-based digit reading for hatch phases B/C.
+
+The game renders every number the bot cares about as dark hand-drawn glyphs
+on a light background (stat bars, counters, the N/350 capacity readout), so a
+full OCR stack is unnecessary: binarize, split into glyphs by connected
+components, and match each glyph against a small labelled set cropped from
+reference screenshots (``assets/hatch/digits``).
+
+Callers must crop regions that contain digits (and ``/``) only. There is no
+reliable rejection of other glyphs: hand-drawn letters score inside the digit
+range (``o`` genuinely is ``0``), so a mispositioned crop over text yields a
+plausible-looking number rather than ``None``. Guard call sites structurally
+instead, e.g. ``read_fraction`` demanding the known ``/350`` denominator.
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+from pathlib import Path
+
+import cv2
+import numpy as np
+
+from .models import Image
+
+INK_THRESHOLD = 110
+# Glyphs are resized to one canonical raster before comparison so the same
+# set serves both the large counters and the small stat rows.
+GLYPH_SIZE = (24, 32)
+MIN_GLYPH_AREA = 12
+MIN_MATCH_SCORE = 0.60
+
+
+class DigitReadError(ValueError):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class Glyph:
+    char: str
+    raster: np.ndarray
+
+
+def binarize(image: Image) -> np.ndarray:
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == 3 else image
+    _, ink = cv2.threshold(gray, INK_THRESHOLD, 255, cv2.THRESH_BINARY_INV)
+    return ink
+
+
+def _merge_by_column(boxes: list[tuple[int, int, int, int]]) -> list[tuple[int, int, int, int]]:
+    """Merge boxes that overlap horizontally (a colon is two stacked dots)."""
+
+    merged: list[tuple[int, int, int, int]] = []
+    for box in sorted(boxes, key=lambda item: item[0]):
+        x, y, w, h = box
+        if merged:
+            mx, my, mw, mh = merged[-1]
+            overlap = min(mx + mw, x + w) - max(mx, x)
+            if overlap > 0.4 * min(w, mw):
+                x0 = min(mx, x)
+                y0 = min(my, y)
+                x1 = max(mx + mw, x + w)
+                y1 = max(my + mh, y + h)
+                merged[-1] = (x0, y0, x1 - x0, y1 - y0)
+                continue
+        merged.append(box)
+    return merged
+
+
+def segment_glyphs(image: Image) -> list[tuple[tuple[int, int, int, int], np.ndarray]]:
+    """Return (bbox, canonical raster) per glyph, left to right."""
+
+    ink = binarize(image)
+    count, _, stats, _ = cv2.connectedComponentsWithStats(ink, connectivity=8)
+    boxes = []
+    for index in range(1, count):
+        x, y, w, h, area = stats[index]
+        if area < MIN_GLYPH_AREA:
+            continue
+        boxes.append((int(x), int(y), int(w), int(h)))
+    results = []
+    for x, y, w, h in _merge_by_column(boxes):
+        raster = cv2.resize(ink[y : y + h, x : x + w], GLYPH_SIZE, interpolation=cv2.INTER_AREA)
+        # Re-binarize: resizing leaves gray edge pixels that would never equal
+        # the (also re-binarized) templates under exact comparison.
+        _, raster = cv2.threshold(raster, 127, 255, cv2.THRESH_BINARY)
+        results.append(((x, y, w, h), raster))
+    return results
+
+
+class DigitReader:
+    def __init__(self, glyph_dir: Path, *, logger: logging.Logger | None = None) -> None:
+        self.logger = logger or logging.getLogger("dino_bot")
+        self.glyphs: list[Glyph] = []
+        for path in sorted(Path(glyph_dir).glob("*.png")):
+            raster = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+            if raster is None:
+                raise DigitReadError(f"Cannot read glyph template: {path}")
+            char = {"slash": "/", "colon": ":"}.get(path.stem, path.stem)
+            if len(char) != 1:
+                raise DigitReadError(f"Glyph file name must map to one character: {path}")
+            raster = cv2.resize(raster, GLYPH_SIZE, interpolation=cv2.INTER_AREA)
+            _, raster = cv2.threshold(raster, 127, 255, cv2.THRESH_BINARY)
+            self.glyphs.append(Glyph(char, raster))
+        if not self.glyphs:
+            raise DigitReadError(f"No glyph templates found in {glyph_dir}")
+
+    def read(self, image: Image) -> str:
+        """Read every recognizable glyph left to right; '?' for misses."""
+
+        chars = []
+        for _, raster in segment_glyphs(image):
+            best_char, best_score = "?", 0.0
+            for glyph in self.glyphs:
+                score = float(np.mean(raster == glyph.raster))
+                if score > best_score:
+                    best_char, best_score = glyph.char, score
+            chars.append(best_char if best_score >= MIN_MATCH_SCORE else "?")
+        return "".join(chars)
+
+    def read_int(self, image: Image) -> int | None:
+        """Read a pure-number region; any stray or unknown glyph rejects it."""
+
+        text = self.read(image)
+        if not text or not text.isdigit():
+            return None
+        return int(text)
+
+    def read_fraction(self, image: Image) -> tuple[int, int] | None:
+        """Read an ``N/M`` readout such as the 282/350 capacity counter."""
+
+        text = self.read(image)
+        if "?" in text or text.count("/") != 1:
+            return None
+        left, right = text.split("/")
+        if not left.isdigit() or not right.isdigit():
+            return None
+        return int(left), int(right)
