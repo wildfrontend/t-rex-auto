@@ -127,6 +127,31 @@
       "type": "hatch_sort_hdr_attack",
       "file": "templates/hatch-sort-hdr-attack.png",
       "threshold": 0.85
+    },
+    {
+      "type": "hatch_select_confirm_prompt",
+      "file": "templates/hatch-select-confirm-prompt.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_confirm_yes",
+      "file": "templates/hatch-confirm-yes.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_confirm_no",
+      "file": "templates/hatch-confirm-no.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_autoplace_notice",
+      "file": "templates/hatch-autoplace-notice.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_incubator_full_toast",
+      "file": "templates/hatch-incubator-full-toast.png",
+      "threshold": 0.9
     }
   ]
 }
