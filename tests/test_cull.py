@@ -35,6 +35,14 @@ def test_reads_capacity_at_reference_size(reader: DigitReader) -> None:
     assert read_dino_count(frame_with_hud(), reader) == 282
 
 
+def test_capacity_crop_ignores_particles_above_the_number_row(reader: DigitReader) -> None:
+    frame = frame_with_hud()
+    # A live cave-view frame had confetti in the old crop's top-right corner.
+    # The trusted region starts below it and must still parse the counter.
+    frame[236:239, 100:110] = 0
+    assert read_dino_count(frame, reader) == 282
+
+
 def test_reads_capacity_at_two_thirds_scale(reader: DigitReader) -> None:
     small = cv2.resize(frame_with_hud(), (600, 1067), interpolation=cv2.INTER_AREA)
     assert read_dino_count(small, reader) == 282

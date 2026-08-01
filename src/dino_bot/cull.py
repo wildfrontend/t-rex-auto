@@ -16,7 +16,11 @@ from .models import Image
 # where nothing overlaps it (the home view can be obscured by badges). The
 # whole UI anchors top-left and scales with frame width, so both axes rescale
 # by width, same as ExclusionZone.
-CAPACITY_REGION = (10.0, 236.0, 110.0, 258.0)
+# Start below the top edge of the glyphs' row.  Live frames can contain tiny
+# confetti particles at y=236-238; including one after ``/350`` turns an
+# otherwise valid read into ``280/350?``.  The digits themselves remain fully
+# connected from y=239 onward at 900-wide reference scale.
+CAPACITY_REGION = (10.0, 239.0, 110.0, 258.0)
 EXPECTED_CAPACITY = 350
 
 
