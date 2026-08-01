@@ -137,6 +137,30 @@ class VerifyConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class HatchConfig:
+    """Auto Hatch feature settings (docs/auto-hatch-plan.md).
+
+    Coordinates live in manifest reference space (a 900-wide layout) and are
+    rescaled by frame width at run time, same as ``ExclusionZone``.
+    """
+
+    manifest: Path = Path("assets/hatch/manifest.json")
+    reference_width: float = 900.0
+    # The egg pile is styled dynamically, so it is tapped by coordinate, never
+    # matched by template. Calibrate against a snapshot before first use.
+    egg_pile: tuple[float, float] = (450.0, 1330.0)
+    scroll_vector: tuple[float, float, float, float] = (450.0, 1100.0, 450.0, 500.0)
+    scroll_duration_ms: int = 400
+    max_scrolls: int = 4
+    # Game-imposed incubation cooldown is ~25 minutes; this is only how often
+    # the bot re-enters to check, per the plan's rescan rule.
+    rescan_interval_seconds: float = 600.0
+    require_home_anchor: bool = True
+    home_failure_limit: int = 3
+    home_backoff_seconds: float = 30.0
+
+
+@dataclass(frozen=True, slots=True)
 class TrainingConfig:
     fps: float = 2.0
     max_images: int = 500
@@ -227,6 +251,7 @@ class AppConfig:
     detector: DetectorConfig = field(default_factory=DetectorConfig)
     planner: PlannerConfig = field(default_factory=PlannerConfig)
     verify: VerifyConfig = field(default_factory=VerifyConfig)
+    hatch: HatchConfig = field(default_factory=HatchConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
     workflow: WorkflowConfig = field(default_factory=WorkflowConfig)
     recovery: RecoveryConfig = field(default_factory=RecoveryConfig)
@@ -260,6 +285,24 @@ def _section(data: dict[str, Any], name: str) -> dict[str, Any]:
 def _path_from(root: Path, raw: str) -> Path:
     path = Path(raw)
     return path if path.is_absolute() else root / path
+
+
+def _number_tuple(
+    data: dict[str, Any],
+    label: str,
+    key: str,
+    length: int,
+    default: tuple[float, ...],
+) -> tuple[float, ...]:
+    raw = data.get(key)
+    if raw is None:
+        return default
+    if not isinstance(raw, list) or len(raw) != length:
+        raise ConfigError(f"{label} must be a list of {length} numbers")
+    try:
+        return tuple(float(value) for value in raw)
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"{label} must contain numbers") from exc
 
 
 def _exclusion_zones(data: dict[str, Any]) -> tuple[ExclusionZone, ...]:
@@ -338,6 +381,7 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
     detector_data = _section(data, "detector")
     planner_data = _section(data, "planner")
     verify_data = _section(data, "verify")
+    hatch_data = _section(data, "hatch")
     training_data = _section(data, "training")
     workflow_data = _section(data, "workflow")
     recovery_data = _section(data, "recovery")
@@ -519,6 +563,28 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
                 )
             ),
         ),
+        hatch=HatchConfig(
+            manifest=_path_from(
+                root, hatch_data.get("manifest", "assets/hatch/manifest.json")
+            ),
+            reference_width=float(hatch_data.get("reference_width", 900)),
+            egg_pile=_number_tuple(hatch_data, "hatch.egg_pile", "egg_pile", 2, (450.0, 1330.0)),
+            scroll_vector=_number_tuple(
+                hatch_data,
+                "hatch.scroll_vector",
+                "scroll_vector",
+                4,
+                (450.0, 1100.0, 450.0, 500.0),
+            ),
+            scroll_duration_ms=int(hatch_data.get("scroll_duration_ms", 400)),
+            max_scrolls=int(hatch_data.get("max_scrolls", 4)),
+            rescan_interval_seconds=float(
+                hatch_data.get("rescan_interval_seconds", 600)
+            ),
+            require_home_anchor=bool(hatch_data.get("require_home_anchor", True)),
+            home_failure_limit=int(hatch_data.get("home_failure_limit", 3)),
+            home_backoff_seconds=float(hatch_data.get("home_backoff_seconds", 30)),
+        ),
         training=TrainingConfig(
             fps=float(training_data.get("fps", 2)),
             max_images=int(training_data.get("max_images", 500)),
@@ -601,8 +667,23 @@ def _validate(config: AppConfig) -> None:
             raise ConfigError(
                 f"speed_profiles.{profile_name}.poll_interval_ms must be greater than zero"
             )
-    if any(action not in {"tap", "back"} for action in config.target_actions.values()):
-        raise ConfigError("target_actions values must be tap or back")
+    if any(
+        action not in {"tap", "back", "swipe"}
+        for action in config.target_actions.values()
+    ):
+        raise ConfigError("target_actions values must be tap, back, or swipe")
+    if config.hatch.reference_width <= 0:
+        raise ConfigError("hatch.reference_width must be greater than zero")
+    if config.hatch.scroll_duration_ms <= 0:
+        raise ConfigError("hatch.scroll_duration_ms must be greater than zero")
+    if config.hatch.max_scrolls < 0:
+        raise ConfigError("hatch.max_scrolls cannot be negative")
+    if config.hatch.rescan_interval_seconds < 0:
+        raise ConfigError("hatch.rescan_interval_seconds cannot be negative")
+    if config.hatch.home_failure_limit <= 0:
+        raise ConfigError("hatch.home_failure_limit must be greater than zero")
+    if config.hatch.home_backoff_seconds < 0:
+        raise ConfigError("hatch.home_backoff_seconds cannot be negative")
     if config.verify_retry < 0:
         raise ConfigError("verify_retry cannot be negative")
     if config.verify.minimum_checks <= 0:

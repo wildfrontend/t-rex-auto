@@ -27,6 +27,12 @@ def build_parser() -> argparse.ArgumentParser:
     subcommands = parser.add_subparsers(dest="command", required=True)
 
     run = subcommands.add_parser("run", help="start the bot loop")
+    run.add_argument(
+        "--feature",
+        choices=["hunt", "hatch"],
+        default="hunt",
+        help="which automation to run: hunt (default) or the egg hatch loop",
+    )
     run.add_argument("--mode", choices=["runtime", "debug", "training"])
     run.add_argument("--max-actions", type=int)
     run.add_argument("--max-cycles", type=int)
@@ -331,7 +337,7 @@ def main(argv: list[str] | None = None) -> int:
             idle_delay_ms=args.idle_delay_ms,
             poll_interval_ms=args.poll_interval_ms,
         )
-        engine = create_engine(config, verbose=args.verbose)
+        engine = create_engine(config, verbose=args.verbose, feature=args.feature)
         status_server = None
         if args.status_port > 0:
             control_handlers = {"stop": engine.stop}

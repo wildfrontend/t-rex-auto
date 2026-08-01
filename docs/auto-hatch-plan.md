@@ -486,6 +486,24 @@
     帶「孵化」字樣可點；倒數中的蛋是「進度條＋碼錶倒數」樣式。
     判斷依據維持唯一準則：**只看有沒有「孵化」字樣**。
 
+## 8.5 實作狀態（2026-08-01 起）
+
+- 決策（使用者確認）：**同一專案、共用底層，`dino-bot run --feature hatch`
+  切換**；狩獵維持 `--feature hunt`（預設），互不干擾。
+- 已完成（Phase A 骨架）：
+  - `src/dino_bot/hatch.py`：HatchPlanner（反應式優先序規則，不用顯式
+    狀態機；驅逐鈕在任何規則下都不會成為目標）、目標型別詞彙、
+    預設 target_actions／post_action_delays／success_transitions。
+  - `config.json` 新增 `hatch` 區塊（egg_pile 座標、rescan_interval、
+    scroll 參數、home anchor 防呆），含驗證。
+  - 引擎擴充：planner 目標可帶 swipe（孵化器下滑用），向後相容。
+  - `application.py`：hatch 組裝線（共用 ADB/擷取/模式/黑畫面恢復/
+    事件log/卡死快照；不掛狩獵進度看門狗）。
+  - `assets/hatch/`：空 manifest ＋ 素材需求 README（7 個 template）。
+  - `tests/test_hatch.py`：10 個離線測試（全綠；全套件 130 綠）。
+- 待辦：截素材（T1–T3 前置）→ 實測校準 egg_pile 座標與 scroll 參數
+  → Phase B/C（需數字模板/OCR，另開實作輪）。
+
 ## 9. 小事件測試計畫
 
 > 原則：每個測試獨立、可重複、失敗不傷害遊戲進度（只讀優先，

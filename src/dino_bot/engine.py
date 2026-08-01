@@ -109,6 +109,28 @@ class StateHandler(Protocol):
     def execute(self, context: BotContext) -> BotState: ...
 
 
+def _build_action(action_kind: ActionKind, target: Target) -> ActionCommand:
+    if action_kind == ActionKind.BACK:
+        return ActionCommand.back()
+    if action_kind == ActionKind.SWIPE:
+        swipe = target.detection.metadata.get("swipe") or {}
+        x2 = swipe.get("x2")
+        y2 = swipe.get("y2")
+        if x2 is None or y2 is None:
+            # A swipe target without an endpoint is a planner bug; a tap at the
+            # start point is the safest thing that still makes progress.
+            return ActionCommand.tap(target.x, target.y)
+        return ActionCommand(
+            kind=ActionKind.SWIPE,
+            x=target.x,
+            y=target.y,
+            x2=int(x2),
+            y2=int(y2),
+            duration_ms=int(swipe.get("duration_ms", 300)),
+        )
+    return ActionCommand.tap(target.x, target.y)
+
+
 def _wait_for_delay(context: BotContext, delay_ms: int) -> bool:
     """Wait for a delay and return True when a stop request interrupts it."""
 
@@ -333,11 +355,7 @@ class PlanningState:
                 context.inert_taps,
             )
             action_kind = ActionKind.BACK
-        context.action = (
-            ActionCommand.back()
-            if action_kind == ActionKind.BACK
-            else ActionCommand.tap(context.target.x, context.target.y)
-        )
+        context.action = _build_action(action_kind, context.target)
         context.logger.info(
             "Planning | %s at (%d,%d) confidence=%.3f",
             context.target.type,
