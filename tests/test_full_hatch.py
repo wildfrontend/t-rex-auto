@@ -325,6 +325,34 @@ def test_full_hatch_scopes_detection_by_workflow_phase() -> None:
     assert "own_hunt_path" not in nest_types
 
 
+def test_full_hatch_preflights_capacity_before_first_egg_pile_tap() -> None:
+    planner = make_full_planner()
+    home = [detection(hatch.HOME_ANCHOR, 59, 561)]
+
+    target = planner.choose(frame(), home)
+    assert target is not None and target.type == CAVE_SWIPE
+    assert planner._stage == "capacity_preflight"
+    assert "hatch_cave" in planner.planning_detection_types()
+    planner.on_action_success(target.type)
+
+    target = planner.choose(frame(), home)
+    assert target is not None and target.type == CAVE_SWIPE
+    planner.on_action_success(target.type)
+
+    cave = [detection("hatch_cave", 209, 1150)]
+    target = planner.choose(capacity_frame(), cave)
+    assert target is not None and target.type == CAVE_RECENTER
+    planner.on_action_success(target.type)
+    target = planner.choose(capacity_frame(), cave)
+    assert target is not None and target.type == CAVE_RECENTER
+    planner.on_action_success(target.type)
+
+    assert planner.choose(capacity_frame(), home) is None
+    target = planner.choose(capacity_frame(), home)
+    assert target is not None and target.type == hatch.EGG_PILE
+    assert planner._capacity_checked
+
+
 def test_full_flow_enters_nest_only_after_a_verified_hatch_claim() -> None:
     planner = make_full_planner()
     planner.on_action_success(hatch.CLAIM_BUTTON)
@@ -382,7 +410,7 @@ def test_full_flow_collects_all_nest_eggs_before_empty_rescan_wait() -> None:
     now[0] += 601
     assert not planner.is_hunt_cooldown_active()
     target = planner.choose(frame(), home)
-    assert target is not None and target.type == hatch.EGG_PILE
+    assert target is not None and target.type == CAVE_SWIPE
 
 
 def test_full_hatch_accumulates_ten_claims_before_management() -> None:
@@ -540,9 +568,9 @@ def test_full_flow_recovers_shifted_cave_view_before_tapping_egg_pile() -> None:
     planner.on_action_success(target.type)
 
     centered_home = [detection(hatch.HOME_ANCHOR, 59, 561)]
-    assert planner.choose(frame(), centered_home) is None
     target = planner.choose(frame(), centered_home)
-    assert target is not None and target.type == hatch.EGG_PILE
+    assert target is not None and target.type == CAVE_SWIPE
+    assert target.type != hatch.EGG_PILE
 
 
 def test_full_flow_resumes_vertical_recovery_after_restart_mid_return() -> None:
@@ -586,8 +614,8 @@ def test_full_flow_tracks_shifted_egg_pile_instead_of_tapping_roaming_dinosaur()
         [detection(hatch.HOME_ANCHOR, 59, 561)],
     )
 
-    assert target is not None and target.type == hatch.EGG_PILE
-    assert (target.x, target.y) == (445, 1438)
+    assert target is not None and target.type == CAVE_SWIPE
+    assert target.type != hatch.EGG_PILE
 
 
 def test_full_flow_uses_nest_shortcut_before_tapping_visible_home() -> None:
@@ -784,4 +812,4 @@ def test_full_flow_blind_screen_uses_bounded_back_then_requires_home_proof() -> 
     home = [detection(hatch.HOME_ANCHOR, 59, 561)]
     assert planner.choose(frame(), home) is None
     target = planner.choose(frame(), home)
-    assert target is not None and target.type == hatch.EGG_PILE
+    assert target is not None and target.type == CAVE_SWIPE

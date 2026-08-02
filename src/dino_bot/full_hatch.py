@@ -869,6 +869,7 @@ class CaveCullPlanner:
         self._home_frames = 0
         self._complete = False
         self._capacity_before: int | None = None
+        self._capacity_readable: bool | None = None
         self._selected_count = 0
 
     def last_stage(self) -> str:
@@ -876,6 +877,12 @@ class CaveCullPlanner:
 
     def is_complete(self) -> bool:
         return self._complete
+
+    @property
+    def capacity_readable(self) -> bool:
+        """Whether this run proved the N/350 readout instead of skipping it."""
+
+        return self._capacity_readable is True
 
     def on_action_success(self, target_type: str) -> None:
         if target_type == CAVE_SWIPE:
@@ -946,9 +953,11 @@ class CaveCullPlanner:
                         self._capacity_failures,
                     )
                     return None
+                self._capacity_readable = False
                 self.logger.error("Hatch cave | capacity unreadable; skipping cull")
                 self._stage = "recenter"
                 return self.choose(frame, detections)
+            self._capacity_readable = True
             self.logger.info(
                 "Hatch cave | capacity=%d/350 | threshold=%d | cull=%s",
                 count,
@@ -1130,6 +1139,11 @@ class FullHatchPlanner:
         self._recovery_reason: str | None = None
         self._collect_only_after_empty = False
         self._empty_rescan_wait = False
+        # A fresh planner instance must prove that the dinosaur capacity is
+        # safe before it opens the incubator. Later management cycles already
+        # pass through CaveCullPlanner, so this guard is one preflight per
+        # planner lifetime rather than once per hatch batch.
+        self._capacity_checked = False
         self._batch_hatched = 0
         self._batch_hunt_ready = False
         self._observed_cooldown_until: float | None = None
@@ -1189,6 +1203,8 @@ class FullHatchPlanner:
         }:
             return NEST_DETECTION_TYPES
         if self._stage == "cave":
+            return CAVE_DETECTION_TYPES
+        if self._stage == "capacity_preflight":
             return CAVE_DETECTION_TYPES
         return RECOVERY_DETECTION_TYPES
 
@@ -1255,6 +1271,9 @@ class FullHatchPlanner:
         self._navigation_failures.pop((self._stage, target_type), None)
         if self._stage == "recover_home":
             self._recovery_child.on_action_success(target_type)
+            return
+        if self._stage == "capacity_preflight":
+            self._capacity_child.on_action_success(target_type)
             return
         if self._stage == "hatch":
             hatch = self._hatch_child
@@ -1370,6 +1389,15 @@ class FullHatchPlanner:
                 # that card's action buttons.  Unwind it before retrying at a
                 # newly measured point on the basket.
                 self._begin_home_recovery("egg pile tap opened an unexpected screen")
+            return
+        if self._stage == "capacity_preflight":
+            self._capacity_child.on_action_failure(target_type)
+            # A failed cave navigation/read must never fall through to the
+            # incubator.  Recover to a proven home screen and retry the guard
+            # on the next workflow pass.
+            self._begin_home_recovery(
+                f"capacity preflight failed at target={target_type}"
+            )
             return
         retry_key = (self._stage, target_type)
         retry_count = self._navigation_failures.get(retry_key, 0)
@@ -1552,9 +1580,34 @@ class FullHatchPlanner:
                 )
             target = self._hatch_child.choose(frame, detections)
             if target is not None and target.type == hatch_feature.EGG_PILE:
+                if not self._capacity_checked:
+                    self._begin_capacity_preflight(
+                        "before first incubator access"
+                    )
+                    return self._choose_current(frame, detections)
                 safe_point = _egg_pile_safe_tap(frame)
                 if safe_point is not None:
                     return _synthetic(hatch_feature.EGG_PILE, *safe_point)
+            return target
+        if self._stage == "capacity_preflight":
+            target = self._capacity_child.choose(frame, detections)
+            if target is None and self._capacity_child.is_complete():
+                if not self._capacity_child.capacity_readable:
+                    self.logger.error(
+                        "Hatch capacity | preflight failed; N/350 unreadable; "
+                        "hatching stopped safely"
+                    )
+                    self._complete = True
+                    return None
+                self._capacity_checked = True
+                self.logger.info(
+                    "Hatch capacity | preflight complete | safe to hatch"
+                )
+                self._stage = "hatch"
+                self._child = self._new_hatch()
+                self._hatch_baseline = 0
+                self._start_hatch_cycle()
+                return self._choose_current(frame, detections)
             return target
         if self._stage == "open_nest":
             if NEST_TITLE in by_type:
@@ -1657,6 +1710,24 @@ class FullHatchPlanner:
         )
         self._no_target_since = None
         self._recovery_reason = reason
+
+    def _begin_capacity_preflight(self, reason: str) -> None:
+        """Check/cull dinosaur capacity before the first hatch interaction."""
+
+        self.logger.info(
+            "Hatch capacity | starting preflight | reason=%s",
+            reason,
+        )
+        self._stage = "capacity_preflight"
+        self._child = CaveCullPlanner(
+            self.reader,
+            threshold=self.cull_threshold,
+            reference_width=self.reference_width,
+            safe_margin=self.cave_safe_margin,
+            bottom_exclusion_px=self.cave_bottom_exclusion_px,
+            logger=self.logger,
+        )
+        self._no_target_since = None
 
     def _new_hatch(self) -> hatch_feature.HatchPlanner:
         return hatch_feature.HatchPlanner(**self._hatch_kwargs)
@@ -1894,6 +1965,11 @@ class FullHatchPlanner:
 
     @property
     def _cave_child(self) -> CaveCullPlanner:
+        assert isinstance(self._child, CaveCullPlanner)
+        return self._child
+
+    @property
+    def _capacity_child(self) -> CaveCullPlanner:
         assert isinstance(self._child, CaveCullPlanner)
         return self._child
 
