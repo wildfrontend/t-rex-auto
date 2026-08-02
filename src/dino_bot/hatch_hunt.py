@@ -7,7 +7,6 @@ from collections.abc import Sequence
 from math import hypot
 from typing import Any
 
-from . import hatch as hatch_feature
 from .full_hatch import FullHatchPlanner, is_centered_home_screen
 from .models import Detection, Frame, Target
 from .planning import HuntPlanner
@@ -198,7 +197,12 @@ class HatchHuntPlanner:
             ),
             None,
         )
-        if center_anchor is not None and is_centered_home_screen(frame, detections):
+        # ``is_centered_home_screen`` already proves the unobscured hatch HUD
+        # and measures the cyan base of the central incubator. Requiring the
+        # hunting map's small egg anchor here deadlocks a successful handoff:
+        # that landmark is legitimately off-screen once the hatch home is
+        # centered.
+        if is_centered_home_screen(frame, detections):
             self._centered_frames += 1
             if self._centered_frames < 2:
                 return None

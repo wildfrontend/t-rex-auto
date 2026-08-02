@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Dino Mutant Bot 儀表板</title>
+  <link rel="stylesheet" href="/dashboard.css">
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">DINO MUTANT BOT</p>
+        <h1>培育控制中心</h1>
+      </div>
+      <div class="live-state">
+        <span id="liveDot" class="live-dot"></span>
+        <div>
+          <strong id="modeLabel">正在連線…</strong>
+          <small id="lastUpdate">等待狀態</small>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero panel">
+        <div>
+          <p class="section-label">目前工作流程</p>
+          <h2 id="workflowLabel">讀取中</h2>
+          <p id="workflowMeta" class="muted">正在連接本機 Bot</p>
+        </div>
+        <div id="cooldown" class="cooldown hidden">
+          <small>孵蛋重新檢查</small>
+          <strong id="cooldownValue">--:--</strong>
+        </div>
+        <div class="stage-track" aria-label="孵蛋工作流程">
+          <span data-stage="hatch">孵蛋</span>
+          <span data-stage="nest_attack">攻擊</span>
+          <span data-stage="nest_hp">HP</span>
+          <span data-stage="nest_top">頂尖</span>
+          <span data-stage="nest_mass">量產</span>
+          <span data-stage="collect">收蛋</span>
+          <span data-stage="cave">洞穴</span>
+          <span data-stage="cooldown_hunt">狩獵</span>
+        </div>
+      </section>
+
+      <section class="metric-grid">
+        <article class="metric-card accent-orange">
+          <span>成功狩獵</span>
+          <strong id="huntSession">0</strong>
+          <small>今日 <b id="huntToday">0</b> · 累積 <b id="huntTotal">0</b></small>
+        </article>
+        <article class="metric-card accent-cyan">
+          <span>孵化取得</span>
+          <strong id="hatchSession">0</strong>
+          <small>今日 <b id="hatchToday">0</b> · 累積 <b id="hatchTotal">0</b></small>
+        </article>
+        <article class="metric-card accent-lime">
+          <span>親代替換</span>
+          <strong id="replacementSession">0</strong>
+          <small>今日 <b id="replacementToday">0</b> · 累積 <b id="replacementTotal">0</b></small>
+        </article>
+        <article class="metric-card accent-violet">
+          <span>收蛋批次</span>
+          <strong id="collectSession">0</strong>
+          <small>今日 <b id="collectToday">0</b> · 累積 <b id="collectTotal">0</b></small>
+        </article>
+      </section>
+
+      <section class="two-column">
+        <article class="panel records-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="section-label">BREEDING RECORDS</p>
+              <h3>最高培育數值</h3>
+            </div>
+            <span class="verified-chip">已驗證 OCR</span>
+          </div>
+          <div class="record-list">
+            <div><span>HP</span><strong id="recordHp">—</strong><small id="recordHpMeta">尚無資料</small></div>
+            <div><span>攻擊</span><strong id="recordAttack">—</strong><small id="recordAttackMeta">尚無資料</small></div>
+            <div><span>速度</span><strong id="recordSpeed">—</strong><small id="recordSpeedMeta">尚無資料</small></div>
+          </div>
+          <div class="mini-stats">
+            <span>頂尖完成 <b id="topTotal">0</b></span>
+            <span>量產完成 <b id="massTotal">0</b></span>
+            <span>驗證失敗 <b id="failureToday">0</b></span>
+          </div>
+        </article>
+
+        <article class="panel trend-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="section-label">LAST 7 DAYS</p>
+              <h3>狩獵與孵化趨勢</h3>
+            </div>
+            <div class="legend"><span class="hunt-key">狩獵</span><span class="hatch-key">孵化</span></div>
+          </div>
+          <div id="timeline" class="timeline"><p class="empty">尚無歷史資料</p></div>
+        </article>
+      </section>
+
+      <section class="two-column lower">
+        <article class="panel events-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="section-label">LIVE EVENT STREAM</p>
+              <h3>最近紀錄</h3>
+            </div>
+          </div>
+          <div id="events" class="event-list"><p class="empty">等待事件</p></div>
+        </article>
+
+        <aside class="panel controls-panel">
+          <p class="section-label">SAFE CONTROLS</p>
+          <h3>控制指令</h3>
+          <div class="control-group">
+            <button class="primary" data-action="start-hatch-hunt">啟動孵蛋＋狩獵</button>
+            <button data-action="start-hunt">啟動純狩獵</button>
+          </div>
+          <div class="control-grid">
+            <button data-action="restart-bot" data-confirm="確定重新啟動 Bot？">重啟 Bot</button>
+            <button data-action="restart-game" data-confirm="確定重新啟動遊戲？">重啟遊戲</button>
+            <button data-action="snapshot">擷取畫面</button>
+            <button data-action="diagnostics">產生診斷包</button>
+            <button data-action="open-logs">開啟日誌</button>
+            <button class="danger" data-action="stop" data-confirm="確定安全停止 Bot？">安全停止</button>
+          </div>
+          <div id="commandResult" class="command-result">所有控制只允許本機白名單指令。</div>
+        </aside>
+      </section>
+    </main>
+  </div>
+  <script src="/dashboard.js" defer></script>
+</body>
+</html>

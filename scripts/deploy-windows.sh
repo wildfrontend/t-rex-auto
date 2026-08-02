@@ -19,11 +19,15 @@ cp -a \
   "${project_root}/pyproject.toml" \
   "${project_root}/src" \
   "${project_root}/assets" \
-  "${project_root}/tools" \
   "${runtime_app}/"
+# Emulator processes can keep adb.exe and its DLLs open on Windows. The bundled
+# toolchain is immutable for an app update, so preserve installed files and only
+# fill in anything that is missing.
+cp -a --update=none "${project_root}/tools" "${runtime_app}/"
 cp -a \
   "${project_root}/scripts/run-windows.ps1" \
   "${project_root}/scripts/run-hatch-windows.ps1" \
+  "${project_root}/scripts/run-dashboard-windows.ps1" \
   "${project_root}/scripts/doctor-windows.ps1" \
   "${project_root}/scripts/launcher-windows.ps1" \
   "${project_root}/scripts/control-windows.ps1" \
@@ -33,24 +37,26 @@ cp -a \
   "${project_root}/scripts/watch-running-bot.ps1" \
   "${runtime_app}/scripts/"
 cp -a "${project_root}/scripts/start-bot.cmd" "${runtime_root}/start-bot.cmd"
-cp -a "${project_root}/scripts/start-hatch-bot.cmd" "${runtime_root}/start-hatch-bot.cmd"
-cp -a "${project_root}/scripts/start-hatch-full.cmd" "${runtime_root}/start-hatch-full.cmd"
+cp -a "${project_root}/scripts/start-dashboard.cmd" "${runtime_root}/start-dashboard.cmd"
 cp -a "${project_root}/scripts/start-hatch-hunt.cmd" "${runtime_root}/start-hatch-hunt.cmd"
-cp -a \
-  "${project_root}/scripts/start-hatch-filter-test.cmd" \
-  "${runtime_root}/start-hatch-filter-test.cmd"
-cp -a \
-  "${project_root}/scripts/start-hatch-sort-test.cmd" \
-  "${runtime_root}/start-hatch-sort-test.cmd"
-cp -a \
-  "${project_root}/scripts/start-hatch-parent-test.cmd" \
-  "${runtime_root}/start-hatch-parent-test.cmd"
-cp -a \
-  "${project_root}/scripts/start-hatch-attack-test.cmd" \
-  "${runtime_root}/start-hatch-attack-test.cmd"
-cp -a \
-  "${project_root}/scripts/start-hatch-hp-test.cmd" \
-  "${runtime_root}/start-hatch-hp-test.cmd"
+
+# Keep the portable root limited to the three user-facing entrypoints. Older
+# development launchers remain recoverable under app/scripts instead of being
+# deleted from an existing installation.
+legacy_launchers="${runtime_app}/scripts/legacy-launchers"
+mkdir -p "${legacy_launchers}"
+for launcher in \
+  start-hatch-bot.cmd \
+  start-hatch-full.cmd \
+  start-hatch-filter-test.cmd \
+  start-hatch-sort-test.cmd \
+  start-hatch-parent-test.cmd \
+  start-hatch-attack-test.cmd \
+  start-hatch-hp-test.cmd; do
+  if [[ -f "${runtime_root}/${launcher}" ]]; then
+    mv -f "${runtime_root}/${launcher}" "${legacy_launchers}/${launcher}"
+  fi
+done
 cp -a "${project_root}/使用教學.md" "${runtime_root}/使用教學.md"
 cp -a "${project_root}/.agents" "${runtime_root}/"
 

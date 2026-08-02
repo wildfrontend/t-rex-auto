@@ -167,10 +167,7 @@ def test_handoff_requires_two_centered_frames_before_resuming_hatch() -> None:
     assert combined.choose(frame(), []) is None
     hatch_planner.cooldown_ms = 0
     hatch_planner.next_target = target(hatch.EGG_PILE, 450, 1330)
-    centered = [
-        detection(hatch.HOME_ANCHOR, 59, 561),
-        detection("map_center_egg", 450, 800),
-    ]
+    centered = [detection(hatch.HOME_ANCHOR, 59, 561)]
 
     assert combined.choose(frame(), centered) is None
     chosen = combined.choose(frame(), centered)

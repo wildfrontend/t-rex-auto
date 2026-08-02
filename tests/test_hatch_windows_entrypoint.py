@@ -17,18 +17,25 @@ def test_hatch_entrypoint_is_separate_and_fixed_to_hatch() -> None:
     assert '-MaxCycles "%hatch_max_cycles%"' in command
 
 
-def test_windows_deploy_includes_hatch_entrypoint() -> None:
+def test_windows_deploy_exposes_exactly_three_user_entrypoints() -> None:
     deploy = (REPO / "scripts/deploy-windows.sh").read_text(encoding="utf-8")
 
     assert 'scripts/run-hatch-windows.ps1"' in deploy
-    assert 'scripts/start-hatch-bot.cmd"' in deploy
-    assert 'scripts/start-hatch-full.cmd"' in deploy
+    assert 'scripts/run-dashboard-windows.ps1"' in deploy
+    assert 'scripts/start-bot.cmd"' in deploy
+    assert 'scripts/start-dashboard.cmd"' in deploy
     assert 'scripts/start-hatch-hunt.cmd"' in deploy
-    assert 'scripts/start-hatch-filter-test.cmd"' in deploy
-    assert 'scripts/start-hatch-sort-test.cmd"' in deploy
-    assert 'scripts/start-hatch-parent-test.cmd"' in deploy
-    assert 'scripts/start-hatch-attack-test.cmd"' in deploy
-    assert 'scripts/start-hatch-hp-test.cmd"' in deploy
+    assert 'legacy_launchers="${runtime_app}/scripts/legacy-launchers"' in deploy
+
+
+def test_dashboard_entrypoint_uses_loopback_web_service() -> None:
+    command = (REPO / "scripts/start-dashboard.cmd").read_text(encoding="utf-8")
+    runner = (REPO / "scripts/run-dashboard-windows.ps1").read_text(encoding="utf-8")
+
+    assert "run-dashboard-windows.ps1" in command
+    assert 'set "dashboard_port=8780"' in command
+    assert '"dashboard"' in runner
+    assert '"--open-browser"' in runner
 
 
 def test_filter_test_entrypoint_is_isolated_and_cycle_limited() -> None:

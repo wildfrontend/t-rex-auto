@@ -15,6 +15,7 @@ from .application import create_engine
 from .assets import AssetToolError, create_template
 from .capture import AdbScreencapCapture, MssEmulatorCapture
 from .config import DEFAULT_SPEED_PROFILES, AppConfig, ConfigError, load_config
+from .dashboard import DashboardServer
 from .diagnostics import create_diagnostic_bundle, default_diagnostic_output
 from .doctor import benchmark_capture, run_checks
 from .status import build_runtime_status
@@ -68,6 +69,13 @@ def build_parser() -> argparse.ArgumentParser:
     status = subcommands.add_parser("status", help="show the latest Bot session status")
     status.add_argument("--json", action="store_true", help="print machine-readable JSON")
     status.add_argument("--actions", type=int, default=10, help="recent actions to include")
+
+    dashboard = subcommands.add_parser(
+        "dashboard",
+        help="serve the localhost statistics and control dashboard",
+    )
+    dashboard.add_argument("--port", type=int, default=8780)
+    dashboard.add_argument("--open-browser", action="store_true")
 
     diagnostics = subcommands.add_parser(
         "diagnostics",
@@ -267,6 +275,22 @@ def main(argv: list[str] | None = None) -> int:
                 f" | persisted: {status['black_screen_persisted']}"
                 f" | game restarts: {status['game_restarts']}"
             )
+        return 0
+    if args.command == "dashboard":
+        port = max(1, min(int(args.port), 65535))
+        database = config.root / "data" / "stats.sqlite3"
+        server = DashboardServer(
+            config.root.parent,
+            config.logs_dir,
+            database,
+            port=port,
+        )
+        print(f"Dino dashboard: http://127.0.0.1:{port}")
+        print(f"Statistics database: {database}")
+        try:
+            server.serve_forever(open_browser=bool(args.open_browser))
+        except KeyboardInterrupt:
+            server.close()
         return 0
     if args.command == "benchmark":
         if args.backend:
