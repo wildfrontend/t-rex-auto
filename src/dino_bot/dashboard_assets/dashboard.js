@@ -96,7 +96,11 @@ function render(data) {
   const stock = Number(inventory.remaining ?? 100);
   $("boostStockValue").textContent = stock;
   $("boostUsedTotal").textContent = Number(inventory.used_total || 0);
-  $("boostEnabled").checked = inventory.enabled === true;
+  const boostEnabled = inventory.enabled === true;
+  $("boostEnabled").checked = boostEnabled;
+  $("boostEnabledLabel").textContent = boostEnabled
+    ? "下一輪孵化使用：開啟"
+    : "下一輪孵化使用：關閉";
   if (document.activeElement !== $("boostStockInput")) {
     $("boostStockInput").value = stock;
   }
