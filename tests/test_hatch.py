@@ -87,7 +87,14 @@ def test_incubator_moves_to_next_row_after_top_row_is_gone() -> None:
     assert (target.x, target.y) == (270, 680)
 
 
-def test_incubator_without_labels_scrolls_then_closes() -> None:
+def test_incubator_without_labels_closes_immediately_by_default() -> None:
+    planner, _ = make_planner(max_scrolls=0)
+    grid = [detection(hatch.INCUBATOR_TITLE, y=40), detection(hatch.CLOSE_BUTTON, x=800, y=1380)]
+    target = planner.choose(make_frame(), grid)
+    assert target is not None and target.type == hatch.CLOSE_BUTTON
+
+
+def test_incubator_scrolling_remains_available_when_explicitly_configured() -> None:
     planner, _ = make_planner(max_scrolls=1)
     grid = [detection(hatch.INCUBATOR_TITLE, y=40), detection(hatch.CLOSE_BUTTON, x=800, y=1380)]
     first = planner.choose(make_frame(), grid)
@@ -161,6 +168,7 @@ def test_hatch_config_defaults_load(tmp_path) -> None:
     config = load_config(config_path)
     assert config.hatch.rescan_interval_seconds == 600
     assert config.hatch.egg_pile == (450.0, 1330.0)
+    assert config.hatch.max_scrolls == 0
     assert config.hatch.manifest == tmp_path / "assets/hatch/manifest.json"
 
 

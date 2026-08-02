@@ -155,7 +155,7 @@ def test_equal_values_fail_closed_without_arrow_tap() -> None:
     assert planner.last_stage() == "direction_unreadable"
 
 
-def test_hp_sort_uses_detected_menu_option_then_verifies_hp_descending() -> None:
+def test_hp_sort_uses_menu_option_then_proves_result_from_hp_values() -> None:
     planner, frame = hp_planner_for((2300, 2250, 2200))
     option = planner.choose(
         frame,
@@ -172,10 +172,15 @@ def test_hp_sort_uses_detected_menu_option_then_verifies_hp_descending() -> None
         frame,
         select_screen(
             detection(select_sort.TAG_HDR_ALL, 228, 204),
-            detection(select_sort.SORT_HP, 650, 355),
         ),
     ) is None
     assert planner.is_complete()
+
+
+def test_hp_sort_verification_returns_to_select_screen_before_value_proof() -> None:
+    assert select_sort.DEFAULT_SUCCESS_TRANSITIONS[select_sort.SORT_HP] == (
+        select_sort.SELECT_TITLE,
+    )
 
 
 def test_no_dinosaur_row_can_become_an_action() -> None:

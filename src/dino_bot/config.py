@@ -151,7 +151,9 @@ class HatchConfig:
     egg_pile: tuple[float, float] = (450.0, 1330.0)
     scroll_vector: tuple[float, float, float, float] = (450.0, 1100.0, 450.0, 500.0)
     scroll_duration_ms: int = 400
-    max_scrolls: int = 4
+    # Ready eggs are ordered at the top. If the visible rows have no hatch
+    # label, lower rows do not need scanning. Keep scrolling opt-in only.
+    max_scrolls: int = 0
     # Game-imposed incubation cooldown is ~25 minutes; this is only how often
     # the bot re-enters to check, per the plan's rescan rule.
     rescan_interval_seconds: float = 600.0
@@ -579,7 +581,7 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
                 (450.0, 1100.0, 450.0, 500.0),
             ),
             scroll_duration_ms=int(hatch_data.get("scroll_duration_ms", 400)),
-            max_scrolls=int(hatch_data.get("max_scrolls", 4)),
+            max_scrolls=int(hatch_data.get("max_scrolls", 0)),
             rescan_interval_seconds=float(
                 hatch_data.get("rescan_interval_seconds", 600)
             ),

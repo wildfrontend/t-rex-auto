@@ -47,7 +47,11 @@ DEFAULT_SUCCESS_TRANSITIONS: dict[str, tuple[str, ...]] = {
     TAG_ALL: (TAG_HDR_ALL,),
     SORT_HEADER: (SORT_HP, SORT_ATTACK),
     SORT_ATTACK: (SORT_HDR_ATTACK,),
-    SORT_HP: (SORT_HP,),
+    # The HP menu option and collapsed header are rendered differently.  The
+    # retained screenshots only provide the menu-option template, so verify
+    # that the dropdown returned to Select Dino here; the planner then proves
+    # the selected sort by reading the visible HP values in descending order.
+    SORT_HP: (SELECT_TITLE,),
 }
 DEFAULT_CYCLE_COMPLETE_TARGETS: tuple[str, ...] = ()
 

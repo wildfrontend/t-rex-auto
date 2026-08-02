@@ -700,7 +700,7 @@ class FullHatchPlanner:
         reference_width: float = 900.0,
         scroll_vector: tuple[float, float, float, float] = (450, 1100, 450, 500),
         scroll_duration_ms: int = 400,
-        max_scrolls: int = 4,
+        max_scrolls: int = 0,
         rescan_interval_seconds: float = 600.0,
         require_home_anchor: bool = True,
         home_failure_limit: int = 3,

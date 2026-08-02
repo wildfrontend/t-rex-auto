@@ -13,6 +13,7 @@ echo FULL AUTO HATCH
 echo Hatch eggs, optimize Attack and HP parents, auto-place Top and Mass,
 echo collect eggs, then cull in the cave only when dinosaur count is above 320.
 echo If no incubator egg is ready, collect all nest eggs before the cooldown.
+echo Incubator scanning stops immediately when the visible top rows have no ready egg.
 echo Start this launcher from the normal home screen.
 echo.
 

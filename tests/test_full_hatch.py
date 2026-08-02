@@ -25,7 +25,9 @@ from dino_bot.full_hatch import (
     NEST_MASK_CLOSE,
     OPEN_NEST,
     PLACE_HDR_BEST,
+    PLACE_HDR_LEVEL,
     PLACE_SORT_BEST,
+    PLACE_SORT_LEVEL,
     RECOVERY_BACK,
     RECOVERY_MASK_CLOSE,
     RECOVERY_NO,
@@ -40,7 +42,7 @@ from dino_bot.full_hatch import (
     is_home_screen,
 )
 from dino_bot.models import BoundingBox, Detection, Frame
-from dino_bot.nests import TOP_RULE
+from dino_bot.nests import MASS_RULE, TOP_RULE
 from dino_bot.overlays import CONFIRM_NO, CONFIRM_YES, SELECT_CONFIRM_PROMPT
 from dino_bot.parent_open import NEST_TITLE, SELECT_TITLE
 
@@ -98,6 +100,57 @@ def test_top_autoplace_round_requires_screen_anchors_and_known_prompt() -> None:
     planner.on_action_success(target.type)
 
     target = planner.choose(frame(), settings + [detection(PLACE_HDR_BEST, 450, 648)])
+    assert target is not None and target.type == AUTOPLACE_MASK_CLOSE
+    planner.on_action_success(target.type)
+
+    target = planner.choose(
+        frame(),
+        nest + [detection(AUTOPLACE_BUTTON, 450, 1315)],
+    )
+    assert target is not None and target.type == AUTOPLACE_BUTTON
+    planner.on_action_success(target.type)
+
+    prompt = [
+        detection(AUTOPLACE_PROMPT, 450, 723),
+        detection(CONFIRM_YES, 365, 987),
+    ]
+    target = planner.choose(frame(), prompt)
+    assert target is not None and target.type == AUTOPLACE_YES
+    planner.on_action_success(target.type)
+    assert planner.is_complete()
+
+
+def test_mass_autoplace_round_selects_level_and_confirms_application() -> None:
+    planner = AutoPlaceRoundPlanner(MASS_RULE)
+    nest = [
+        detection(NEST_TITLE, 450, 260),
+        detection(nest_filter.TAG_HDR_MASS, 228, 168),
+    ]
+
+    target = planner.choose(frame(), nest)
+    assert target is not None and target.type == nest_filter.FILTER_HEADER
+    planner.on_action_success(target.type)
+
+    target = planner.choose(
+        frame(),
+        nest + [detection(nest_filter.TAG_MASS, 228, 254)],
+    )
+    assert target is not None and target.type == nest_filter.TAG_MASS
+    planner.on_action_success(target.type)
+
+    target = planner.choose(frame(), nest + [detection(NEST_GEAR, 210, 276)])
+    assert target is not None and target.type == NEST_GEAR
+    planner.on_action_success(target.type)
+
+    settings = [
+        detection(AUTOPLACE_TITLE, 450, 565),
+        detection(PLACE_SORT_LEVEL, 450, 749),
+    ]
+    target = planner.choose(frame(), settings)
+    assert target is not None and target.type == PLACE_SORT_LEVEL
+    planner.on_action_success(target.type)
+
+    target = planner.choose(frame(), settings + [detection(PLACE_HDR_LEVEL, 450, 648)])
     assert target is not None and target.type == AUTOPLACE_MASK_CLOSE
     planner.on_action_success(target.type)
 
