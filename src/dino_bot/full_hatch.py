@@ -1197,7 +1197,6 @@ class FullHatchPlanner:
 
         return (
             self._empty_rescan_wait
-            and self._batch_hunt_ready
             and self.next_ready_delay_ms() > 0
         )
 

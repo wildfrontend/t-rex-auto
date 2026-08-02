@@ -377,7 +377,7 @@ def test_full_flow_collects_all_nest_eggs_before_empty_rescan_wait() -> None:
     home = [detection(hatch.HOME_ANCHOR, 59, 561)]
     assert planner.choose(frame(), home) is None
     assert planner.next_ready_delay_ms() > 0
-    assert not planner.is_hunt_cooldown_active()
+    assert planner.is_hunt_cooldown_active()
 
     now[0] += 601
     assert not planner.is_hunt_cooldown_active()
