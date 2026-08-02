@@ -37,7 +37,7 @@ cp -a \
   "${project_root}/scripts/python312._pth" \
   "${project_root}/scripts/watch-running-bot.ps1" \
   "${runtime_app}/scripts/"
-cp -a "${project_root}/scripts/start-bot.cmd" "${runtime_root}/start-bot.cmd"
+cp -a "${project_root}/scripts/start-hunt.cmd" "${runtime_root}/start-hunt.cmd"
 cp -a "${project_root}/scripts/start-dashboard.cmd" "${runtime_root}/start-dashboard.cmd"
 cp -a "${project_root}/scripts/start-hatch-hunt.cmd" "${runtime_root}/start-hatch-hunt.cmd"
 
@@ -47,6 +47,7 @@ cp -a "${project_root}/scripts/start-hatch-hunt.cmd" "${runtime_root}/start-hatc
 legacy_launchers="${runtime_app}/scripts/legacy-launchers"
 mkdir -p "${legacy_launchers}"
 for launcher in \
+  start-bot.cmd \
   start-hatch-bot.cmd \
   start-hatch-full.cmd \
   start-hatch-filter-test.cmd \

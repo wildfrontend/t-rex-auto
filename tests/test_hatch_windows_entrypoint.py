@@ -23,10 +23,19 @@ def test_windows_deploy_exposes_exactly_three_user_entrypoints() -> None:
     assert 'scripts/run-hatch-windows.ps1"' in deploy
     assert 'scripts/run-dashboard-windows.ps1"' in deploy
     assert 'scripts/watch-dashboard-windows.ps1"' in deploy
-    assert 'scripts/start-bot.cmd"' in deploy
+    assert 'scripts/start-hunt.cmd"' in deploy
     assert 'scripts/start-dashboard.cmd"' in deploy
     assert 'scripts/start-hatch-hunt.cmd"' in deploy
     assert 'legacy_launchers="${runtime_app}/scripts/legacy-launchers"' in deploy
+    assert "start-bot.cmd" in deploy
+
+
+def test_hunt_entrypoint_name_matches_its_feature() -> None:
+    command = (REPO / "scripts/start-hunt.cmd").read_text(encoding="utf-8")
+
+    assert "launcher-windows.ps1" in command
+    assert "Dino Mutant Bot - Hunt" in command
+    assert not (REPO / "scripts/start-bot.cmd").exists()
 
 
 def test_dashboard_entrypoint_uses_loopback_web_service() -> None:

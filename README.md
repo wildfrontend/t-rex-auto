@@ -10,7 +10,7 @@ Feature 方式加入，不需要修改核心狀態機。
 並保留多世代壓縮日誌、v0.2.17 的錨點／供給量規劃、卡死逃生與半解析度比對，
 以及雙視窗啟動器、可調整狩獵速度及本機 AI 狀態接口：
 
-- 使用者只需雙擊 `start-bot.cmd`；啟動器會先檢查 Python、ADB、素材及畫面擷取。
+- 使用者只需雙擊 `start-hunt.cmd`；啟動器會先檢查 Python、ADB、素材及畫面擷取。
 - 孵蛋使用獨立的 `start-hatch-bot.cmd`，固定啟動 hatch feature，不會落入狩獵流程。
 - 一個視窗顯示原始即時 LOG，另一個繁體中文互動視窗提供統計、調速、重啟與診斷工具。
 - `127.0.0.1:8765` 提供結構化狀態與白名單控制接口，讓同一台電腦上的 AI 安全操作。
@@ -220,7 +220,7 @@ PYTHONPATH=/tmp/t-rex-auto-deps:src python3 main.py template \
 部署後只需要雙擊：
 
 ```text
-D:\DinoMutantBot\start-bot.cmd
+D:\DinoMutantBot\start-hunt.cmd
 ```
 
 啟動流程會先做環境檢查，再開啟兩個視窗：
@@ -244,9 +244,9 @@ Q  停止 Bot 並關閉控制流程
 也可在終端預先指定模式：
 
 ```bat
-D:\DinoMutantBot\start-bot.cmd fast
-D:\DinoMutantBot\start-bot.cmd safe
-D:\DinoMutantBot\start-bot.cmd fast 8877
+D:\DinoMutantBot\start-hunt.cmd fast
+D:\DinoMutantBot\start-hunt.cmd safe
+D:\DinoMutantBot\start-hunt.cmd fast 8877
 ```
 
 `fast` 是預設值，使用 300/900/1200 ms 的選恐龍、狩獵、確認期限；

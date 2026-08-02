@@ -510,7 +510,7 @@ function Invoke-EnvironmentCheck {
         Pop-Location
     }
     if ($DoctorExitCode -ne 0) {
-        throw "執行環境檢查失敗。請先處理上方 FAIL 項目，再重新執行 start-bot.cmd。"
+        throw "執行環境檢查失敗。請先處理上方 FAIL 項目，再重新執行 start-hunt.cmd。"
     }
     Write-Host "執行環境檢查通過。" -ForegroundColor Green
 }

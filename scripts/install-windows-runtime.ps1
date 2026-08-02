@@ -47,4 +47,4 @@ Invoke-Python "dependency install" @(
 )
 
 Write-Host "Portable Windows runtime ready: $PythonExecutable"
-Write-Host "Return to start-bot.cmd to continue the environment check."
+Write-Host "Return to start-hunt.cmd to continue the environment check."

@@ -15,7 +15,7 @@ $WatcherScript = Join-Path $PSScriptRoot "watch-dashboard-windows.ps1"
 $DashboardUrl = "http://127.0.0.1:$Port"
 
 if (-not (Test-Path -LiteralPath $PythonExecutable)) {
-    throw "Windows runtime is not installed. Run start-bot.cmd for guided setup."
+    throw "Windows runtime is not installed. Run start-hunt.cmd for guided setup."
 }
 if (-not (Test-Path -LiteralPath $MainScript)) {
     throw "Dashboard entrypoint not found: $MainScript"

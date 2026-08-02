@@ -102,7 +102,7 @@ ADB調試埠  16384
 2. 雙擊 Bot 資料夾內的：
 
 ```text
-start-bot.cmd
+start-hunt.cmd
 ```
 
 3. 第一次啟動時，輸入模擬器顯示的 ADB Port。
@@ -237,12 +237,12 @@ Bot 可能正在避開我方藍色路徑上的恐龍，或等待安全目標。�
 
 ### Lite 版下載失敗
 
-確認電腦可以連線到網路，並重新雙擊 `start-bot.cmd`。如果公司的防火牆或防毒軟體
+確認電腦可以連線到網路，並重新雙擊 `start-hunt.cmd`。如果公司的防火牆或防毒軟體
 阻擋下載，請改用 Portable 完整免安裝版。
 
 ### 視窗一閃就關閉
 
-不要直接執行 `app` 裡面的 Python 檔案。請從最外層資料夾雙擊 `start-bot.cmd`。
+不要直接執行 `app` 裡面的 Python 檔案。請從最外層資料夾雙擊 `start-hunt.cmd`。
 若仍失敗，保留視窗最後顯示的錯誤文字，或產生診斷包交給維護者。
 
 ## 十、產生診斷包
@@ -270,7 +270,7 @@ app\diagnostics
 1. 下載 Portable 完整免安裝版並完整解壓縮到 D 槽。
 2. 開啟模擬器與 Dino Mutant，將解析度設為直向 900 × 1600。
 3. 到模擬器的設定或問題診斷中找到 ADB Port。
-4. 雙擊 start-bot.cmd。
+4. 雙擊 start-hunt.cmd。
 5. 第一次輸入 ADB Port，例如 MuMu 顯示 16384 就輸入 16384。
 6. 等待環境檢查完成，Bot 就會開始運作。
 7. 之後啟動直接按 Enter 沿用設定；要換 Port 請在控制視窗按 M。
@@ -293,4 +293,4 @@ stop-bot.command
 ```
 
 macOS 版本會使用本機 Python 建立獨立執行環境；Windows 的 Lite／Portable 套件與
-`start-bot.cmd` 說明不適用於 macOS。
+`start-hunt.cmd` 說明不適用於 macOS。

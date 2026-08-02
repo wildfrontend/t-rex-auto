@@ -22,7 +22,7 @@ $MainScript = Join-Path $AppRoot "main.py"
 $ConfigPath = Join-Path $AppRoot "config.json"
 
 if (-not (Test-Path -LiteralPath $PythonExecutable)) {
-    throw "Windows runtime is not installed. Run start-bot.cmd for guided setup."
+    throw "Windows runtime is not installed. Run start-hunt.cmd for guided setup."
 }
 if (-not (Test-Path -LiteralPath $MainScript)) {
     throw "Hatch entrypoint not found: $MainScript"

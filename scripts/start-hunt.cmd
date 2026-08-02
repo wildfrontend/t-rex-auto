@@ -1,6 +1,6 @@
 @echo off
 setlocal
-title Dino Mutant Bot - Control
+title Dino Mutant Bot - Hunt
 
 set "bot_launcher=%~dp0app\scripts\launcher-windows.ps1"
 if not exist "%bot_launcher%" (
