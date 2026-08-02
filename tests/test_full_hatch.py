@@ -247,7 +247,10 @@ def test_cave_inside_hunt_side_exclusion_is_never_opened() -> None:
     ) is None
 
 
-def test_cave_above_threshold_runs_weakest_continuous_battle(monkeypatch) -> None:
+def test_cave_above_threshold_runs_weakest_continuous_battle(
+    monkeypatch, caplog
+) -> None:
+    caplog.set_level("INFO")
     monkeypatch.setattr("dino_bot.full_hatch.read_dino_count", lambda *args, **kwargs: 301)
     planner = CaveCullPlanner(DigitReader(GLYPHS), threshold=300)
     for _ in range(2):
@@ -283,6 +286,11 @@ def test_cave_above_threshold_runs_weakest_continuous_battle(monkeypatch) -> Non
     planner.on_action_success(target.type)
     target = planner.choose(frame(), [detection(hatch.CLAIM_BUTTON, 450, 1170)])
     assert target is not None and target.type == hatch.CLAIM_BUTTON
+    planner.on_action_success(target.type)
+    assert (
+        "Hatch cave | cull completed | before=301/350 | selected=40"
+        " | expected_after=261 | result=claim_verified"
+    ) in caplog.text
 
 
 def make_full_planner() -> FullHatchPlanner:

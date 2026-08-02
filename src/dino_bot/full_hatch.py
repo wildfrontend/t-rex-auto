@@ -74,6 +74,7 @@ CAVE_CLOSE_BUTTON = "hatch_cave_close_button"
 SELECT_TAG_HEADER = "hatch_cull_tag_header"
 SELECT_WEAKEST_BUTTON = "hatch_select_weakest_button"
 SELECT_CHOOSE_BUTTON = "hatch_select_choose_button"
+DEFAULT_CULL_BATCH_SIZE = 40
 
 RECOVERY_NO = "hatch_recovery_no"
 RECOVERY_MASK_CLOSE = "hatch_recovery_mask_close"
@@ -716,6 +717,7 @@ class CaveCullPlanner:
         reference_width: float = 900.0,
         safe_margin: int = 80,
         bottom_exclusion_px: int = 180,
+        selection_size: int = DEFAULT_CULL_BATCH_SIZE,
         logger: logging.Logger | None = None,
     ) -> None:
         self.reader = reader
@@ -723,6 +725,7 @@ class CaveCullPlanner:
         self.reference_width = reference_width
         self.safe_margin = max(0, safe_margin)
         self.bottom_exclusion_px = max(0, bottom_exclusion_px)
+        self.selection_size = max(1, selection_size)
         self.logger = logger or logging.getLogger("dino_bot")
         self.navigator = CaveNavigator(reference_width=reference_width)
         self._stage = "navigate"
@@ -732,6 +735,8 @@ class CaveCullPlanner:
         self._recenter_checks = 0
         self._home_frames = 0
         self._complete = False
+        self._capacity_before: int | None = None
+        self._selected_count = 0
 
     def last_stage(self) -> str:
         return f"cave_{self._stage}"
@@ -750,12 +755,22 @@ class CaveCullPlanner:
         elif target_type == nest_filter_feature.TAG_ALL:
             self._stage = "select_weakest"
         elif target_type == SELECT_WEAKEST_BUTTON:
+            if self._capacity_before is not None:
+                self._selected_count = min(self.selection_size, self._capacity_before)
             self._stage = "confirm_selection"
         elif target_type == SELECT_CHOOSE_BUTTON:
             self._stage = "start_battle"
         elif target_type == CAVE_CONTINUOUS_BUTTON:
             self._stage = "battle_result"
         elif target_type == hatch_feature.CLAIM_BUTTON and self._stage == "battle_result":
+            if self._capacity_before is not None and self._selected_count:
+                self.logger.info(
+                    "Hatch cave | cull completed | before=%d/350 | selected=%d"
+                    " | expected_after=%d | result=claim_verified",
+                    self._capacity_before,
+                    self._selected_count,
+                    max(0, self._capacity_before - self._selected_count),
+                )
             self._stage = "recenter"
         elif target_type == CAVE_RECENTER:
             self._return_swipes += 1
@@ -810,6 +825,7 @@ class CaveCullPlanner:
             if not should_cull(count, self.threshold):
                 self._stage = "recenter"
                 return self.choose(frame, detections)
+            self._capacity_before = count
             self._stage = "open_cave"
             return _target(cave)
         if self._stage == "open_cave":

@@ -6,6 +6,7 @@ const eventNames = {
   replacement: "親代替換完成",
   autoplace_top: "頂尖自動放置完成",
   autoplace_mass: "量產自動放置完成",
+  cull_removed: "洞穴淘汰完成",
   verification_failure: "操作驗證失敗",
   game_restart: "遊戲已重新啟動",
   cull_decision: "洞穴容量判定",
@@ -55,21 +56,23 @@ function renderTimeline(items) {
     return;
   }
   const max = Math.max(1, ...items.flatMap((item) => [item.hunt, item.hatch]));
-  root.innerHTML = items.map((item) => {
-    const huntHeight = Math.max(2, Math.round(item.hunt / max * 105));
-    const hatchHeight = Math.max(2, Math.round(item.hatch / max * 105));
-    return `<div class="day-bars">
-      <i class="bar hunt" style="height:${huntHeight}px" data-value="${item.hunt}"></i>
-      <i class="bar hatch" style="height:${hatchHeight}px" data-value="${item.hatch}"></i>
-      <span class="day-label">${item.day.slice(5)}</span>
+  root.innerHTML = `<div class="hour-chart">${items.map((item) => {
+    const huntHeight = item.hunt ? Math.max(3, Math.round(item.hunt / max * 105)) : 0;
+    const hatchHeight = item.hatch ? Math.max(3, Math.round(item.hatch / max * 105)) : 0;
+    const showLabel = item.hour % 3 === 0 || item.hour === 23;
+    return `<div class="hour-bars">
+      <i class="bar hunt${item.hunt ? "" : " zero"}" style="height:${huntHeight}px" data-value="${item.hunt}"></i>
+      <i class="bar hatch${item.hatch ? "" : " zero"}" style="height:${hatchHeight}px" data-value="${item.hatch}"></i>
+      <span class="hour-label">${showLabel ? String(item.hour).padStart(2, "0") : ""}</span>
     </div>`;
-  }).join("");
+  }).join("")}</div>`;
 }
 
 function eventDetails(event) {
   const details = event.details || {};
   if (event.kind === "replacement") return `${details.tag || "親代"} · ${details.hp}/${details.attack}/${details.speed}`;
   if (event.kind === "cull_decision") return `${details.capacity}/350 · ${details.cull ? "執行淘汰" : "安全跳過"}`;
+  if (event.kind === "cull_removed") return `${details.before} → ${details.expected_after} · 選取 ${details.selected}`;
   if (event.kind === "verification_failure") return details.target || "未知目標";
   return "已驗證";
 }
@@ -95,12 +98,16 @@ function render(data) {
   setCounter("hatch", counters.hatch);
   setCounter("replacement", counters.replacement);
   setCounter("collect", counters.nest_collect_batch);
+  setCounter("cull", counters.cull_removed);
   setRecord("hp", metrics.records?.hp);
   setRecord("attack", metrics.records?.attack);
   setRecord("speed", metrics.records?.speed);
   $("topTotal").textContent = counters.autoplace_top?.total || 0;
   $("massTotal").textContent = counters.autoplace_mass?.total || 0;
   $("failureToday").textContent = counters.verification_failure?.today || 0;
+  $("trendScope").textContent = metrics.timeline_date
+    ? `${metrics.timeline_date} · 每小時`
+    : "今天 · 每小時";
   renderTimeline(metrics.timeline);
   renderEvents(metrics.recent_events);
   $("lastUpdate").textContent = `更新 ${new Date().toLocaleTimeString("zh-TW", { hour12: false })}`;

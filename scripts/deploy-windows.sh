@@ -28,6 +28,7 @@ cp -a \
   "${project_root}/scripts/run-windows.ps1" \
   "${project_root}/scripts/run-hatch-windows.ps1" \
   "${project_root}/scripts/run-dashboard-windows.ps1" \
+  "${project_root}/scripts/watch-dashboard-windows.ps1" \
   "${project_root}/scripts/doctor-windows.ps1" \
   "${project_root}/scripts/launcher-windows.ps1" \
   "${project_root}/scripts/control-windows.ps1" \

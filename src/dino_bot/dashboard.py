@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -28,6 +29,9 @@ _ASSET_TYPES = {
     ".js": "text/javascript; charset=utf-8",
     ".svg": "image/svg+xml",
 }
+_LOG_LINE = re.compile(
+    r"^(?P<time>\d{2}:\d{2}:\d{2}) \| (?P<level>[^|]+) \| (?P<message>.*)$"
+)
 
 
 def _loopback_origin_allowed(origin: str) -> bool:
@@ -86,10 +90,11 @@ def _workflow_status(logs_dir: Path, mode: str | None) -> dict[str, Any]:
             latest_date = None
 
     for line in _latest_log_lines(logs_dir):
-        if len(line) < 19:
+        match = _LOG_LINE.match(line)
+        if match is None:
             continue
-        time_text = line[:8]
-        message = line[19:]
+        time_text = match.group("time")
+        message = match.group("message")
         if (
             "Hatch full | phase A complete" in message
             or "Hatch 攻擊特化 |" in message

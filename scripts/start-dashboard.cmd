@@ -10,14 +10,29 @@ if not exist "%dashboard_runner%" (
 )
 
 set "dashboard_port=%~1"
-if "%dashboard_port%"=="" set "dashboard_port=8780"
+set "dashboard_mode="
+if /I "%~1"=="--server-only" (
+  set "dashboard_port=8780"
+  set "dashboard_mode=-ServerOnly"
+) else (
+  if "%dashboard_port%"=="" set "dashboard_port=8780"
+)
 
-powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass ^
-  -File "%dashboard_runner%" ^
-  -Port "%dashboard_port%"
+if defined dashboard_mode (
+  powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass ^
+    -File "%dashboard_runner%" ^
+    -Port "%dashboard_port%" ^
+    %dashboard_mode%
+) else (
+  powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass ^
+    -File "%dashboard_runner%" ^
+    -Port "%dashboard_port%"
+)
 set "dashboard_exit_code=%ERRORLEVEL%"
 
-echo.
-echo Dashboard closed with exit code %dashboard_exit_code%.
-pause
+if not "%dashboard_exit_code%"=="0" (
+  echo.
+  echo Dashboard launcher failed with exit code %dashboard_exit_code%.
+  pause
+)
 exit /b %dashboard_exit_code%

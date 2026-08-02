@@ -7,7 +7,7 @@ from urllib.request import Request, urlopen
 
 import pytest
 
-from dino_bot.dashboard import DashboardController, DashboardServer
+from dino_bot.dashboard import DashboardController, DashboardServer, _workflow_status
 
 
 def write_assets(root: Path) -> None:
@@ -105,3 +105,18 @@ def test_dashboard_builds_noninteractive_runner_commands(tmp_path: Path) -> None
     assert hunt[-2:] == ["-StatusPort", "8765"]
     assert "run-hatch-windows.ps1" in combined[6]
     assert combined[-4:] == ["-MaxActions", "0", "-MaxCycles", "0"]
+
+
+def test_dashboard_workflow_reads_the_complete_log_message(tmp_path: Path) -> None:
+    log = tmp_path / "20260802.log"
+    log.write_text(
+        "20:10:22 | INFO | Planning | hatch_label at (95, 671), score=0.994\n"
+        "20:10:34 | INFO | Planning | hatch_egg_pile at (506, 952), score=0.806\n"
+        "20:10:50 | INFO | Hatch cave | capacity=321/350 | threshold=320 | cull=True\n",
+        encoding="utf-8",
+    )
+
+    workflow = _workflow_status(tmp_path, "hatch-hunt")
+
+    assert workflow["stage"] == "cave"
+    assert workflow["label"] == "洞穴容量與淘汰"

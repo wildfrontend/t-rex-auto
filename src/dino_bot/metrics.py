@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import gzip
+import hashlib
 import json
 import re
 import sqlite3
@@ -25,6 +27,11 @@ _CAVE = re.compile(
     r"^Hatch cave \| capacity=(?P<count>\d+)/350 \| threshold=(?P<threshold>\d+)"
     r" \| cull=(?P<cull>True|False)"
 )
+_CULL_COMPLETED = re.compile(
+    r"^Hatch cave \| cull completed \| before=(?P<before>\d+)/350"
+    r" \| selected=(?P<selected>\d+) \| expected_after=(?P<after>\d+)"
+    r" \| result=claim_verified$"
+)
 _FEATURE = re.compile(r"^Feature \| (?P<feature>\S+)")
 
 _COUNTER_KINDS = (
@@ -34,19 +41,47 @@ _COUNTER_KINDS = (
     "replacement",
     "autoplace_top",
     "autoplace_mass",
+    "cull_removed",
     "verification_failure",
     "game_restart",
 )
 
 
-def _log_date(path: Path) -> str | None:
-    match = re.match(r"(?P<date>20\d{6})\.log", path.name)
+def _log_identity(path: Path) -> tuple[str, int] | None:
+    match = re.fullmatch(
+        r"(?P<date>20\d{6})(?:\.(?P<generation>\d+))?\.log(?:\.gz)?",
+        path.name,
+    )
     if match is None:
         return None
     try:
-        return datetime.strptime(match.group("date"), "%Y%m%d").date().isoformat()
+        date_text = datetime.strptime(match.group("date"), "%Y%m%d").date().isoformat()
     except ValueError:
         return None
+    return date_text, int(match.group("generation") or 0)
+
+
+def _log_date(path: Path) -> str | None:
+    identity = _log_identity(path)
+    return identity[0] if identity else None
+
+
+def _log_sort_key(path: Path) -> tuple[str, int]:
+    identity = _log_identity(path)
+    assert identity is not None
+    date_text, generation = identity
+    return date_text, -generation
+
+
+def _file_signature(path: Path) -> str | None:
+    """Identify a generation while allowing its live file to keep growing."""
+
+    try:
+        with path.open("rb") as stream:
+            prefix = stream.read(4096)
+    except OSError:
+        return None
+    return hashlib.sha256(prefix).hexdigest()
 
 
 def _valid_stats(values: tuple[int, int, int]) -> bool:
@@ -91,24 +126,87 @@ class MetricsStore:
                     value INTEGER NOT NULL DEFAULT 1,
                     payload_json TEXT NOT NULL DEFAULT '{}'
                 );
+                CREATE TABLE IF NOT EXISTS daily_totals (
+                    day TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    total INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY(day, kind)
+                );
+                CREATE TABLE IF NOT EXISTS stat_records (
+                    name TEXT PRIMARY KEY,
+                    value INTEGER NOT NULL,
+                    occurred_at TEXT NOT NULL,
+                    payload_json TEXT NOT NULL DEFAULT '{}'
+                );
                 CREATE INDEX IF NOT EXISTS idx_metric_events_time
                     ON metric_events(occurred_at);
                 CREATE INDEX IF NOT EXISTS idx_metric_events_kind_time
                     ON metric_events(kind, occurred_at);
+                CREATE INDEX IF NOT EXISTS idx_metric_events_identity
+                    ON metric_events(occurred_at, kind, value, payload_json);
                 """
             )
 
     def refresh(self) -> None:
         with self._lock:
             self.logs_dir.mkdir(parents=True, exist_ok=True)
-            paths = sorted(
-                path
-                for path in self.logs_dir.glob("20*.log*")
-                if path.is_file() and not path.name.endswith(".gz") and _log_date(path)
-            )
+            today = datetime.now().astimezone().date().isoformat()
+            paths: list[Path] = []
+            for path in self.logs_dir.glob("20*.log*"):
+                identity = _log_identity(path)
+                if path.is_file() and identity is not None and identity[0] == today:
+                    paths.append(path)
+            paths.sort(key=_log_sort_key)
             with self._connect() as connection:
                 for path in paths:
                     self._ingest_path(connection, path)
+                self._compact_history(connection, today)
+
+    def _compact_history(self, connection: sqlite3.Connection, today: str) -> None:
+        """Keep raw events only for today; retain older days as tiny totals."""
+
+        cutoff = f"{today}T00:00:00"
+        stat_rows = connection.execute(
+            """
+            SELECT occurred_at, payload_json FROM metric_events
+            WHERE kind = 'stat_observation' AND occurred_at < ?
+            """,
+            (cutoff,),
+        ).fetchall()
+        for row in stat_rows:
+            payload = json.loads(row["payload_json"])
+            self._update_stat_records(
+                connection,
+                str(row["occurred_at"]),
+                payload,
+            )
+
+        placeholders = ",".join("?" for _ in _COUNTER_KINDS)
+        totals = connection.execute(
+            f"""
+            SELECT substr(occurred_at, 1, 10) AS day, kind, SUM(value) AS total
+            FROM metric_events
+            WHERE occurred_at < ? AND kind IN ({placeholders})
+            GROUP BY day, kind
+            """,
+            (cutoff, *_COUNTER_KINDS),
+        ).fetchall()
+        for row in totals:
+            connection.execute(
+                """
+                INSERT INTO daily_totals(day, kind, total) VALUES(?, ?, ?)
+                ON CONFLICT(day, kind) DO UPDATE SET
+                    total = daily_totals.total + excluded.total
+                """,
+                (row["day"], row["kind"], int(row["total"])),
+            )
+        connection.execute("DELETE FROM metric_events WHERE occurred_at < ?", (cutoff,))
+
+        old_sources = connection.execute("SELECT path FROM sources").fetchall()
+        for row in old_sources:
+            date_text = _log_date(Path(row["path"]))
+            if date_text is not None and date_text < today:
+                connection.execute("DELETE FROM sources WHERE path = ?", (row["path"],))
 
     def _ingest_path(self, connection: sqlite3.Connection, path: Path) -> None:
         row = connection.execute(
@@ -118,31 +216,61 @@ class MetricsStore:
         offset = int(row["offset"]) if row else 0
         generation = int(row["generation"]) if row else 0
         state: dict[str, Any] = json.loads(row["state_json"]) if row else {}
+        signature = _file_signature(path)
+        if signature is None:
+            return
+        previous_signature = state.get("_file_signature")
         try:
             size = path.stat().st_size
         except OSError:
             return
-        if size < offset:
+        if previous_signature and previous_signature != signature:
+            offset = 0
+            generation += 1
+            state = {}
+        elif size < offset:
             offset = 0
             generation += 1
             state = {}
         date_text = _log_date(path)
         if date_text is None:
             return
-        try:
-            with path.open("rb") as stream:
-                stream.seek(offset)
-                while True:
-                    line_offset = stream.tell()
-                    raw = stream.readline()
-                    if not raw:
-                        break
-                    line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
-                    source = f"{path.name}:{generation}:{line_offset}"
-                    self._ingest_line(connection, source, date_text, line, state)
-                offset = stream.tell()
-        except OSError:
+        compressed = path.name.endswith(".gz")
+        if compressed and previous_signature == signature and offset == size:
             return
+        try:
+            if compressed:
+                # Compressed generations are immutable. If a generation index
+                # receives a different archive after rolling, read it from the
+                # beginning; semantic event deduplication prevents recounting
+                # the same lines under their new filename.
+                state = {}
+                with gzip.open(path, "rt", encoding="utf-8", errors="replace") as stream:
+                    for line_number, line in enumerate(stream):
+                        source = f"{path.name}:{generation}:{line_number}"
+                        self._ingest_line(
+                            connection,
+                            source,
+                            date_text,
+                            line.rstrip("\r\n"),
+                            state,
+                        )
+                offset = size
+            else:
+                with path.open("rb") as stream:
+                    stream.seek(offset)
+                    while True:
+                        line_offset = stream.tell()
+                        raw = stream.readline()
+                        if not raw:
+                            break
+                        line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
+                        source = f"{path.name}:{generation}:{line_offset}"
+                        self._ingest_line(connection, source, date_text, line, state)
+                    offset = stream.tell()
+        except (OSError, EOFError):
+            return
+        state["_file_signature"] = signature
         connection.execute(
             """
             INSERT INTO sources(path, offset, generation, state_json)
@@ -166,6 +294,21 @@ class MetricsStore:
         payload: dict[str, Any] | None = None,
         suffix: str = "",
     ) -> None:
+        payload_json = json.dumps(
+            payload or {},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        duplicate = connection.execute(
+            """
+            SELECT 1 FROM metric_events
+            WHERE occurred_at = ? AND kind = ? AND value = ? AND payload_json = ?
+            LIMIT 1
+            """,
+            (occurred_at, kind, value, payload_json),
+        ).fetchone()
+        if duplicate is not None:
+            return
         connection.execute(
             """
             INSERT OR IGNORE INTO metric_events(
@@ -177,7 +320,7 @@ class MetricsStore:
                 occurred_at,
                 kind,
                 value,
-                json.dumps(payload or {}, ensure_ascii=False, separators=(",", ":")),
+                payload_json,
             ),
         )
 
@@ -195,20 +338,44 @@ class MetricsStore:
         if not _valid_stats(values):
             return
         hp, attack, speed = values
+        payload = {
+            "hp": hp,
+            "attack": attack,
+            "speed": speed,
+            "tag": tag,
+            "role": role,
+        }
+        self._update_stat_records(connection, occurred_at, payload)
         self._record(
             connection,
             source,
             occurred_at,
             "stat_observation",
-            payload={
-                "hp": hp,
-                "attack": attack,
-                "speed": speed,
-                "tag": tag,
-                "role": role,
-            },
+            payload=payload,
             suffix=suffix,
         )
+
+    @staticmethod
+    def _update_stat_records(
+        connection: sqlite3.Connection,
+        occurred_at: str,
+        payload: dict[str, Any],
+    ) -> None:
+        payload_json = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        for name in ("hp", "attack", "speed"):
+            value = int(payload.get(name, 0))
+            connection.execute(
+                """
+                INSERT INTO stat_records(name, value, occurred_at, payload_json)
+                VALUES(?, ?, ?, ?)
+                ON CONFLICT(name) DO UPDATE SET
+                    value = excluded.value,
+                    occurred_at = excluded.occurred_at,
+                    payload_json = excluded.payload_json
+                WHERE excluded.value > stat_records.value
+                """,
+                (name, value, occurred_at, payload_json),
+            )
 
     def _ingest_line(
         self,
@@ -342,6 +509,24 @@ class MetricsStore:
             self._record(connection, source, occurred_at, kind, payload={"tag": tag})
             return
 
+        cull_completed = _CULL_COMPLETED.match(message)
+        if cull_completed is not None:
+            selected = int(cull_completed.group("selected"))
+            self._record(
+                connection,
+                source,
+                occurred_at,
+                "cull_removed",
+                value=selected,
+                payload={
+                    "before": int(cull_completed.group("before")),
+                    "selected": selected,
+                    "expected_after": int(cull_completed.group("after")),
+                    "result": "claim_verified",
+                },
+            )
+            return
+
         cave = _CAVE.match(message)
         if cave is not None:
             self._record(
@@ -367,7 +552,15 @@ class MetricsStore:
         if since is not None:
             query += " AND occurred_at >= ?"
             params.append(since)
-        return int(connection.execute(query, params).fetchone()[0])
+        total = int(connection.execute(query, params).fetchone()[0])
+        if since is None:
+            total += int(
+                connection.execute(
+                    "SELECT COALESCE(SUM(total), 0) FROM daily_totals WHERE kind = ?",
+                    (kind,),
+                ).fetchone()[0]
+            )
+        return total
 
     def snapshot(self, recent_limit: int = 20) -> dict[str, Any]:
         self.refresh()
@@ -376,7 +569,8 @@ class MetricsStore:
             session_row = connection.execute(
                 """
                 SELECT occurred_at, payload_json FROM metric_events
-                WHERE kind = 'session_start' ORDER BY id DESC LIMIT 1
+                WHERE kind = 'session_start'
+                ORDER BY occurred_at DESC, id DESC LIMIT 1
                 """
             ).fetchone()
             session_since = str(session_row["occurred_at"]) if session_row else None
@@ -385,15 +579,27 @@ class MetricsStore:
                 if session_row
                 else None
             )
+            session_counter_since = session_since or f"{today}T00:00:00"
             counters: dict[str, dict[str, int]] = {}
             for kind in _COUNTER_KINDS:
                 counters[kind] = {
-                    "session": self._counter(connection, kind, session_since),
+                    "session": self._counter(connection, kind, session_counter_since),
                     "today": self._counter(connection, kind, f"{today}T00:00:00"),
                     "total": self._counter(connection, kind),
                 }
 
             records: dict[str, dict[str, Any]] = {}
+            archived_records = connection.execute(
+                "SELECT name, value, occurred_at, payload_json FROM stat_records"
+            ).fetchall()
+            for row in archived_records:
+                payload = json.loads(row["payload_json"])
+                records[row["name"]] = {
+                    "value": int(row["value"]),
+                    "occurred_at": row["occurred_at"],
+                    "tag": payload.get("tag"),
+                    "role": payload.get("role"),
+                }
             rows = connection.execute(
                 """
                 SELECT occurred_at, payload_json FROM metric_events
@@ -418,7 +624,7 @@ class MetricsStore:
                 SELECT occurred_at, kind, value, payload_json
                 FROM metric_events
                 WHERE kind NOT IN ('stat_observation', 'session_start', 'session_stop')
-                ORDER BY id DESC LIMIT ?
+                ORDER BY occurred_at DESC, id DESC LIMIT ?
                 """,
                 (max(0, recent_limit),),
             ).fetchall()
@@ -434,17 +640,21 @@ class MetricsStore:
 
             timeline_rows = connection.execute(
                 """
-                SELECT substr(occurred_at, 1, 10) AS day, kind, SUM(value) AS total
+                SELECT CAST(substr(occurred_at, 12, 2) AS INTEGER) AS hour,
+                       kind, SUM(value) AS total
                 FROM metric_events
                 WHERE kind IN ('hunt', 'hatch')
-                GROUP BY day, kind ORDER BY day DESC LIMIT 14
-                """
+                  AND substr(occurred_at, 1, 10) = ?
+                GROUP BY hour, kind ORDER BY hour, kind
+                """,
+                (today,),
             ).fetchall()
-            by_day: dict[str, dict[str, int]] = {}
+            by_hour = {
+                hour: {"hunt": 0, "hatch": 0}
+                for hour in range(24)
+            }
             for row in timeline_rows:
-                by_day.setdefault(row["day"], {"hunt": 0, "hatch": 0})[row["kind"]] = int(
-                    row["total"]
-                )
+                by_hour[int(row["hour"])][row["kind"]] = int(row["total"])
 
         return {
             "session_started": session_since,
@@ -453,9 +663,11 @@ class MetricsStore:
             "records": records,
             "recent_events": recent,
             "timeline": [
-                {"day": day, **values}
-                for day, values in sorted(by_day.items())[-7:]
+                {"hour": hour, "label": f"{hour:02d}:00", **by_hour[hour]}
+                for hour in range(24)
             ],
+            "timeline_date": today,
+            "timeline_granularity": "hour",
             "database": str(self.database),
             "generated_at": datetime.now().astimezone().isoformat(),
         }

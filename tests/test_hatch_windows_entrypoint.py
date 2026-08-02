@@ -22,6 +22,7 @@ def test_windows_deploy_exposes_exactly_three_user_entrypoints() -> None:
 
     assert 'scripts/run-hatch-windows.ps1"' in deploy
     assert 'scripts/run-dashboard-windows.ps1"' in deploy
+    assert 'scripts/watch-dashboard-windows.ps1"' in deploy
     assert 'scripts/start-bot.cmd"' in deploy
     assert 'scripts/start-dashboard.cmd"' in deploy
     assert 'scripts/start-hatch-hunt.cmd"' in deploy
@@ -31,11 +32,18 @@ def test_windows_deploy_exposes_exactly_three_user_entrypoints() -> None:
 def test_dashboard_entrypoint_uses_loopback_web_service() -> None:
     command = (REPO / "scripts/start-dashboard.cmd").read_text(encoding="utf-8")
     runner = (REPO / "scripts/run-dashboard-windows.ps1").read_text(encoding="utf-8")
+    watcher = (REPO / "scripts/watch-dashboard-windows.ps1").read_text(
+        encoding="utf-8"
+    )
 
     assert "run-dashboard-windows.ps1" in command
     assert 'set "dashboard_port=8780"' in command
-    assert '"dashboard"' in runner
-    assert '"--open-browser"' in runner
+    assert '"--server-only"' in command.lower()
+    assert "Install-LoginStartup" in runner
+    assert "Dino Dashboard Server.cmd" in runner
+    assert "WindowStyle Hidden" in runner
+    assert '"dashboard"' in watcher
+    assert "DinoMutantBotDashboard-$Port" in watcher
 
 
 def test_filter_test_entrypoint_is_isolated_and_cycle_limited() -> None:
