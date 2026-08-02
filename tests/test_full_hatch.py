@@ -21,6 +21,7 @@ from dino_bot.full_hatch import (
     CAVE_SELECT_BUTTON,
     CAVE_SWIPE,
     COLLECT_EGGS_BUTTON,
+    HATCH_DETAIL_CLOSE,
     NEST_GEAR,
     NEST_MASK_CLOSE,
     OPEN_NEST,
@@ -29,6 +30,7 @@ from dino_bot.full_hatch import (
     PLACE_SORT_BEST,
     PLACE_SORT_LEVEL,
     RECOVERY_BACK,
+    RECOVERY_MAP_EXIT,
     RECOVERY_MASK_CLOSE,
     RECOVERY_NO,
     RECOVERY_RECENTER,
@@ -52,10 +54,12 @@ FIXTURES = REPO / "tests" / "fixtures" / "hatch"
 
 
 def frame(image: np.ndarray | None = None) -> Frame:
+    if image is None:
+        image = np.full((1600, 900, 3), 255, dtype=np.uint8)
+        # Stable cyan base line of the centred home egg pile.
+        image[1448:1460, 330:573] = (220, 180, 20)
     return Frame(
         image
-        if image is not None
-        else np.full((1600, 900, 3), 255, dtype=np.uint8)
     )
 
 
@@ -64,7 +68,7 @@ def detection(target_type: str, x: int = 100, y: int = 100) -> Detection:
 
 
 def capacity_frame() -> Frame:
-    image = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    image = frame().image.copy()
     crop = cv2.imread(str(FIXTURES / "hud_282_350.png"))
     assert crop is not None
     x0, y0 = int(CAPACITY_REGION[0]), int(CAPACITY_REGION[1])
@@ -72,7 +76,7 @@ def capacity_frame() -> Frame:
     return frame(image)
 
 
-def test_top_autoplace_round_requires_screen_anchors_and_known_prompt() -> None:
+def test_top_autoplace_round_requires_screen_anchors_and_known_prompt(caplog) -> None:
     planner = AutoPlaceRoundPlanner(TOP_RULE)
     nest = [
         detection(NEST_TITLE, 450, 260),
@@ -116,8 +120,10 @@ def test_top_autoplace_round_requires_screen_anchors_and_known_prompt() -> None:
     ]
     target = planner.choose(frame(), prompt)
     assert target is not None and target.type == AUTOPLACE_YES
-    planner.on_action_success(target.type)
+    with caplog.at_level("INFO"):
+        planner.on_action_success(target.type)
     assert planner.is_complete()
+    assert "tag=頂尖 | sort=最佳屬性組合 | completed with confirmation" in caplog.text
 
 
 def test_mass_autoplace_round_selects_level_and_confirms_application() -> None:
@@ -190,6 +196,17 @@ def test_cave_below_threshold_recenters_without_entering() -> None:
 
     target = planner.choose(capacity_frame(), [detection("hatch_cave", 209, 1150)])
     assert target is not None and target.type == CAVE_RECENTER
+    assert (target.x, target.y) == (600, 800)
+    assert target.detection.metadata["swipe"] == {
+        "x2": 350,
+        "y2": 800,
+        "duration_ms": 400,
+    }
+    planner.on_action_success(target.type)
+    target = planner.choose(capacity_frame(), [detection("hatch_cave", 209, 1150)])
+    assert target is not None and target.type == CAVE_RECENTER
+    assert (target.x, target.y) == (450, 600)
+    assert target.detection.metadata["swipe"]["y2"] == 1050
     planner.on_action_success(target.type)
     assert planner.choose(
         capacity_frame(), [detection(hatch.HOME_ANCHOR, 59, 561)]
@@ -198,6 +215,36 @@ def test_cave_below_threshold_recenters_without_entering() -> None:
         capacity_frame(), [detection(hatch.HOME_ANCHOR, 59, 561)]
     ) is None
     assert planner.is_complete()
+
+
+def test_cave_inside_hunt_bottom_exclusion_is_never_opened() -> None:
+    planner = CaveCullPlanner(
+        DigitReader(GLYPHS),
+        threshold=300,
+        safe_margin=80,
+        bottom_exclusion_px=180,
+    )
+    unsafe = detection("hatch_cave", 450, 1450)
+
+    target = planner.choose(capacity_frame(), [unsafe])
+    assert target is not None and target.type == CAVE_SWIPE
+
+    planner._stage = "open_cave"
+    assert planner.choose(capacity_frame(), [unsafe]) is None
+
+
+def test_cave_inside_hunt_side_exclusion_is_never_opened() -> None:
+    planner = CaveCullPlanner(
+        DigitReader(GLYPHS),
+        threshold=300,
+        safe_margin=80,
+        bottom_exclusion_px=180,
+    )
+    planner._stage = "open_cave"
+    assert planner.choose(
+        capacity_frame(),
+        [detection("hatch_cave", 40, 1150)],
+    ) is None
 
 
 def test_cave_above_threshold_runs_weakest_continuous_battle(monkeypatch) -> None:
@@ -298,8 +345,10 @@ def test_full_flow_collects_all_nest_eggs_before_empty_rescan_wait() -> None:
     home = [detection(hatch.HOME_ANCHOR, 59, 561)]
     assert planner.choose(frame(), home) is None
     assert planner.next_ready_delay_ms() > 0
+    assert planner.is_hunt_cooldown_active()
 
     now[0] += 601
+    assert not planner.is_hunt_cooldown_active()
     target = planner.choose(frame(), home)
     assert target is not None and target.type == hatch.EGG_PILE
 
@@ -356,6 +405,119 @@ def test_home_recovery_recenters_shifted_map_before_accepting_home() -> None:
         ],
     )
     assert target is not None and target.type == RECOVERY_RECENTER
+    assert (target.x, target.y) == (600, 800)
+    assert target.detection.metadata["swipe"]["x2"] == 350
+    planner.on_action_success(target.type)
+    # The horizontal return moves the cave off screen before the map is fully
+    # restored. Recovery must still perform the remembered vertical return.
+    target = planner.choose(
+        frame(),
+        [detection(hatch.HOME_ANCHOR, 59, 561)],
+    )
+    assert target is not None and target.type == RECOVERY_RECENTER
+    assert (target.x, target.y) == (450, 600)
+    assert target.detection.metadata["swipe"]["y2"] == 1050
+
+
+def test_full_flow_recovers_shifted_cave_view_before_tapping_egg_pile() -> None:
+    planner = make_full_planner()
+    shifted_home = [
+        detection(hatch.HOME_ANCHOR, 59, 561),
+        detection("hatch_cave", 209, 1150),
+    ]
+
+    target = planner.choose(frame(), shifted_home)
+    assert target is not None and target.type == RECOVERY_RECENTER
+    assert target.type != hatch.EGG_PILE
+    assert (target.x, target.y) == (600, 800)
+    planner.on_action_success(target.type)
+
+    target = planner.choose(
+        frame(),
+        [detection(hatch.HOME_ANCHOR, 59, 561)],
+    )
+    assert target is not None and target.type == RECOVERY_RECENTER
+    assert (target.x, target.y) == (450, 600)
+    planner.on_action_success(target.type)
+
+    centered_home = [detection(hatch.HOME_ANCHOR, 59, 561)]
+    assert planner.choose(frame(), centered_home) is None
+    target = planner.choose(frame(), centered_home)
+    assert target is not None and target.type == hatch.EGG_PILE
+
+
+def test_full_flow_resumes_vertical_recovery_after_restart_mid_return() -> None:
+    planner = make_full_planner()
+    partially_returned = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    partially_returned[1085:1097, 342:585] = (220, 180, 20)
+
+    target = planner.choose(
+        frame(partially_returned),
+        [detection(hatch.HOME_ANCHOR, 59, 561)],
+    )
+
+    assert target is not None and target.type == RECOVERY_RECENTER
+    assert (target.x, target.y) == (450, 600)
+    assert target.detection.metadata["swipe"]["y2"] == 1050
+
+
+def test_full_flow_tracks_shifted_egg_pile_instead_of_tapping_roaming_dinosaur() -> None:
+    planner = make_full_planner()
+    image = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    image[1532:1544, 324:567] = (220, 180, 20)
+
+    target = planner.choose(
+        frame(image),
+        [detection(hatch.HOME_ANCHOR, 59, 561)],
+    )
+
+    assert target is not None and target.type == hatch.EGG_PILE
+    assert (target.x, target.y) == (445, 1438)
+
+
+def test_failed_egg_pile_tap_enters_recovery_before_any_retry() -> None:
+    planner = make_full_planner()
+    planner.on_action_failure(hatch.EGG_PILE)
+
+    target = planner.choose(
+        frame(np.zeros((1600, 900, 3), dtype=np.uint8)),
+        [detection(hatch.HOME_ANCHOR, 59, 561)],
+    )
+
+    assert target is not None and target.type == RECOVERY_BACK
+
+
+def test_last_claim_can_finish_on_unready_egg_detail_and_close_safely() -> None:
+    planner = make_full_planner()
+    planner.on_action_failure(hatch.CLAIM_BUTTON)
+    image = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    image[1136:1238, 339:560] = (40, 180, 255)
+    image[1146:1213, 652:723] = (115, 125, 255)
+
+    target = planner.choose(frame(image), [])
+
+    assert target is not None and target.type == HATCH_DETAIL_CLOSE
+    assert 650 <= target.x <= 723
+    assert 1146 <= target.y <= 1213
+    assert planner._hatch_child.hatched == 1
+
+
+def test_mass_filter_dropped_tap_retries_without_abandoning_round() -> None:
+    planner = make_full_planner()
+    planner._stage = "mass"
+    planner._child = AutoPlaceRoundPlanner(MASS_RULE)
+    nest = [
+        detection(NEST_TITLE, 450, 260),
+        detection(nest_filter.TAG_HDR_TOP, 217, 166),
+    ]
+
+    target = planner.choose(frame(), nest)
+    assert target is not None and target.type == nest_filter.FILTER_HEADER
+    planner.on_action_failure(target.type)
+
+    retry = planner.choose(frame(), nest)
+    assert retry is not None and retry.type == nest_filter.FILTER_HEADER
+    assert planner._stage == "mass"
 
 
 def test_home_recovery_uses_named_cave_close_before_falling_back_to_back() -> None:
@@ -369,6 +531,18 @@ def test_home_recovery_uses_named_cave_close_before_falling_back_to_back() -> No
     )
     assert target is not None and target.type == "hatch_recovery_close"
     assert (target.x, target.y) == (735, 1302)
+
+
+def test_home_recovery_uses_hunt_map_exit_instead_of_android_back() -> None:
+    planner = HatchHomeRecoveryPlanner()
+
+    target = planner.choose(
+        frame(np.zeros((1600, 900, 3), dtype=np.uint8)),
+        [detection("map_exit_nest_button", 841, 1295)],
+    )
+
+    assert target is not None and target.type == RECOVERY_MAP_EXIT
+    assert (target.x, target.y) == (841, 1295)
 
 
 class FakeClock:

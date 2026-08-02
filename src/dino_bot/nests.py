@@ -79,6 +79,24 @@ def is_descending(first: int, second: int) -> bool:
     return first >= second
 
 
+def descending_prefix(rows: list[Stats], rule: ReplacementRule) -> list[Stats]:
+    """Keep the reliable high-to-low prefix of a sorted candidate list.
+
+    A single digit can occasionally be confused by the screenshot reader
+    (for example, 2310 as 2370).  Once a later row appears stronger than the
+    row above it, the remaining OCR output is unsafe for replacement logic.
+    """
+
+    if not rows:
+        return []
+    result = [rows[0]]
+    for row in rows[1:]:
+        if primary_of(row, rule) > primary_of(result[-1], rule):
+            break
+        result.append(row)
+    return result
+
+
 def pick_replacement(parent: Stats, rows: list[Stats], rule: ReplacementRule) -> int | None:
     """Pick which list row should replace ``parent``, or None to keep it.
 

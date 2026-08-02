@@ -19,7 +19,9 @@ StatRegions = tuple[Region, Region, Region]
 
 ATTACK_PARENT_REGIONS: tuple[StatRegions, StatRegions] = (
     (
-        (252, 478, 302, 500),
+        # The left HP number begins as far left as x=249.  Starting at x=252
+        # clipped the leading curve of 2, making 2320 look like 7320.
+        (244, 478, 302, 500),
         (252, 506, 302, 528),
         (252, 533, 290, 553),
     ),

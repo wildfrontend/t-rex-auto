@@ -45,6 +45,12 @@ def test_reads_both_parent_sides_and_candidate_rows() -> None:
     assert read_candidate_rows(frame, reader) == [Stats(30, 282, 1), Stats(2230, 276, 150)]
 
 
+def test_left_parent_hp_crop_keeps_the_complete_leading_digit() -> None:
+    # Regression for the live 2320 -> 7320 misread: the old x0=252 cut the
+    # first digit down to four pixels, while the glyph starts around x=249.
+    assert ATTACK_PARENT_REGIONS[0][0] == (244, 478, 302, 500)
+
+
 def test_equal_top_attack_recommends_no_replacement() -> None:
     parent = np.full((1600, 900, 3), 255, dtype=np.uint8)
     candidates = parent.copy()

@@ -155,6 +155,14 @@ def test_equal_values_fail_closed_without_arrow_tap() -> None:
     assert planner.last_stage() == "direction_unreadable"
 
 
+def test_non_monotonic_ocr_tail_does_not_change_descending_direction() -> None:
+    planner, frame = hp_planner_for((2340, 2320, 2310, 2370, 2300))
+    planner._tag_ready = True
+    planner._sort_ready = True
+    assert planner.choose(frame, select_screen()) is None
+    assert planner.is_complete()
+
+
 def test_hp_sort_uses_menu_option_then_proves_result_from_hp_values() -> None:
     planner, frame = hp_planner_for((2300, 2250, 2200))
     option = planner.choose(

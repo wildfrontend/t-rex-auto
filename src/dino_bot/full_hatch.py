@@ -22,6 +22,7 @@ import logging
 import time
 from collections.abc import Callable, Sequence
 
+import cv2
 import numpy as np
 
 from . import attack_replacement as replacement_feature
@@ -29,7 +30,15 @@ from . import hatch as hatch_feature
 from . import nest_filter as nest_filter_feature
 from . import select_sort as select_sort_feature
 from .attack_replacement import AttackReplacementTestPlanner
-from .cave_navigation import CAVE, DONE, RESCAN, STUCK, SWIPE, CaveNavigator
+from .cave_navigation import (
+    CAVE,
+    DEFAULT_SWIPE_VECTORS,
+    DONE,
+    RESCAN,
+    STUCK,
+    SWIPE,
+    CaveNavigator,
+)
 from .cull import read_dino_count, should_cull
 from .digits import DigitReader
 from .models import Detection, Frame, Target
@@ -55,6 +64,7 @@ AUTOPLACE_BUTTON = "hatch_autoplace_button"
 AUTOPLACE_YES = "hatch_autoplace_yes"
 COLLECT_EGGS_BUTTON = "hatch_collect_eggs_button"
 NEST_MASK_CLOSE = "hatch_nest_mask_close"
+HATCH_DETAIL_CLOSE = "hatch_unready_detail_close"
 
 CAVE_SWIPE = "hatch_cave_swipe"
 CAVE_RECENTER = "hatch_cave_recenter"
@@ -69,8 +79,10 @@ RECOVERY_NO = "hatch_recovery_no"
 RECOVERY_MASK_CLOSE = "hatch_recovery_mask_close"
 RECOVERY_CLOSE = "hatch_recovery_close"
 RECOVERY_CLAIM = "hatch_recovery_claim"
+RECOVERY_MAP_EXIT = "hatch_recovery_map_exit"
 RECOVERY_RECENTER = "hatch_recovery_recenter"
 RECOVERY_BACK = "hatch_recovery_back"
+HUNT_MAP_EXIT = "map_exit_nest_button"
 
 PLACE_SORT_BEST = "hatch_place_sort_best"
 PLACE_SORT_LEVEL = "hatch_place_sort_level"
@@ -90,8 +102,9 @@ DEFAULT_TARGET_ACTIONS: dict[str, str] = {
     AUTOPLACE_YES: "tap",
     COLLECT_EGGS_BUTTON: "tap",
     NEST_MASK_CLOSE: "tap",
+    HATCH_DETAIL_CLOSE: "tap",
     CAVE_SWIPE: "swipe",
-    CAVE_RECENTER: "tap",
+    CAVE_RECENTER: "swipe",
     CAVE: "tap",
     CAVE_SELECT_BUTTON: "tap",
     SELECT_TAG_HEADER: "tap",
@@ -103,7 +116,8 @@ DEFAULT_TARGET_ACTIONS: dict[str, str] = {
     RECOVERY_MASK_CLOSE: "tap",
     RECOVERY_CLOSE: "tap",
     RECOVERY_CLAIM: "tap",
-    RECOVERY_RECENTER: "tap",
+    RECOVERY_MAP_EXIT: "tap",
+    RECOVERY_RECENTER: "swipe",
     RECOVERY_BACK: "back",
 }
 
@@ -120,6 +134,7 @@ DEFAULT_POST_ACTION_DELAYS_MS: dict[str, int] = {
     AUTOPLACE_YES: 5000,
     COLLECT_EGGS_BUTTON: 5000,
     NEST_MASK_CLOSE: 3000,
+    HATCH_DETAIL_CLOSE: 3000,
     CAVE_SWIPE: 3000,
     CAVE_RECENTER: 3500,
     CAVE: 4000,
@@ -133,6 +148,7 @@ DEFAULT_POST_ACTION_DELAYS_MS: dict[str, int] = {
     RECOVERY_MASK_CLOSE: 3000,
     RECOVERY_CLOSE: 4000,
     RECOVERY_CLAIM: 5000,
+    RECOVERY_MAP_EXIT: 4000,
     RECOVERY_RECENTER: 4000,
     RECOVERY_BACK: 4000,
 }
@@ -152,6 +168,7 @@ DEFAULT_SUCCESS_TRANSITIONS: dict[str, tuple[str, ...]] = {
     AUTOPLACE_BUTTON: (AUTOPLACE_PROMPT, AUTOPLACE_NOTICE, NEST_TITLE),
     AUTOPLACE_YES: (NEST_TITLE,),
     COLLECT_EGGS_BUTTON: (INCUBATOR_FULL_TOAST, NEST_TITLE),
+    HATCH_DETAIL_CLOSE: (hatch_feature.INCUBATOR_TITLE,),
     # The home anchor also remains visible behind My Nest; choose() verifies
     # that NEST_TITLE disappeared before advancing to cave navigation.
     NEST_MASK_CLOSE: (hatch_feature.HOME_ANCHOR,),
@@ -175,6 +192,25 @@ DEFAULT_SUCCESS_TRANSITIONS: dict[str, tuple[str, ...]] = {
 # management cycles and does not let a cave result's reused "獲取" button be
 # confused with a hatched-dinosaur cycle counter.
 DEFAULT_CYCLE_COMPLETE_TARGETS: tuple[str, ...] = ()
+
+# These controls only open/close a dropdown or select an idempotent view
+# option.  A dropped tap can be retried in place without changing a parent,
+# applying auto-place, collecting eggs, or starting a cave battle.
+RETRYABLE_NAVIGATION_TARGETS: frozenset[str] = frozenset(
+    {
+        nest_filter_feature.FILTER_HEADER,
+        *nest_filter_feature.OPTION_LABELS,
+        select_sort_feature.TAG_HEADER,
+        select_sort_feature.SORT_HEADER,
+        select_sort_feature.SORT_ATTACK,
+        select_sort_feature.SORT_HP,
+        AUTOPLACE_SORT_HEADER,
+        PLACE_SORT_BEST,
+        PLACE_SORT_LEVEL,
+        AUTOPLACE_MASK_CLOSE,
+    }
+)
+MAX_NAVIGATION_RETRIES = 2
 
 
 HOME_FOREGROUND_TYPES: frozenset[str] = frozenset(
@@ -227,9 +263,101 @@ def is_home_screen(frame: Frame, detections: Sequence[Detection]) -> bool:
 def is_centered_home_screen(frame: Frame, detections: Sequence[Detection]) -> bool:
     """Return whether the normal home map (not the shifted cave view) is ready."""
 
-    return is_home_screen(frame, detections) and not any(
+    if not is_home_screen(frame, detections) or any(
         item.type == CAVE for item in detections
+    ):
+        return False
+    pile = _egg_pile_base_center(frame)
+    if pile is None:
+        return False
+    scale = frame.width / 900.0
+    expected_x, expected_y = 450 * scale, 1455 * scale
+    return abs(pile[0] - expected_x) <= 100 * scale and abs(
+        pile[1] - expected_y
+    ) <= 100 * scale
+
+
+def _egg_pile_base_center(frame: Frame) -> tuple[float, float] | None:
+    """Locate the stable cyan base of the variable-looking home egg pile."""
+
+    if frame.image.size == 0:
+        return None
+    scale = frame.width / 900.0
+    hsv = cv2.cvtColor(frame.image, cv2.COLOR_BGR2HSV)
+    cyan = cv2.inRange(hsv, (75, 70, 70), (105, 255, 255))
+    count, _, stats, centers = cv2.connectedComponentsWithStats(cyan)
+    candidates: list[tuple[float, float]] = []
+    for index in range(1, count):
+        x, y, width, _height, area = stats[index]
+        center_x, center_y = centers[index]
+        if (
+            area >= 350 * scale * scale
+            and width >= 170 * scale
+            and y >= 850 * scale
+            and 150 * scale <= center_x <= 750 * scale
+        ):
+            candidates.append((float(center_x), float(center_y)))
+    return max(candidates, key=lambda center: center[1]) if candidates else None
+
+
+def _egg_pile_safe_tap(frame: Frame) -> tuple[int, int] | None:
+    """Choose a point on the eggs from the pile's stable cyan base.
+
+    Cave-return swipes do not always move the map by exactly the requested
+    distance.  A fixed home coordinate can consequently land just above the
+    basket, where roaming dinosaurs open their detail card instead.  The cyan
+    base moves with the basket; its centre minus a small vertical offset stays
+    on the large middle egg across the observed centred positions.
+    """
+
+    pile = _egg_pile_base_center(frame)
+    if pile is None:
+        return None
+    scale = frame.width / 900.0
+    return round(pile[0]), round(pile[1] - 100 * scale)
+
+
+def _unready_egg_detail_close(frame: Frame) -> tuple[int, int] | None:
+    """Locate the alternate red X shown on an unready egg detail page."""
+
+    if frame.image.size == 0:
+        return None
+    scale = frame.width / 900.0
+    hsv = cv2.cvtColor(frame.image, cv2.COLOR_BGR2HSV)
+    red = cv2.inRange(hsv, (0, 90, 100), (12, 255, 255))
+    yellow = cv2.inRange(hsv, (12, 80, 100), (40, 255, 255))
+
+    def components(mask: np.ndarray) -> list[tuple[int, int, int, int, int, float, float]]:
+        count, _, stats, centers = cv2.connectedComponentsWithStats(mask)
+        return [
+            (*map(int, stats[index]), float(centers[index][0]), float(centers[index][1]))
+            for index in range(1, count)
+        ]
+
+    # Require both the square red close control and the broad yellow
+    # "immediate hatch" control.  The pair avoids treating a generic red game
+    # button as permission to tap a fixed coordinate on an unknown screen.
+    has_hatch_button = any(
+        area >= 10_000 * scale * scale
+        and 280 * scale <= x <= 620 * scale
+        and 1050 * scale <= y <= 1250 * scale
+        for x, y, _width, _height, area, _cx, _cy in components(yellow)
     )
+    if not has_hatch_button:
+        return None
+    close_candidates = [
+        (cx, cy)
+        for x, y, width, height, area, cx, cy in components(red)
+        if area >= 2500 * scale * scale
+        and 50 * scale <= width <= 100 * scale
+        and 50 * scale <= height <= 100 * scale
+        and 620 * scale <= x <= 760 * scale
+        and 1080 * scale <= y <= 1280 * scale
+    ]
+    if not close_candidates:
+        return None
+    cx, cy = max(close_candidates, key=lambda center: center[0])
+    return round(cx), round(cy)
 
 
 class HatchHomeRecoveryPlanner:
@@ -250,6 +378,9 @@ class HatchHomeRecoveryPlanner:
         self._stage = "inspect"
         self._back_attempts = 0
         self._home_frames = 0
+        self._recenter_swipes = 0
+        self._cave_recovery_required = False
+        self._recenter_end = 0
         self._complete = False
         self._failed = False
 
@@ -263,6 +394,8 @@ class HatchHomeRecoveryPlanner:
         return self._failed
 
     def on_action_success(self, target_type: str) -> None:
+        if target_type == RECOVERY_RECENTER:
+            self._recenter_swipes += 1
         self._stage = f"verify_{target_type}"
 
     def on_action_failure(self, target_type: str) -> None:
@@ -274,6 +407,22 @@ class HatchHomeRecoveryPlanner:
         if self._complete or self._failed:
             return None
         by_type = _group(detections)
+        vectors = _inverse_swipe_vectors(DEFAULT_SWIPE_VECTORS)
+        # Once a shifted cave view is observed, replay the complete inverse
+        # route.  The cave leaves the viewport after the first (horizontal)
+        # swipe, but the egg pile is still roughly 330 px above its fixed tap
+        # coordinate until the second (vertical) swipe finishes.
+        if (
+            self._cave_recovery_required
+            and self._recenter_swipes < self._recenter_end
+        ):
+            x1, y1, x2, y2 = _scaled_swipe(
+                frame,
+                vectors[self._recenter_swipes],
+                self.reference_width,
+            )
+            self._stage = "recenter_cave_view"
+            return _swipe_target(RECOVERY_RECENTER, x1, y1, x2, y2)
         if is_centered_home_screen(frame, detections):
             self._home_frames += 1
             self._stage = f"confirm_home_{self._home_frames}/{self.required_home_frames}"
@@ -326,12 +475,41 @@ class HatchHomeRecoveryPlanner:
             self._stage = "close_named_screen"
             return _synthetic(RECOVERY_CLOSE, close.x, close.y)
 
+        map_exit = _best(by_type.get(HUNT_MAP_EXIT))
+        if map_exit is not None:
+            # A combined hatch+hunt process can be restarted during the hunt
+            # cooldown. Android Back does not leave this map, but its explicit
+            # exit control is stable and already template-gated.
+            self._stage = "leave_hunt_map"
+            return _synthetic(RECOVERY_MAP_EXIT, map_exit.x, map_exit.y)
+
         if is_home_screen(frame, detections) and CAVE in by_type:
-            self._stage = "recenter_cave_view"
-            return _synthetic(
-                RECOVERY_RECENTER,
-                *_scaled(frame, (842.0, 1497.0), self.reference_width),
-            )
+            if self._recenter_swipes >= len(vectors):
+                self.logger.error(
+                    "Hatch recovery | cave view remains after %d safe return swipes",
+                    self._recenter_swipes,
+                )
+            else:
+                self._cave_recovery_required = True
+                self._recenter_end = len(vectors)
+                return self.choose(frame, detections)
+
+        if is_home_screen(frame, detections):
+            pile = _egg_pile_base_center(frame)
+            if pile is not None:
+                scale = frame.width / 900.0
+                expected_x, expected_y = 450 * scale, 1455 * scale
+                x_shifted = abs(pile[0] - expected_x) > 100 * scale
+                y_too_high = pile[1] < expected_y - 100 * scale
+                if x_shifted or y_too_high:
+                    # A process may restart after the horizontal cave-return
+                    # swipe. Resume at the vertical leg when the pile is
+                    # already horizontally centred instead of replaying the
+                    # first leg and pushing it past centre again.
+                    self._recenter_swipes = 0 if x_shifted else 1
+                    self._recenter_end = 2 if y_too_high else 1
+                    self._cave_recovery_required = True
+                    return self.choose(frame, detections)
 
         if self._back_attempts < self.max_back_attempts:
             self._back_attempts += 1
@@ -414,6 +592,11 @@ class AutoPlaceRoundPlanner:
         elif target_type == AUTOPLACE_BUTTON:
             self._stage = "after_autoplace"
         elif target_type == AUTOPLACE_YES:
+            self.logger.info(
+                "Hatch auto-place | tag=%s | sort=%s | completed with confirmation",
+                self.rule.tag,
+                self.rule.sort_option,
+            )
             self._stage = "done"
             self._complete = True
 
@@ -531,16 +714,22 @@ class CaveCullPlanner:
         *,
         threshold: int,
         reference_width: float = 900.0,
+        safe_margin: int = 80,
+        bottom_exclusion_px: int = 180,
         logger: logging.Logger | None = None,
     ) -> None:
         self.reader = reader
         self.threshold = max(0, threshold)
         self.reference_width = reference_width
+        self.safe_margin = max(0, safe_margin)
+        self.bottom_exclusion_px = max(0, bottom_exclusion_px)
         self.logger = logger or logging.getLogger("dino_bot")
         self.navigator = CaveNavigator(reference_width=reference_width)
         self._stage = "navigate"
         self._capacity_failures = 0
-        self._recenter_taps = 0
+        self._navigation_swipes = 0
+        self._return_swipes = 0
+        self._recenter_checks = 0
         self._home_frames = 0
         self._complete = False
 
@@ -553,6 +742,7 @@ class CaveCullPlanner:
     def on_action_success(self, target_type: str) -> None:
         if target_type == CAVE_SWIPE:
             self.navigator.on_swipe_result(moved=True)
+            self._navigation_swipes += 1
         elif target_type == CAVE:
             self._stage = "cave_screen"
         elif target_type == CAVE_SELECT_BUTTON:
@@ -568,8 +758,8 @@ class CaveCullPlanner:
         elif target_type == hatch_feature.CLAIM_BUTTON and self._stage == "battle_result":
             self._stage = "recenter"
         elif target_type == CAVE_RECENTER:
-            self._recenter_taps += 1
-            self._stage = "verify_recenter"
+            self._return_swipes += 1
+            self._stage = "recenter"
 
     def on_action_failure(self, target_type: str) -> None:
         if target_type == CAVE_SWIPE:
@@ -582,7 +772,7 @@ class CaveCullPlanner:
             return None
         by_type = _group(detections)
         if self._stage == "navigate":
-            cave = _best(by_type.get(CAVE))
+            cave = self._safe_cave(frame, by_type.get(CAVE))
             step = self.navigator.next_step(cave_visible=cave is not None, frame_width=frame.width)
             if step.kind == SWIPE:
                 assert step.vector is not None
@@ -623,7 +813,7 @@ class CaveCullPlanner:
             self._stage = "open_cave"
             return _target(cave)
         if self._stage == "open_cave":
-            cave = _best(by_type.get(CAVE))
+            cave = self._safe_cave(frame, by_type.get(CAVE))
             return _target(cave) if cave is not None else None
         if self._stage == "cave_screen":
             button = _best(by_type.get(CAVE_SELECT_BUTTON))
@@ -667,26 +857,67 @@ class CaveCullPlanner:
             claim = _best(by_type.get(hatch_feature.CLAIM_BUTTON))
             return _target(claim) if claim is not None else None
         if self._stage == "recenter":
-            return _synthetic(
-                CAVE_RECENTER,
-                *_scaled(frame, (842.0, 1497.0), self.reference_width),
-            )
-        if self._stage == "verify_recenter":
-            if CAVE in by_type and self._recenter_taps < 3:
-                self._home_frames = 0
-                self._stage = "recenter"
+            if is_centered_home_screen(frame, detections):
+                self._stage = "verify_recenter"
                 return self.choose(frame, detections)
+            used_vectors = self.navigator.swipe_vectors[: self._navigation_swipes]
+            # A resumed run can begin in the cave view without having observed
+            # the outbound gestures. In that case, use the complete calibrated
+            # return path; every gesture stays outside the protected UI bands.
+            if not used_vectors:
+                used_vectors = self.navigator.swipe_vectors
+            vectors = _inverse_swipe_vectors(used_vectors)
+            if self._return_swipes < len(vectors):
+                x1, y1, x2, y2 = _scaled_swipe(
+                    frame,
+                    vectors[self._return_swipes],
+                    self.reference_width,
+                )
+                return _swipe_target(CAVE_RECENTER, x1, y1, x2, y2)
+            self._stage = "verify_recenter"
+            return self.choose(frame, detections)
+        if self._stage == "verify_recenter":
             if is_centered_home_screen(frame, detections):
                 self._home_frames += 1
                 if self._home_frames >= 2:
                     self._stage = "done"
                     self._complete = True
-            elif self._recenter_taps >= 3:
+            else:
                 self._home_frames = 0
-                self.logger.error("Hatch cave | recenter did not leave cave view")
-                self._stage = "recenter_failed"
+                self._recenter_checks += 1
+                if self._recenter_checks >= 3:
+                    self.logger.error(
+                        "Hatch cave | safe return swipes did not prove centered home"
+                    )
+                    self._stage = "recenter_failed"
             return None
         return None
+
+    def _safe_cave(
+        self,
+        frame: Frame,
+        items: list[Detection] | None,
+    ) -> Detection | None:
+        """Return the best cave whose tap point is outside UI exclusion bands."""
+
+        if not items:
+            return None
+        scale = frame.width / self.reference_width
+        margin = round(self.safe_margin * scale)
+        bottom = round(self.bottom_exclusion_px * scale)
+        safe = [
+            item
+            for item in items
+            if margin <= item.x <= frame.width - margin
+            and margin <= item.y <= frame.height - bottom
+        ]
+        rejected = len(items) - len(safe)
+        if rejected:
+            self.logger.warning(
+                "Hatch cave | rejected %d target(s) inside protected screen edge",
+                rejected,
+            )
+        return _best(safe)
 
 
 class FullHatchPlanner:
@@ -706,6 +937,8 @@ class FullHatchPlanner:
         home_failure_limit: int = 3,
         home_backoff_seconds: float = 30.0,
         cull_threshold: int = 320,
+        cave_safe_margin: int = 80,
+        cave_bottom_exclusion_px: int = 180,
         recovery_timeout_seconds: float = 15.0,
         logger: logging.Logger | None = None,
         clock: Callable[[], float] | None = None,
@@ -714,6 +947,8 @@ class FullHatchPlanner:
         self.reference_width = reference_width
         self.logger = logger or logging.getLogger("dino_bot")
         self.cull_threshold = cull_threshold
+        self.cave_safe_margin = max(0, cave_safe_margin)
+        self.cave_bottom_exclusion_px = max(0, cave_bottom_exclusion_px)
         self.recovery_timeout_seconds = max(1.0, recovery_timeout_seconds)
         self.clock = clock or time.monotonic
         self._hatch_kwargs = dict(
@@ -737,6 +972,9 @@ class FullHatchPlanner:
         self._no_target_since: float | None = None
         self._recovery_reason: str | None = None
         self._collect_only_after_empty = False
+        self._empty_rescan_wait = False
+        self._navigation_failures: dict[tuple[str, str], int] = {}
+        self._pending_claim_verification = False
         self.completed_management_cycles = 0
 
     def last_stage(self) -> str:
@@ -751,6 +989,11 @@ class FullHatchPlanner:
         method = getattr(self._child, "next_ready_delay_ms", None)
         return int(method()) if callable(method) else 0
 
+    def is_hunt_cooldown_active(self) -> bool:
+        """Whether the no-ready-egg cooldown can be spent hunting."""
+
+        return self._empty_rescan_wait and self.next_ready_delay_ms() > 0
+
     def reset_workflow(self) -> None:
         self._stage = "hatch"
         self._child = self._new_hatch()
@@ -759,14 +1002,20 @@ class FullHatchPlanner:
         self._no_target_since = None
         self._recovery_reason = None
         self._collect_only_after_empty = False
+        self._empty_rescan_wait = False
+        self._navigation_failures.clear()
+        self._pending_claim_verification = False
 
     def on_action_success(self, target_type: str) -> None:
+        self._navigation_failures.pop((self._stage, target_type), None)
         if self._stage == "recover_home":
             self._recovery_child.on_action_success(target_type)
             return
         if self._stage == "hatch":
             hatch = self._hatch_child
             hatch.on_action_success(target_type)
+            if target_type == hatch_feature.CLAIM_BUTTON:
+                self._pending_claim_verification = False
             if target_type == hatch_feature.CLOSE_BUTTON:
                 hatched = hatch.hatched - self._hatch_baseline
                 if hatched > 0:
@@ -777,7 +1026,8 @@ class FullHatchPlanner:
                     self._enter_open_nest(collect_only=False)
                 else:
                     self.logger.info(
-                        "Hatch full | no ready incubator eggs | collect all nest eggs before cooldown"
+                        "Hatch full | no ready incubator eggs | "
+                        "collect all nest eggs before cooldown"
                     )
                     self._enter_open_nest(collect_only=True)
             return
@@ -817,6 +1067,32 @@ class FullHatchPlanner:
             return
         if self._stage == "hatch":
             self._hatch_child.on_action_failure(target_type)
+            if target_type == hatch_feature.CLAIM_BUTTON:
+                self._pending_claim_verification = True
+            if target_type == hatch_feature.EGG_PILE:
+                # A roaming dinosaur can cover the old fixed pile point.  Its
+                # detail card leaves HOME_ANCHOR visible behind a dark modal,
+                # so blindly retrying the same coordinate could press one of
+                # that card's action buttons.  Unwind it before retrying at a
+                # newly measured point on the basket.
+                self._begin_home_recovery("egg pile tap opened an unexpected screen")
+            return
+        retry_key = (self._stage, target_type)
+        retry_count = self._navigation_failures.get(retry_key, 0)
+        if (
+            target_type in RETRYABLE_NAVIGATION_TARGETS
+            and retry_count < MAX_NAVIGATION_RETRIES
+        ):
+            retry_count += 1
+            self._navigation_failures[retry_key] = retry_count
+            self.logger.warning(
+                "Hatch full | retrying safe navigation in place | "
+                "stage=%s target=%s retry=%d/%d",
+                self._stage,
+                target_type,
+                retry_count,
+                MAX_NAVIGATION_RETRIES,
+            )
             return
         child = self._child
         method = getattr(child, "on_action_failure", None)
@@ -861,6 +1137,20 @@ class FullHatchPlanner:
                 return self._choose_current(frame, detections)
             return target
 
+        # The hatch HUD anchor remains visible when the outdoor map is still
+        # shifted to the cave view.  HatchPlanner intentionally treats that
+        # anchor as permission to tap the fixed egg-pile coordinate, but the
+        # coordinate is only valid on the centred home map.  Route a resumed
+        # or freshly started workflow through the existing bounded recovery
+        # before the child can issue that unsafe/misplaced tap.
+        if (
+            self._stage == "hatch"
+            and is_home_screen(frame, detections)
+            and not is_centered_home_screen(frame, detections)
+        ):
+            self._begin_home_recovery("hatch started from shifted cave view")
+            return self.choose(frame, detections)
+
         target = self._choose_current(frame, detections)
         if target is not None:
             self._no_target_since = None
@@ -892,7 +1182,22 @@ class FullHatchPlanner:
     ) -> Target | None:
         by_type = _group(detections)
         if self._stage == "hatch":
-            return self._hatch_child.choose(frame, detections)
+            detail_close = _unready_egg_detail_close(frame)
+            if detail_close is not None:
+                if self._pending_claim_verification:
+                    self._hatch_child.hatched += 1
+                    self._pending_claim_verification = False
+                    self.logger.info(
+                        "Hatch | claim confirmed by next unready egg detail | hatched=%d",
+                        self._hatch_child.hatched,
+                    )
+                return _synthetic(HATCH_DETAIL_CLOSE, *detail_close)
+            target = self._hatch_child.choose(frame, detections)
+            if target is not None and target.type == hatch_feature.EGG_PILE:
+                safe_point = _egg_pile_safe_tap(frame)
+                if safe_point is not None:
+                    return _synthetic(hatch_feature.EGG_PILE, *safe_point)
+            return target
         if self._stage == "open_nest":
             if NEST_TITLE in by_type:
                 if self._collect_only_after_empty:
@@ -950,6 +1255,8 @@ class FullHatchPlanner:
                     self.reader,
                     threshold=self.cull_threshold,
                     reference_width=self.reference_width,
+                    safe_margin=self.cave_safe_margin,
+                    bottom_exclusion_px=self.cave_bottom_exclusion_px,
                     logger=self.logger,
                 )
                 return self._choose_current(frame, detections)
@@ -989,6 +1296,7 @@ class FullHatchPlanner:
         # frame takes longer than expected to settle.
         self._child = object()
         self._collect_only_after_empty = collect_only
+        self._empty_rescan_wait = False
 
     def _start_collect(self) -> None:
         self._stage = "collect"
@@ -1007,6 +1315,7 @@ class FullHatchPlanner:
         self._child = self._new_hatch()
         self._hatch_baseline = 0
         self._collect_only_after_empty = False
+        self._empty_rescan_wait = True
         self._hatch_child.begin_rescan_wait(
             "collected all nest eggs after no ready incubator eggs"
         )
@@ -1111,6 +1420,23 @@ def _scaled(
 ) -> tuple[int, int]:
     scale = frame.width / reference_width
     return (round(point[0] * scale), round(point[1] * scale))
+
+
+def _scaled_swipe(
+    frame: Frame,
+    vector: tuple[int, int, int, int],
+    reference_width: float,
+) -> tuple[int, int, int, int]:
+    scale = frame.width / reference_width
+    return tuple(round(value * scale) for value in vector)  # type: ignore[return-value]
+
+
+def _inverse_swipe_vectors(
+    vectors: Sequence[tuple[int, int, int, int]],
+) -> tuple[tuple[int, int, int, int], ...]:
+    """Undo calibrated camera gestures in reverse order."""
+
+    return tuple((x2, y2, x1, y1) for x1, y1, x2, y2 in reversed(vectors))
 
 
 def _best(items: list[Detection] | None) -> Detection | None:

@@ -29,6 +29,7 @@ from .engine import BotContext, BotEngine
 from .events import EventLog, JsonlEventLog, NullEventLog
 from .full_hatch import FullHatchPlanner
 from .hatch import HatchPlanner
+from .hatch_hunt import HatchHuntPlanner
 from .logging import configure_logging
 from .models import ActionKind
 from .modes import create_mode
@@ -52,6 +53,13 @@ def create_engine(
         return _create_hatch_engine(config, verbose=verbose)
     if feature == "hatch-full":
         return _create_hatch_engine(config, verbose=verbose, full=True)
+    if feature == "hatch-hunt":
+        return _create_hatch_engine(
+            config,
+            verbose=verbose,
+            full=True,
+            hunt_during_cooldown=True,
+        )
     if feature == "hatch-filter-test":
         return _create_hatch_engine(config, verbose=verbose, filter_test=True)
     if feature == "hatch-sort-test":
@@ -115,41 +123,7 @@ def _create_hunt_engine(config: AppConfig, *, verbose: bool = False) -> BotEngin
         StartupLayoutGuard(StartupAutoBattleDialogDetector(), logger=logger),
         reference_size=open_cv_detector.reference_size,
     )
-    planner = HuntPlanner(
-        config.planner.target_types,
-        config.planner.strategy,
-        blocking_types=config.planner.blocking_types,
-        deduplicate_types=config.planner.deduplicate_types,
-        dedup_radius=config.planner.dedup_radius,
-        history_file=config.planner.history_file,
-        history_limit=config.planner.history_limit,
-        recenter_every=config.planner.recenter_every,
-        own_path_radius=config.planner.own_path_radius,
-        anchor_exclusion_radius=config.planner.anchor_exclusion_radius,
-        dinosaur_failure_cooldown_ms=config.planner.dinosaur_failure_cooldown_ms,
-        dinosaur_failure_radius=config.planner.dinosaur_failure_radius,
-        mail_after_hunts=config.planner.mail_after_hunts,
-        mail_failure_limit=config.planner.mail_failure_limit,
-        capacity_wait_seconds=config.planner.capacity_wait_seconds,
-        ring_width=config.planner.ring_width,
-        own_path_angle_degrees=config.planner.own_path_angle_degrees,
-        stalled_recenter_seconds=config.planner.stalled_recenter_seconds,
-        recenter_min_candidates=config.planner.recenter_min_candidates,
-        blind_idle_seconds=config.planner.blind_idle_seconds,
-        mail_stage_timeout_seconds=config.planner.mail_stage_timeout_seconds,
-        map_settle_frames=config.planner.map_settle_frames,
-        map_settle_tolerance_px=config.planner.map_settle_tolerance_px,
-        map_settle_max_frames=config.planner.map_settle_max_frames,
-        max_center_distance_px=config.planner.max_center_distance_px,
-        bottom_exclusion_px=config.planner.bottom_exclusion_px,
-        exclusion_zones=config.planner.exclusion_zones,
-        retry_exhausted_cooldown_ms=config.planner.retry_exhausted_cooldown_ms,
-        suppression_radius=config.planner.suppression_radius,
-        action_cooldowns_ms=config.planner.action_cooldowns_ms,
-        stage_scoped_scan=config.planner.stage_scoped_scan,
-        full_scan_interval_seconds=config.planner.full_scan_interval_seconds,
-        full_scan_after_idle_cycles=config.planner.full_scan_after_idle_cycles,
-    )
+    planner = _build_hunt_planner(config)
     action = AdbActionDriver(adb)
     verifier = TargetChangedVerifier(
         max_distance=config.verify.max_distance,
@@ -240,6 +214,44 @@ def _create_hunt_engine(config: AppConfig, *, verbose: bool = False) -> BotEngin
     return BotEngine(context)
 
 
+def _build_hunt_planner(config: AppConfig) -> HuntPlanner:
+    return HuntPlanner(
+        config.planner.target_types,
+        config.planner.strategy,
+        blocking_types=config.planner.blocking_types,
+        deduplicate_types=config.planner.deduplicate_types,
+        dedup_radius=config.planner.dedup_radius,
+        history_file=config.planner.history_file,
+        history_limit=config.planner.history_limit,
+        recenter_every=config.planner.recenter_every,
+        own_path_radius=config.planner.own_path_radius,
+        anchor_exclusion_radius=config.planner.anchor_exclusion_radius,
+        dinosaur_failure_cooldown_ms=config.planner.dinosaur_failure_cooldown_ms,
+        dinosaur_failure_radius=config.planner.dinosaur_failure_radius,
+        mail_after_hunts=config.planner.mail_after_hunts,
+        mail_failure_limit=config.planner.mail_failure_limit,
+        capacity_wait_seconds=config.planner.capacity_wait_seconds,
+        ring_width=config.planner.ring_width,
+        own_path_angle_degrees=config.planner.own_path_angle_degrees,
+        stalled_recenter_seconds=config.planner.stalled_recenter_seconds,
+        recenter_min_candidates=config.planner.recenter_min_candidates,
+        blind_idle_seconds=config.planner.blind_idle_seconds,
+        mail_stage_timeout_seconds=config.planner.mail_stage_timeout_seconds,
+        map_settle_frames=config.planner.map_settle_frames,
+        map_settle_tolerance_px=config.planner.map_settle_tolerance_px,
+        map_settle_max_frames=config.planner.map_settle_max_frames,
+        max_center_distance_px=config.planner.max_center_distance_px,
+        bottom_exclusion_px=config.planner.bottom_exclusion_px,
+        exclusion_zones=config.planner.exclusion_zones,
+        retry_exhausted_cooldown_ms=config.planner.retry_exhausted_cooldown_ms,
+        suppression_radius=config.planner.suppression_radius,
+        action_cooldowns_ms=config.planner.action_cooldowns_ms,
+        stage_scoped_scan=config.planner.stage_scoped_scan,
+        full_scan_interval_seconds=config.planner.full_scan_interval_seconds,
+        full_scan_after_idle_cycles=config.planner.full_scan_after_idle_cycles,
+    )
+
+
 def _create_hatch_engine(
     config: AppConfig,
     *,
@@ -250,6 +262,7 @@ def _create_hatch_engine(
     attack_test: bool = False,
     hp_test: bool = False,
     full: bool = False,
+    hunt_during_cooldown: bool = False,
 ) -> BotEngine:
     """Wire the Auto Hatch feature onto the shared capture/act/verify core.
 
@@ -267,7 +280,13 @@ def _create_hatch_engine(
         backup_count=config.log_backup_count,
     )
     hatch = config.hatch
-    if full:
+    if hunt_during_cooldown:
+        logger.info(
+            "Feature | hatch-hunt | full hatch + hunt during cooldown"
+            " | handoff=30s | cull>%d",
+            hatch.cull_threshold,
+        )
+    elif full:
         logger.info(
             "Feature | hatch-full | hatch -> Attack -> HP -> Top -> Mass"
             " -> collect -> cave | cull>%d",
@@ -319,12 +338,29 @@ def _create_hatch_engine(
             "Hatch detector has no assets; capture templates into %s first",
             hatch.manifest,
         )
-    detector = CompositeDetector(
-        open_cv_detector,
-        reference_size=open_cv_detector.reference_size,
-    )
+    if hunt_during_cooldown:
+        hunt_cv_detector = OpenCvDetector(
+            config.detector.manifest,
+            default_threshold=config.detector.default_threshold,
+            nms_iou=config.detector.nms_iou,
+        )
+        detector = CompositeDetector(
+            open_cv_detector,
+            hunt_cv_detector,
+            HuntTeamAvailabilityDetector(),
+            HuntCapacityDetector(),
+            TargetTooStrongDetector(),
+            StartupLayoutGuard(StartupGrowthResultDetector(), logger=logger),
+            StartupLayoutGuard(StartupAutoBattleDialogDetector(), logger=logger),
+            reference_size=open_cv_detector.reference_size,
+        )
+    else:
+        detector = CompositeDetector(
+            open_cv_detector,
+            reference_size=open_cv_detector.reference_size,
+        )
     if full:
-        planner = FullHatchPlanner(
+        full_planner = FullHatchPlanner(
             DigitReader(hatch.manifest.parent / "digits"),
             egg_pile_point=(hatch.egg_pile[0], hatch.egg_pile[1]),
             reference_width=hatch.reference_width,
@@ -336,7 +372,19 @@ def _create_hatch_engine(
             home_failure_limit=hatch.home_failure_limit,
             home_backoff_seconds=hatch.home_backoff_seconds,
             cull_threshold=hatch.cull_threshold,
+            cave_safe_margin=80,
+            cave_bottom_exclusion_px=config.planner.bottom_exclusion_px,
             logger=logger,
+        )
+        planner = (
+            HatchHuntPlanner(
+                full_planner,
+                _build_hunt_planner(config),
+                handoff_seconds=30,
+                logger=logger,
+            )
+            if hunt_during_cooldown
+            else full_planner
         )
     elif hp_test:
         planner = AttackReplacementTestPlanner(
@@ -402,9 +450,14 @@ def _create_hatch_engine(
     verifier = TargetChangedVerifier(
         max_distance=config.verify.max_distance,
         pixel_change_threshold=config.verify.pixel_change_threshold,
-        failure_types=(),
+        failure_types=(config.verify.failure_types if hunt_during_cooldown else ()),
         success_transitions=success_transitions,
         black_mean_threshold=config.recovery.black_mean_threshold,
+        success_requires_target_absence=(
+            config.verify.success_requires_target_absence
+            if hunt_during_cooldown
+            else ()
+        ),
     )
     observer = create_mode(
         config.mode,

@@ -10,6 +10,7 @@ from dino_bot.digits import (
     GLYPH_SIZE,
     DigitReader,
     DigitReadError,
+    _prefer_narrow_one,
     segment_glyphs,
 )
 
@@ -75,6 +76,30 @@ def test_reader_marks_low_scores_unknown(tmp_path) -> None:
     cv2.rectangle(image, (8, 4), (31, 35), 0, thickness=2)
     assert reader.read(image) == "?"
     assert reader.read_int(image) is None
+
+
+def test_close_narrow_1_7_match_prefers_one() -> None:
+    assert _prefer_narrow_one(
+        "7",
+        0.730,
+        {"1": 0.717, "7": 0.730},
+        (29, 4, 5, 14),
+    ) == ("1", 0.717)
+
+
+def test_wide_or_unconvincing_7_match_stays_seven() -> None:
+    assert _prefer_narrow_one(
+        "7",
+        0.800,
+        {"1": 0.780, "7": 0.800},
+        (10, 4, 10, 14),
+    ) == ("7", 0.800)
+    assert _prefer_narrow_one(
+        "7",
+        0.700,
+        {"1": 0.590, "7": 0.700},
+        (0, 6, 4, 10),
+    ) == ("7", 0.700)
 
 
 # -- regression against shipped glyphs (offline T6) ---------------------------

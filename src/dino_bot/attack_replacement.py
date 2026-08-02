@@ -18,7 +18,14 @@ from .digits import DigitReader
 from .models import Detection, Frame, Target
 from .nest_filter import NestTagFilterTestPlanner
 from .nest_readout import SELECT_ROW_PITCH, read_attack_parents, read_candidate_rows
-from .nests import ATTACK_RULE, ReplacementRule, Stats, pick_replacement, primary_of
+from .nests import (
+    ATTACK_RULE,
+    ReplacementRule,
+    Stats,
+    descending_prefix,
+    pick_replacement,
+    primary_of,
+)
 from .overlays import CONFIRM_YES, NESTED_PARENT_WARNING, SELECT_CONFIRM_PROMPT
 from .parent_open import NEST_TITLE, OPEN_TAG_OPTIONS, SELECT_TITLE
 from .select_sort import SelectSortTestPlanner
@@ -245,8 +252,8 @@ class AttackReplacementTestPlanner:
                     return self._close_list(frame)
             return None
 
-        rows = read_candidate_rows(frame.image, self.reader)
-        if not rows:
+        raw_rows = read_candidate_rows(frame.image, self.reader)
+        if not raw_rows:
             self._stage = "candidate_stats_unreadable"
             self.logger.warning(
                 "Hatch %s | candidate stats unreadable; stopping",
@@ -254,6 +261,16 @@ class AttackReplacementTestPlanner:
             )
             self._complete = True
             return None
+        rows = descending_prefix(raw_rows, self.rule)
+        if len(rows) < len(raw_rows):
+            self.logger.warning(
+                "Hatch %s | side=%s | ignored non-descending OCR tail"
+                " | raw=%s | trusted=%s",
+                self.rule.tag,
+                self._side_name,
+                [primary_of(row, self.rule) for row in raw_rows],
+                [primary_of(row, self.rule) for row in rows],
+            )
         replacement_index = pick_replacement(self._current_parent, rows, self.rule)
         if replacement_index is None:
             self.logger.info(

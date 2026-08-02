@@ -2,7 +2,7 @@
 set -euo pipefail
 
 project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-runtime_root="${1:-/mnt/d/DinoMutantBot}"
+runtime_root="${1:-/mnt/d/DinoMutantBot-App}"
 runtime_python_source="${2:-}"
 runtime_app="${runtime_root}/app"
 
@@ -35,6 +35,7 @@ cp -a \
 cp -a "${project_root}/scripts/start-bot.cmd" "${runtime_root}/start-bot.cmd"
 cp -a "${project_root}/scripts/start-hatch-bot.cmd" "${runtime_root}/start-hatch-bot.cmd"
 cp -a "${project_root}/scripts/start-hatch-full.cmd" "${runtime_root}/start-hatch-full.cmd"
+cp -a "${project_root}/scripts/start-hatch-hunt.cmd" "${runtime_root}/start-hatch-hunt.cmd"
 cp -a \
   "${project_root}/scripts/start-hatch-filter-test.cmd" \
   "${runtime_root}/start-hatch-filter-test.cmd"

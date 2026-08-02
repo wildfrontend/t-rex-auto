@@ -30,6 +30,8 @@ INK_THRESHOLD = 110
 GLYPH_SIZE = (24, 32)
 MIN_GLYPH_AREA = 12
 MIN_MATCH_SCORE = 0.60
+NARROW_ONE_MAX_ASPECT = 0.45
+NARROW_ONE_MAX_SCORE_GAP = 0.05
 
 
 class DigitReadError(ValueError):
@@ -40,6 +42,32 @@ class DigitReadError(ValueError):
 class Glyph:
     char: str
     raster: np.ndarray
+
+
+def _prefer_narrow_one(
+    best_char: str,
+    best_score: float,
+    scores: dict[str, float],
+    bbox: tuple[int, int, int, int],
+) -> tuple[str, float]:
+    """Correct close 1/7 matches using the source glyph's aspect ratio.
+
+    Canonical resizing intentionally removes size differences, but in the
+    game's small stat font ``1`` is roughly half as wide as ``7``.  Lower
+    Select Dino rows can otherwise turn 2310 into 2370 by a tiny score margin.
+    """
+
+    _, _, width, height = bbox
+    one_score = scores.get("1", 0.0)
+    if (
+        best_char == "7"
+        and height > 0
+        and width / height <= NARROW_ONE_MAX_ASPECT
+        and one_score >= MIN_MATCH_SCORE
+        and best_score - one_score <= NARROW_ONE_MAX_SCORE_GAP
+    ):
+        return "1", one_score
+    return best_char, best_score
 
 
 def binarize(image: Image) -> np.ndarray:
@@ -110,12 +138,20 @@ class DigitReader:
         """Read every recognizable glyph left to right; '?' for misses."""
 
         chars = []
-        for _, raster in segment_glyphs(image):
+        for bbox, raster in segment_glyphs(image):
             best_char, best_score = "?", 0.0
+            scores: dict[str, float] = {}
             for glyph in self.glyphs:
                 score = float(np.mean(raster == glyph.raster))
+                scores[glyph.char] = max(scores.get(glyph.char, 0.0), score)
                 if score > best_score:
                     best_char, best_score = glyph.char, score
+            best_char, best_score = _prefer_narrow_one(
+                best_char,
+                best_score,
+                scores,
+                bbox,
+            )
             chars.append(best_char if best_score >= MIN_MATCH_SCORE else "?")
         return "".join(chars)
 

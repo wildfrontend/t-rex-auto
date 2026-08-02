@@ -181,10 +181,19 @@ class SelectSortTestPlanner:
                 values,
             )
             return None
+        trusted_values = self._monotonic_prefix(values, descending=direction)
+        if len(trusted_values) < len(values):
+            self.logger.warning(
+                "Hatch filter | ignored non-monotonic %s OCR tail"
+                " | raw=%s | trusted=%s",
+                self.sort_label,
+                values,
+                trusted_values,
+            )
         self.logger.info(
             "Hatch filter | %s order=%s | descending=%s",
             self.sort_label,
-            values,
+            trusted_values,
             direction,
         )
         if direction:
@@ -207,6 +216,19 @@ class SelectSortTestPlanner:
             if first != second:
                 return first > second
         return None
+
+    @staticmethod
+    def _monotonic_prefix(values: list[int], *, descending: bool) -> list[int]:
+        if not values:
+            return []
+        result = [values[0]]
+        for value in values[1:]:
+            if descending and value > result[-1]:
+                break
+            if not descending and value < result[-1]:
+                break
+            result.append(value)
+        return result
 
     def _scaled(self, frame: Frame, point: tuple[float, float]) -> tuple[int, int]:
         scale = frame.width / self.reference_width

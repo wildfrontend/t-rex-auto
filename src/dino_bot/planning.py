@@ -875,6 +875,18 @@ class HuntPlanner(TargetPlanner):
         self._stage = "recenter"
         self._recenter_reason = reason
 
+    def request_external_recenter(self, reason: str) -> None:
+        """Request a safe map recenter for a feature handoff.
+
+        External workflows use this only after map evidence is visible.  A
+        long per-action cooldown must not delay leaving the hunting map once
+        another feature's deadline has arrived.
+        """
+
+        self._action_cooldown_until = 0.0
+        if self._recenter_stage == 0:
+            self._begin_recenter(reason)
+
     def planning_detection_types(self) -> frozenset[str] | None:
         """Name what the next planning decision can act on, or None for everything.
 

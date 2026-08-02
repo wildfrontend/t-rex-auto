@@ -7,6 +7,7 @@ from dino_bot.nests import (
     MASS_RULE,
     TOP_RULE,
     Stats,
+    descending_prefix,
     is_descending,
     pick_replacement,
     secondary_load,
@@ -75,3 +76,14 @@ def test_hp_rule_swaps_on_hp() -> None:
     parent = Stats(2230, 2, 1)
     rows = [Stats(2300, 500, 50), Stats(2300, 2, 1), Stats(2250, 1, 1)]
     assert pick_replacement(parent, rows, HP_RULE) == 1
+
+
+def test_descending_prefix_rejects_late_ocr_value_that_rises() -> None:
+    rows = [
+        Stats(2340, 3, 1),
+        Stats(2320, 2, 1),
+        Stats(2310, 282, 1),
+        Stats(2370, 282, 1),
+        Stats(2300, 288, 1),
+    ]
+    assert descending_prefix(rows, HP_RULE) == rows[:3]

@@ -23,6 +23,7 @@ def test_windows_deploy_includes_hatch_entrypoint() -> None:
     assert 'scripts/run-hatch-windows.ps1"' in deploy
     assert 'scripts/start-hatch-bot.cmd"' in deploy
     assert 'scripts/start-hatch-full.cmd"' in deploy
+    assert 'scripts/start-hatch-hunt.cmd"' in deploy
     assert 'scripts/start-hatch-filter-test.cmd"' in deploy
     assert 'scripts/start-hatch-sort-test.cmd"' in deploy
     assert 'scripts/start-hatch-parent-test.cmd"' in deploy
@@ -93,3 +94,16 @@ def test_full_hatch_entrypoint_is_separate_unbounded_and_not_hunt() -> None:
     assert '-MaxCycles "0"' in command
     assert '"hatch-full"' in runner
     assert "Full Auto Hatch" in command
+
+
+def test_hatch_hunt_entrypoint_is_combined_unbounded_and_separate() -> None:
+    command = (REPO / "scripts/start-hatch-hunt.cmd").read_text(encoding="utf-8")
+    runner = (REPO / "scripts/run-hatch-windows.ps1").read_text(encoding="utf-8")
+
+    assert '-Feature "hatch-hunt"' in command
+    assert '-StatusPort "%combined_status_port%"' in command
+    assert 'set "combined_status_port=8773"' in command
+    assert 'set "combined_max_actions=0"' in command
+    assert '-MaxCycles "0"' in command
+    assert '"hatch-hunt"' in runner
+    assert "Auto Hatch + Hunt" in command
