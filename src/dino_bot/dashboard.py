@@ -19,6 +19,7 @@ from urllib.error import URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
+from .hatch_inventory import HatchBoostInventoryStore
 from .metrics import MetricsStore
 
 DASHBOARD_VERSION = 1
@@ -409,10 +410,12 @@ class _DashboardHttpServer(ThreadingHTTPServer):
         self,
         address: tuple[str, int],
         metrics: MetricsStore,
+        hatch_inventory: HatchBoostInventoryStore,
         controller: DashboardController,
         assets: Path,
     ) -> None:
         self.metrics = metrics
+        self.hatch_inventory = hatch_inventory
         self.controller = controller
         self.assets = assets
         super().__init__(address, _DashboardHandler)
@@ -445,6 +448,18 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _read_json(self) -> dict[str, Any]:
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError as exc:
+            raise ValueError("invalid content length") from exc
+        if length <= 0 or length > 1024:
+            raise ValueError("JSON body must be between 1 and 1024 bytes")
+        payload = json.loads(self.rfile.read(length))
+        if not isinstance(payload, dict):
+            raise ValueError("JSON body must be an object")
+        return payload
+
     def do_GET(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
         if path in {"/", "/index.html"}:
@@ -464,6 +479,9 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 {
                     "active": self.server.controller.discover(),
                     "metrics": self.server.metrics.snapshot(),
+                    "hatch_boost_inventory": (
+                        self.server.hatch_inventory.snapshot().as_dict()
+                    ),
                 },
             )
         else:
@@ -492,12 +510,24 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 result = self.server.controller.restart_game()
             elif action == "restart-bot":
                 result = self.server.controller.restart_bot()
+            elif action == "set-boost-stock":
+                payload = self._read_json()
+                remaining = payload.get("remaining")
+                if isinstance(remaining, bool) or not isinstance(remaining, int):
+                    raise ValueError("remaining must be an integer")
+                inventory = self.server.hatch_inventory.set_remaining(remaining)
+                result = {
+                    "accepted": True,
+                    "action": action,
+                    "inventory": inventory.as_dict(),
+                    "message": f"冷卻加速券庫存已更新為 {inventory.remaining}",
+                }
             elif action in {"diagnostics", "snapshot", "open-logs"}:
                 result = self.server.controller.run_tool(action)
             else:
                 self._send_json(404, {"error": "not_found"})
                 return
-        except RuntimeError as exc:
+        except (RuntimeError, ValueError) as exc:
             self._send_json(409, {"error": str(exc), "action": action})
             return
         self._send_json(202, result)
@@ -524,6 +554,7 @@ class DashboardServer:
         self.port = port
         self.assets = assets or Path(__file__).with_name("dashboard_assets")
         self.metrics = MetricsStore(database, logs_dir)
+        self.hatch_inventory = HatchBoostInventoryStore(database)
         self.controller = DashboardController(runtime_root, logs_dir)
         self._server: _DashboardHttpServer | None = None
         self._thread: threading.Thread | None = None
@@ -539,6 +570,7 @@ class DashboardServer:
         self._server = _DashboardHttpServer(
             ("127.0.0.1", self.port),
             self.metrics,
+            self.hatch_inventory,
             self.controller,
             self.assets,
         )

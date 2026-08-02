@@ -92,6 +92,13 @@ function renderEvents(items) {
 
 function render(data) {
   renderActive(data.active || {});
+  const inventory = data.hatch_boost_inventory || {};
+  const stock = Number(inventory.remaining ?? 100);
+  $("boostStockValue").textContent = stock;
+  $("boostUsedTotal").textContent = Number(inventory.used_total || 0);
+  if (document.activeElement !== $("boostStockInput")) {
+    $("boostStockInput").value = stock;
+  }
   const metrics = data.metrics || {};
   const counters = metrics.counters || {};
   setCounter("hunt", counters.hunt);
@@ -156,6 +163,38 @@ async function invokeControl(button) {
 
 document.querySelectorAll("button[data-action]").forEach((button) => {
   button.addEventListener("click", () => invokeControl(button));
+});
+
+$("boostStockUpdate").addEventListener("click", async () => {
+  const remaining = Number($("boostStockInput").value);
+  const result = $("commandResult");
+  if (!Number.isInteger(remaining) || remaining < 0 || remaining > 100) {
+    result.classList.add("error");
+    result.textContent = "Bot 額度必須是 0 到 100 的整數。";
+    return;
+  }
+  $("boostStockUpdate").disabled = true;
+  result.classList.remove("error");
+  result.textContent = "更新本機庫存…";
+  try {
+    const response = await fetch("/api/control/set-boost-stock", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Dino-Dashboard": "1",
+      },
+      body: JSON.stringify({ remaining }),
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+    result.textContent = payload.message;
+    await refresh();
+  } catch (error) {
+    result.classList.add("error");
+    result.textContent = String(error.message || error);
+  } finally {
+    $("boostStockUpdate").disabled = false;
+  }
 });
 refresh();
 window.setInterval(refresh, 2500);

@@ -100,6 +100,11 @@ h3 { font-size: 20px; }
 .control-grid { grid-template-columns: 1fr 1fr; margin-top: 9px; }
 .control-label { margin: 18px 0 8px; color: var(--muted); font-size: 12px; }
 .stage-controls { margin-top: 0; margin-bottom: 18px; }
+.inventory-control { display: grid; grid-template-columns: 1fr 92px 58px; gap: 9px; align-items: end; margin-top: 14px; padding: 12px; border: 1px solid rgba(82,220,219,.16); border-radius: 12px; background: rgba(82,220,219,.05); }
+.inventory-control > div span, .inventory-control label span, .inventory-control small { display: block; color: var(--muted); font-size: 10px; }
+.inventory-control strong { display: block; margin: 3px 0 2px; font-size: 18px; font-variant-numeric: tabular-nums; }
+.inventory-control label input { width: 100%; margin-top: 4px; box-sizing: border-box; border: 1px solid var(--line); border-radius: 8px; padding: 8px; color: var(--text); background: #12181e; font: inherit; }
+.inventory-control button { padding-inline: 8px; }
 button { appearance: none; border: 1px solid var(--line); border-radius: 11px; padding: 11px 12px; color: var(--text); background: #1b222a; cursor: pointer; font: inherit; font-size: 12px; transition: .15s; }
 button:hover { transform: translateY(-1px); border-color: rgba(255,255,255,.18); background: #222b34; }
 button:disabled { opacity: .45; cursor: wait; transform: none; }
@@ -123,4 +128,5 @@ button.danger { color: #ffd6d5; border-color: rgba(255,107,104,.26); background:
   .metric-grid { grid-template-columns: 1fr; }
   .record-list { grid-template-columns: 1fr; }
   .control-grid { grid-template-columns: 1fr; }
+  .inventory-control { grid-template-columns: 1fr 92px 58px; }
 }

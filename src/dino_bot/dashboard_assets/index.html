@@ -124,6 +124,19 @@
             <button class="primary" data-action="start-hatch-hunt">啟動孵蛋＋狩獵</button>
             <button data-action="start-hunt">啟動純狩獵</button>
           </div>
+          <div class="inventory-control">
+            <div>
+              <span>冷卻加速券</span>
+              <strong><b id="boostStockValue">100</b> / 100 張</strong>
+              <small>每次加速消耗 1 張</small>
+              <small>累計使用 <span id="boostUsedTotal">0</span> 次</small>
+            </div>
+            <label>
+              <span>校正庫存</span>
+              <input id="boostStockInput" type="number" min="0" max="100" step="1" value="100">
+            </label>
+            <button id="boostStockUpdate" type="button">更新</button>
+          </div>
           <p class="control-label">只執行一個階段</p>
           <div class="control-grid stage-controls">
             <button data-action="start-stage-hatch" data-confirm="只執行一輪孵蛋並返回主畫面？">孵蛋一輪</button>
