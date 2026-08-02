@@ -49,6 +49,13 @@ def create_engine(
     verbose: bool = False,
     feature: str = "hunt",
 ) -> BotEngine:
+    if feature.startswith("hatch-stage-"):
+        return _create_hatch_engine(
+            config,
+            verbose=verbose,
+            full=True,
+            standalone_stage=feature.removeprefix("hatch-stage-"),
+        )
     if feature == "hatch":
         return _create_hatch_engine(config, verbose=verbose)
     if feature == "hatch-full":
@@ -263,6 +270,7 @@ def _create_hatch_engine(
     hp_test: bool = False,
     full: bool = False,
     hunt_during_cooldown: bool = False,
+    standalone_stage: str | None = None,
 ) -> BotEngine:
     """Wire the Auto Hatch feature onto the shared capture/act/verify core.
 
@@ -280,7 +288,12 @@ def _create_hatch_engine(
         backup_count=config.log_backup_count,
     )
     hatch = config.hatch
-    if hunt_during_cooldown:
+    if standalone_stage is not None:
+        logger.info(
+            "Feature | hatch-stage | stage=%s | bounded preflight + run + return",
+            standalone_stage,
+        )
+    elif hunt_during_cooldown:
         logger.info(
             "Feature | hatch-hunt | full hatch + hunt during cooldown"
             " | handoff=30s | cull>%d",
@@ -338,7 +351,7 @@ def _create_hatch_engine(
             "Hatch detector has no assets; capture templates into %s first",
             hatch.manifest,
         )
-    if hunt_during_cooldown:
+    if hunt_during_cooldown or standalone_stage is not None:
         hunt_cv_detector = OpenCvDetector(
             config.detector.manifest,
             default_threshold=config.detector.default_threshold,
@@ -374,6 +387,7 @@ def _create_hatch_engine(
             cull_threshold=hatch.cull_threshold,
             cave_safe_margin=80,
             cave_bottom_exclusion_px=config.planner.bottom_exclusion_px,
+            standalone_stage=standalone_stage,
             logger=logger,
         )
         planner = (
@@ -454,8 +468,11 @@ def _create_hatch_engine(
         success_transitions=success_transitions,
         black_mean_threshold=config.recovery.black_mean_threshold,
         success_requires_target_absence=(
-            config.verify.success_requires_target_absence
-            if hunt_during_cooldown
+            (
+                *config.verify.success_requires_target_absence,
+                *full_hatch_feature.STARTUP_DETECTION_TYPES,
+            )
+            if hunt_during_cooldown or standalone_stage is not None
             else ()
         ),
     )

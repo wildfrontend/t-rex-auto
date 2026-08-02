@@ -98,6 +98,8 @@ h3 { font-size: 20px; }
 .controls-panel h3 { margin-bottom: 18px; }
 .control-group, .control-grid { display: grid; gap: 9px; }
 .control-grid { grid-template-columns: 1fr 1fr; margin-top: 9px; }
+.control-label { margin: 18px 0 8px; color: var(--muted); font-size: 12px; }
+.stage-controls { margin-top: 0; margin-bottom: 18px; }
 button { appearance: none; border: 1px solid var(--line); border-radius: 11px; padding: 11px 12px; color: var(--text); background: #1b222a; cursor: pointer; font: inherit; font-size: 12px; transition: .15s; }
 button:hover { transform: translateY(-1px); border-color: rgba(255,255,255,.18); background: #222b34; }
 button:disabled { opacity: .45; cursor: wait; transform: none; }

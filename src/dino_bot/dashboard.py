@@ -22,7 +22,16 @@ from urllib.request import Request, urlopen
 from .metrics import MetricsStore
 
 DASHBOARD_VERSION = 1
-DEFAULT_BOT_PORTS = {"hatch-hunt": 8773, "hunt": 8765}
+DEFAULT_BOT_PORTS = {"hatch-hunt": 8773, "hunt": 8765, "hatch-stage": 8774}
+HATCH_STAGE_LABELS = {
+    "hatch": "孵蛋一輪",
+    "attack": "攻擊親代",
+    "hp": "HP 親代",
+    "top": "頂尖自動放置",
+    "mass": "量產自動放置",
+    "collect": "收集所有巢蛋",
+    "cave": "洞穴容量與淘汰",
+}
 _ASSET_TYPES = {
     ".css": "text/css; charset=utf-8",
     ".html": "text/html; charset=utf-8",
@@ -31,6 +40,26 @@ _ASSET_TYPES = {
 }
 _LOG_LINE = re.compile(
     r"^(?P<time>\d{2}:\d{2}:\d{2}) \| (?P<level>[^|]+) \| (?P<message>.*)$"
+)
+_PLANNING_TARGET = re.compile(r"^Planning \| (?P<target>\S+) at \(")
+_COLLECT_TARGETS = frozenset(
+    {
+        "hatch_collect_eggs_button",
+        "hatch_nest_mask_close",
+    }
+)
+_CAVE_TARGETS = frozenset(
+    {
+        "hatch_cave_swipe",
+        "hatch_cave_recenter",
+        "cave",
+        "hatch_cave_select_button",
+        "hatch_cull_tag_header",
+        "hatch_select_weakest_button",
+        "hatch_select_choose_button",
+        "hatch_cave_continuous_button",
+        "hatch_cave_close_button",
+    }
 )
 
 
@@ -95,7 +124,21 @@ def _workflow_status(logs_dir: Path, mode: str | None) -> dict[str, Any]:
             continue
         time_text = match.group("time")
         message = match.group("message")
-        if (
+        planning = _PLANNING_TARGET.match(message)
+        planned_target = planning.group("target") if planning is not None else None
+        if message.startswith("Feature | hatch-stage | stage="):
+            stage_name = message.split("stage=", 1)[1].split(" ", 1)[0]
+            stage = {
+                "hatch": "hatch",
+                "attack": "nest_attack",
+                "hp": "nest_hp",
+                "top": "nest_top",
+                "mass": "nest_mass",
+                "collect": "collect",
+                "cave": "cave",
+            }.get(stage_name, "hatch")
+            label = HATCH_STAGE_LABELS.get(stage_name, "單階段孵化")
+        elif (
             "Hatch full | phase A complete" in message
             or "Hatch 攻擊特化 |" in message
         ):
@@ -106,10 +149,15 @@ def _workflow_status(logs_dir: Path, mode: str | None) -> dict[str, Any]:
             stage, label = "nest_top", "頂尖自動放置"
         elif "Hatch auto-place | tag=量產" in message:
             stage, label = "nest_mass", "量產自動放置"
-        elif "Hatch full | no ready incubator eggs" in message:
+        elif (
+            "Hatch full | no ready incubator eggs" in message
+            or planned_target in _COLLECT_TARGETS
+        ):
             stage, label = "collect", "收集所有巢蛋"
-        elif "Hatch cave |" in message:
+        elif "Hatch cave |" in message or planned_target in _CAVE_TARGETS:
             stage, label = "cave", "洞穴容量與淘汰"
+        elif "Hatch full | completed management cycle" in message:
+            stage, label = "hatch", "檢查孵蛋"
         elif "Hatch+Hunt | cooldown handoff window" in message:
             stage, label = "handoff", "返回孵蛋首頁"
         elif "Hatch+Hunt | centered home confirmed" in message:
@@ -154,7 +202,7 @@ class DashboardController:
         self._last_start = 0.0
 
     def discover(self) -> dict[str, Any]:
-        for mode in ("hatch-hunt", "hunt"):
+        for mode in ("hatch-hunt", "hunt", "hatch-stage"):
             port = self.bot_ports[mode]
             health = _get_json(f"http://127.0.0.1:{port}/health")
             if health and health.get("service") == "dino-mutant-bot-status":
@@ -162,7 +210,13 @@ class DashboardController:
                 return {
                     "running": bool(status.get("running", True)),
                     "mode": mode,
-                    "mode_label": "自動孵蛋＋狩獵" if mode == "hatch-hunt" else "純狩獵",
+                    "mode_label": (
+                        "自動孵蛋＋狩獵"
+                        if mode == "hatch-hunt"
+                        else "純狩獵"
+                        if mode == "hunt"
+                        else "單階段孵化"
+                    ),
                     "port": port,
                     "status": status,
                     "workflow": _workflow_status(self.logs_dir, mode),
@@ -176,7 +230,7 @@ class DashboardController:
             "workflow": _workflow_status(self.logs_dir, None),
         }
 
-    def _runner_command(self, mode: str) -> list[str]:
+    def _runner_command(self, mode: str, *, stage: str | None = None) -> list[str]:
         scripts = self.runtime_root / "app" / "scripts"
         if mode == "hunt":
             runner = scripts / "run-windows.ps1"
@@ -196,7 +250,7 @@ class DashboardController:
                 "-StatusPort",
                 str(self.bot_ports[mode]),
             ]
-        else:
+        elif mode == "hatch-hunt":
             runner = scripts / "run-hatch-windows.ps1"
             arguments = [
                 "-Feature",
@@ -212,6 +266,24 @@ class DashboardController:
                 "-MaxCycles",
                 "0",
             ]
+        elif mode == "hatch-stage" and stage in HATCH_STAGE_LABELS:
+            runner = scripts / "run-hatch-windows.ps1"
+            arguments = [
+                "-Feature",
+                f"hatch-stage-{stage}",
+                "-Mode",
+                "debug",
+                "-Speed",
+                "safe",
+                "-StatusPort",
+                str(self.bot_ports[mode]),
+                "-MaxActions",
+                "0",
+                "-MaxCycles",
+                "0",
+            ]
+        else:
+            raise RuntimeError("Unsupported Bot mode")
         runner = runner.resolve()
         if runner.parent != scripts.resolve() or not runner.is_file():
             raise RuntimeError(f"Runner not found: {runner}")
@@ -226,9 +298,11 @@ class DashboardController:
             *arguments,
         ]
 
-    def start(self, mode: str) -> dict[str, Any]:
+    def start(self, mode: str, *, stage: str | None = None) -> dict[str, Any]:
         if mode not in self.bot_ports:
             raise RuntimeError("Unsupported Bot mode")
+        if mode == "hatch-stage" and stage not in HATCH_STAGE_LABELS:
+            raise RuntimeError("Unsupported hatch stage")
         with self._start_lock:
             active = self.discover()
             if active["running"]:
@@ -242,12 +316,12 @@ class DashboardController:
                 subprocess, "CREATE_NEW_PROCESS_GROUP", 0
             )
             subprocess.Popen(  # noqa: S603 - fixed local PowerShell runner and allowlist
-                self._runner_command(mode),
+                self._runner_command(mode, stage=stage),
                 cwd=self.runtime_root,
                 creationflags=creation_flags,
             )
             self._last_start = now
-        return {"accepted": True, "action": "start", "mode": mode}
+        return {"accepted": True, "action": "start", "mode": mode, "stage": stage}
 
     def _active_control(self, action: str) -> dict[str, Any]:
         active = self.discover()
@@ -266,6 +340,8 @@ class DashboardController:
         if not active["running"] or not active["mode"]:
             raise RuntimeError("No running Bot was found")
         mode = str(active["mode"])
+        if mode == "hatch-stage":
+            raise RuntimeError("單階段工作不支援重啟；請停止後重新選擇階段")
         self.stop()
 
         def restart_after_stop() -> None:
@@ -407,6 +483,9 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 result = self.server.controller.start("hunt")
             elif action == "start-hatch-hunt":
                 result = self.server.controller.start("hatch-hunt")
+            elif action.startswith("start-stage-"):
+                stage = action.removeprefix("start-stage-")
+                result = self.server.controller.start("hatch-stage", stage=stage)
             elif action == "stop":
                 result = self.server.controller.stop()
             elif action == "restart-game":

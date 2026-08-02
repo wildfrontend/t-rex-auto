@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from dino_bot import hatch
+from dino_bot.full_hatch import STARTUP_GROWTH_RESULT, STARTUP_NEST_SHORTCUT
 from dino_bot.hatch_hunt import HatchHuntPlanner
 from dino_bot.models import BoundingBox, Detection, Frame, Target
 
@@ -172,4 +173,20 @@ def test_handoff_requires_two_centered_frames_before_resuming_hatch() -> None:
     assert combined.choose(frame(), centered) is None
     chosen = combined.choose(frame(), centered)
     assert chosen is not None and chosen.type == hatch.EGG_PILE
+    assert hunt_planner.reset_count == 1
+
+
+def test_startup_interruption_during_hunt_restarts_hatch_first() -> None:
+    combined, hatch_planner, hunt_planner = planner()
+    hunt_planner.next_target = target("dinosaur", 300, 700)
+    assert combined.choose(frame(), []).type == "dinosaur"  # type: ignore[union-attr]
+
+    hatch_planner.next_target = target(STARTUP_NEST_SHORTCUT, 592, 1265)
+    chosen = combined.choose(
+        frame(),
+        [detection(STARTUP_GROWTH_RESULT, 307, 1265)],
+    )
+
+    assert chosen is not None and chosen.type == STARTUP_NEST_SHORTCUT
+    assert hatch_planner.cooldown_ms == 0
     assert hunt_planner.reset_count == 1

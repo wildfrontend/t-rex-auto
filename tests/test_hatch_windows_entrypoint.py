@@ -30,6 +30,13 @@ def test_windows_deploy_exposes_exactly_three_user_entrypoints() -> None:
     assert "start-bot.cmd" in deploy
 
 
+def test_hatch_runner_allows_dashboard_standalone_stages() -> None:
+    runner = (REPO / "scripts/run-hatch-windows.ps1").read_text(encoding="utf-8")
+
+    for stage in ("hatch", "attack", "hp", "top", "mass", "collect", "cave"):
+        assert f'"hatch-stage-{stage}"' in runner
+
+
 def test_hunt_entrypoint_name_matches_its_feature() -> None:
     command = (REPO / "scripts/start-hunt.cmd").read_text(encoding="utf-8")
 

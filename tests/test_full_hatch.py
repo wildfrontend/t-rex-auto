@@ -36,6 +36,9 @@ from dino_bot.full_hatch import (
     RECOVERY_RECENTER,
     SELECT_CHOOSE_BUTTON,
     SELECT_WEAKEST_BUTTON,
+    STARTUP_AUTO_BATTLE_CLOSE,
+    STARTUP_GROWTH_RESULT,
+    STARTUP_NEST_SHORTCUT,
     AutoPlaceRoundPlanner,
     CaveCullPlanner,
     FullHatchPlanner,
@@ -469,6 +472,22 @@ def test_full_flow_resumes_vertical_recovery_after_restart_mid_return() -> None:
     assert target.detection.metadata["swipe"]["y2"] == 1050
 
 
+def test_full_flow_immediately_leaves_active_hunt_map_on_startup() -> None:
+    planner = make_full_planner()
+
+    target = planner.choose(
+        frame(np.zeros((1600, 900, 3), dtype=np.uint8)),
+        [
+            detection("hunt_button", 515, 550),
+            detection("map_exit_nest_button", 841, 1295),
+        ],
+    )
+
+    assert target is not None and target.type == RECOVERY_MAP_EXIT
+    assert (target.x, target.y) == (841, 1295)
+    assert planner._stage == "recover_home"
+
+
 def test_full_flow_tracks_shifted_egg_pile_instead_of_tapping_roaming_dinosaur() -> None:
     planner = make_full_planner()
     image = np.full((1600, 900, 3), 255, dtype=np.uint8)
@@ -481,6 +500,103 @@ def test_full_flow_tracks_shifted_egg_pile_instead_of_tapping_roaming_dinosaur()
 
     assert target is not None and target.type == hatch.EGG_PILE
     assert (target.x, target.y) == (445, 1438)
+
+
+def test_full_flow_uses_nest_shortcut_before_tapping_visible_home() -> None:
+    planner = make_full_planner()
+    target = planner.choose(
+        frame(),
+        [
+            detection(hatch.HOME_ANCHOR, 59, 561),
+            detection(STARTUP_GROWTH_RESULT, 307, 1265),
+        ],
+    )
+
+    assert target is not None and target.type == STARTUP_NEST_SHORTCUT
+    assert (target.x, target.y) == (592, 1265)
+    planner.on_action_success(target.type)
+    assert planner._stage == "recover_home"
+
+    close = planner.choose(frame(), [detection(NEST_TITLE, 450, 260)])
+    assert close is not None and close.type == RECOVERY_MASK_CLOSE
+
+
+def test_full_flow_prefers_nested_auto_battle_overlay_during_startup() -> None:
+    planner = make_full_planner()
+    target = planner.choose(
+        frame(),
+        [
+            detection(hatch.HOME_ANCHOR, 59, 561),
+            detection(STARTUP_GROWTH_RESULT, 307, 1265),
+            detection(STARTUP_AUTO_BATTLE_CLOSE, 50, 800),
+        ],
+    )
+
+    assert target is not None and target.type == STARTUP_AUTO_BATTLE_CLOSE
+    assert (target.x, target.y) == (50, 800)
+
+
+def test_full_flow_prioritizes_hatch_result_over_startup_false_positive() -> None:
+    planner = make_full_planner()
+
+    target = planner.choose(
+        frame(),
+        [
+            detection(hatch.CLAIM_BUTTON, 330, 1242),
+            detection(hatch.EXPEL_BUTTON, 570, 1242),
+            detection(STARTUP_AUTO_BATTLE_CLOSE, 50, 800),
+        ],
+    )
+
+    assert target is not None and target.type == hatch.CLAIM_BUTTON
+
+
+def test_standalone_attack_recovers_opens_nest_and_runs_only_attack() -> None:
+    planner = FullHatchPlanner(
+        DigitReader(GLYPHS),
+        egg_pile_point=(450, 1330),
+        max_scrolls=0,
+        standalone_stage="attack",
+    )
+    home = [detection(hatch.HOME_ANCHOR, 59, 561)]
+
+    assert planner.choose(frame(), home) is None
+    open_nest = planner.choose(frame(), home)
+    assert open_nest is not None and open_nest.type == OPEN_NEST
+    planner.on_action_success(open_nest.type)
+
+    assert planner._stage == "attack"
+    assert planner.standalone_stage == "attack"
+
+
+def test_standalone_cave_starts_after_shared_home_preflight() -> None:
+    planner = FullHatchPlanner(
+        DigitReader(GLYPHS),
+        egg_pile_point=(450, 1330),
+        max_scrolls=0,
+        standalone_stage="cave",
+    )
+    home = [detection(hatch.HOME_ANCHOR, 59, 561)]
+
+    assert planner.choose(frame(), home) is None
+    target = planner.choose(frame(), home)
+
+    assert target is not None and target.type == CAVE_SWIPE
+    assert planner._stage == "cave"
+
+
+def test_full_flow_clears_relogin_before_tapping_visible_home() -> None:
+    planner = make_full_planner()
+    target = planner.choose(
+        frame(),
+        [
+            detection(hatch.HOME_ANCHOR, 59, 561),
+            detection("duplicate_login_close_button", 730, 310),
+        ],
+    )
+
+    assert target is not None and target.type == "duplicate_login_close_button"
+    assert (target.x, target.y) == (730, 310)
 
 
 def test_failed_egg_pile_tap_enters_recovery_before_any_retry() -> None:

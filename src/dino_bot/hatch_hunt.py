@@ -7,7 +7,11 @@ from collections.abc import Sequence
 from math import hypot
 from typing import Any
 
-from .full_hatch import FullHatchPlanner, is_centered_home_screen
+from .full_hatch import (
+    STARTUP_DETECTION_TYPES,
+    FullHatchPlanner,
+    is_centered_home_screen,
+)
 from .models import Detection, Frame, Target
 from .planning import HuntPlanner
 
@@ -56,6 +60,20 @@ class HatchHuntPlanner:
         frame: Frame,
         detections: Sequence[Detection],
     ) -> Target | None:
+        # A login/restart screen invalidates the old cooldown/map context.
+        # Re-enter hatch-first mode so the incubator is always checked before
+        # hunting resumes. FullHatchPlanner owns the startup shortcut choice.
+        if self._mode != "hatch" and any(
+            item.type in STARTUP_DETECTION_TYPES for item in detections
+        ):
+            self.logger.info(
+                "Hatch+Hunt | startup interruption detected | restarting hatch-first flow"
+            )
+            self.hatch.reset_workflow()
+            self.hunt.reset_workflow()
+            self._mode = "hatch"
+            self._centered_frames = 0
+
         if self._mode == "hatch":
             target = self._choose_owned(self.hatch, frame, detections)
             if target is not None:

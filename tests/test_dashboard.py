@@ -99,12 +99,36 @@ def test_dashboard_builds_noninteractive_runner_commands(tmp_path: Path) -> None
 
     hunt = controller._runner_command("hunt")
     combined = controller._runner_command("hatch-hunt")
+    cave = controller._runner_command("hatch-stage", stage="cave")
 
     assert hunt[:2] == ["powershell.exe", "-NoLogo"]
     assert "run-windows.ps1" in hunt[6]
     assert hunt[-2:] == ["-StatusPort", "8765"]
     assert "run-hatch-windows.ps1" in combined[6]
     assert combined[-4:] == ["-MaxActions", "0", "-MaxCycles", "0"]
+    assert "run-hatch-windows.ps1" in cave[6]
+    assert "hatch-stage-cave" in cave
+    assert "8774" in cave
+
+
+def test_dashboard_rejects_unknown_standalone_stage(tmp_path: Path) -> None:
+    controller = DashboardController(tmp_path, tmp_path / "logs")
+
+    with pytest.raises(RuntimeError, match="Unsupported Bot mode"):
+        controller._runner_command("hatch-stage", stage="unknown")
+
+
+def test_dashboard_workflow_reads_standalone_stage_feature(tmp_path: Path) -> None:
+    log = tmp_path / "20260802.log"
+    log.write_text(
+        "20:10:00 | INFO | Feature | hatch-stage | stage=attack | "
+        "bounded preflight + run + return\n",
+        encoding="utf-8",
+    )
+
+    workflow = _workflow_status(tmp_path, "hatch-stage")
+    assert workflow["stage"] == "nest_attack"
+    assert workflow["label"] == "攻擊親代"
 
 
 def test_dashboard_workflow_reads_the_complete_log_message(tmp_path: Path) -> None:
@@ -120,3 +144,44 @@ def test_dashboard_workflow_reads_the_complete_log_message(tmp_path: Path) -> No
 
     assert workflow["stage"] == "cave"
     assert workflow["label"] == "洞穴容量與淘汰"
+
+
+def test_dashboard_workflow_advances_from_mass_through_collect_and_cave(
+    tmp_path: Path,
+) -> None:
+    log = tmp_path / "20260802.log"
+    log.write_text(
+        "20:10:00 | INFO | Hatch auto-place | tag=量產 | sort=等級 | completed\n"
+        "20:10:10 | INFO | Planning | hatch_collect_eggs_button at (640,1315) "
+        "confidence=1.000\n",
+        encoding="utf-8",
+    )
+
+    assert _workflow_status(tmp_path, "hatch-hunt")["stage"] == "collect"
+
+    with log.open("a", encoding="utf-8") as stream:
+        stream.write(
+            "20:10:20 | INFO | Planning | hatch_cave_swipe at (450,1050) "
+            "confidence=1.000\n"
+        )
+
+    workflow = _workflow_status(tmp_path, "hatch-hunt")
+    assert workflow["stage"] == "cave"
+    assert workflow["label"] == "洞穴容量與淘汰"
+
+
+def test_dashboard_workflow_returns_to_hatch_after_management_cycle(
+    tmp_path: Path,
+) -> None:
+    log = tmp_path / "20260802.log"
+    log.write_text(
+        "20:10:20 | INFO | Planning | hatch_cave_recenter at (842,1497) "
+        "confidence=1.000\n"
+        "20:10:30 | INFO | Hatch full | completed management cycle 1 | "
+        "restarting Phase A\n",
+        encoding="utf-8",
+    )
+
+    workflow = _workflow_status(tmp_path, "hatch-hunt")
+    assert workflow["stage"] == "hatch"
+    assert workflow["label"] == "檢查孵蛋"

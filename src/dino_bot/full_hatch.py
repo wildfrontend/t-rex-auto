@@ -84,6 +84,36 @@ RECOVERY_MAP_EXIT = "hatch_recovery_map_exit"
 RECOVERY_RECENTER = "hatch_recovery_recenter"
 RECOVERY_BACK = "hatch_recovery_back"
 HUNT_MAP_EXIT = "map_exit_nest_button"
+STARTUP_GROWTH_RESULT = "startup_growth_result_back"
+STARTUP_AUTO_BATTLE_CLOSE = "startup_auto_battle_close"
+STARTUP_NEST_SHORTCUT = "hatch_startup_nest_shortcut"
+STARTUP_SIMPLE_INTERRUPTS: tuple[str, ...] = (
+    "duplicate_login_close_button",
+    "device_history_confirm_button",
+    "startup_offer_dismiss",
+)
+STARTUP_DETECTION_TYPES: frozenset[str] = frozenset(
+    {
+        *STARTUP_SIMPLE_INTERRUPTS,
+        STARTUP_GROWTH_RESULT,
+        STARTUP_AUTO_BATTLE_CLOSE,
+    }
+)
+STARTUP_INTERRUPTS: frozenset[str] = frozenset(
+    {*STARTUP_DETECTION_TYPES, STARTUP_NEST_SHORTCUT}
+)
+HUNT_ACTIVE_TYPES: frozenset[str] = frozenset(
+    {
+        HUNT_MAP_EXIT,
+        "hunt_button",
+        "hunt_max_group_button",
+        "hunt_confirm_button",
+        "hunt_dialog_close_button",
+    }
+)
+STANDALONE_STAGES: frozenset[str] = frozenset(
+    {"hatch", "attack", "hp", "top", "mass", "collect", "cave"}
+)
 
 PLACE_SORT_BEST = "hatch_place_sort_best"
 PLACE_SORT_LEVEL = "hatch_place_sort_level"
@@ -120,6 +150,10 @@ DEFAULT_TARGET_ACTIONS: dict[str, str] = {
     RECOVERY_MAP_EXIT: "tap",
     RECOVERY_RECENTER: "swipe",
     RECOVERY_BACK: "back",
+    STARTUP_GROWTH_RESULT: "tap",
+    STARTUP_AUTO_BATTLE_CLOSE: "tap",
+    STARTUP_NEST_SHORTCUT: "tap",
+    **{target_type: "tap" for target_type in STARTUP_SIMPLE_INTERRUPTS},
 }
 
 DEFAULT_POST_ACTION_DELAYS_MS: dict[str, int] = {
@@ -152,6 +186,10 @@ DEFAULT_POST_ACTION_DELAYS_MS: dict[str, int] = {
     RECOVERY_MAP_EXIT: 4000,
     RECOVERY_RECENTER: 4000,
     RECOVERY_BACK: 4000,
+    STARTUP_GROWTH_RESULT: 3000,
+    STARTUP_AUTO_BATTLE_CLOSE: 3000,
+    STARTUP_NEST_SHORTCUT: 4000,
+    **{target_type: 5000 for target_type in STARTUP_SIMPLE_INTERRUPTS},
 }
 
 DEFAULT_SUCCESS_TRANSITIONS: dict[str, tuple[str, ...]] = {
@@ -187,6 +225,13 @@ DEFAULT_SUCCESS_TRANSITIONS: dict[str, tuple[str, ...]] = {
         hatch_feature.CLAIM_BUTTON,
         hatch_feature.HOME_ANCHOR,
     ),
+    # The growth-result shortcut opens the auto-battle overlay before both
+    # layers return to home.  HOME_ANCHOR can remain visible behind either
+    # modal, so application.py also requires the acted-on startup target to
+    # disappear before accepting either transition.
+    STARTUP_GROWTH_RESULT: (STARTUP_AUTO_BATTLE_CLOSE, hatch_feature.HOME_ANCHOR),
+    STARTUP_AUTO_BATTLE_CLOSE: (hatch_feature.HOME_ANCHOR,),
+    STARTUP_NEST_SHORTCUT: (NEST_TITLE,),
 }
 
 # Full mode is intentionally unbounded.  It reports its own completed
@@ -228,6 +273,7 @@ HOME_FOREGROUND_TYPES: frozenset[str] = frozenset(
         NESTED_PARENT_WARNING,
         CAVE_SELECT_BUTTON,
         CAVE_CONTINUOUS_BUTTON,
+        *HUNT_ACTIVE_TYPES,
     }
 )
 
@@ -956,6 +1002,7 @@ class FullHatchPlanner:
         cave_safe_margin: int = 80,
         cave_bottom_exclusion_px: int = 180,
         recovery_timeout_seconds: float = 15.0,
+        standalone_stage: str | None = None,
         logger: logging.Logger | None = None,
         clock: Callable[[], float] | None = None,
     ) -> None:
@@ -966,6 +1013,9 @@ class FullHatchPlanner:
         self.cave_safe_margin = max(0, cave_safe_margin)
         self.cave_bottom_exclusion_px = max(0, cave_bottom_exclusion_px)
         self.recovery_timeout_seconds = max(1.0, recovery_timeout_seconds)
+        if standalone_stage is not None and standalone_stage not in STANDALONE_STAGES:
+            raise ValueError(f"unsupported standalone hatch stage: {standalone_stage}")
+        self.standalone_stage = standalone_stage
         self.clock = clock or time.monotonic
         self._hatch_kwargs = dict(
             egg_pile_point=egg_pile_point,
@@ -991,7 +1041,18 @@ class FullHatchPlanner:
         self._empty_rescan_wait = False
         self._navigation_failures: dict[tuple[str, str], int] = {}
         self._pending_claim_verification = False
+        self._standalone_started = False
+        self._standalone_returning = False
         self.completed_management_cycles = 0
+        if self.standalone_stage is not None:
+            self._stage = "recover_home"
+            self._child = HatchHomeRecoveryPlanner(
+                reference_width=self.reference_width,
+                logger=self.logger,
+            )
+            self._recovery_reason = (
+                f"standalone {self.standalone_stage} preflight"
+            )
 
     def last_stage(self) -> str:
         child_stage = getattr(self._child, "last_stage", None)
@@ -1011,6 +1072,25 @@ class FullHatchPlanner:
         return self._empty_rescan_wait and self.next_ready_delay_ms() > 0
 
     def reset_workflow(self) -> None:
+        if self.standalone_stage is not None:
+            self._stage = "recover_home"
+            self._child = HatchHomeRecoveryPlanner(
+                reference_width=self.reference_width,
+                logger=self.logger,
+            )
+            self._hatch_baseline = 0
+            self._complete = False
+            self._no_target_since = None
+            self._recovery_reason = (
+                f"standalone {self.standalone_stage} preflight"
+            )
+            self._collect_only_after_empty = False
+            self._empty_rescan_wait = False
+            self._navigation_failures.clear()
+            self._pending_claim_verification = False
+            self._standalone_started = False
+            self._standalone_returning = False
+            return
         self._stage = "hatch"
         self._child = self._new_hatch()
         self._hatch_baseline = 0
@@ -1023,6 +1103,19 @@ class FullHatchPlanner:
         self._pending_claim_verification = False
 
     def on_action_success(self, target_type: str) -> None:
+        if target_type == STARTUP_NEST_SHORTCUT:
+            self.logger.info(
+                "Hatch full | startup nest shortcut opened | returning to hatch home"
+            )
+            self._begin_home_recovery("opened My Nest from startup growth results")
+            return
+        if target_type in STARTUP_INTERRUPTS:
+            self.logger.info(
+                "Hatch full | startup overlay cleared | target=%s",
+                target_type,
+            )
+            self._no_target_since = None
+            return
         self._navigation_failures.pop((self._stage, target_type), None)
         if self._stage == "recover_home":
             self._recovery_child.on_action_success(target_type)
@@ -1033,6 +1126,9 @@ class FullHatchPlanner:
             if target_type == hatch_feature.CLAIM_BUTTON:
                 self._pending_claim_verification = False
             if target_type == hatch_feature.CLOSE_BUTTON:
+                if self.standalone_stage == "hatch":
+                    self._begin_home_recovery("standalone hatch completed")
+                    return
                 hatched = hatch.hatched - self._hatch_baseline
                 if hatched > 0:
                     self.logger.info(
@@ -1048,6 +1144,9 @@ class FullHatchPlanner:
                     self._enter_open_nest(collect_only=True)
             return
         if self._stage == "open_nest" and target_type == OPEN_NEST:
+            if self.standalone_stage is not None:
+                self._start_standalone_nest_phase()
+                return
             if self._collect_only_after_empty:
                 self._start_collect()
             else:
@@ -1077,6 +1176,16 @@ class FullHatchPlanner:
             self._cave_child.on_action_success(target_type)
 
     def on_action_failure(self, target_type: str) -> None:
+        if target_type in STARTUP_INTERRUPTS:
+            # Leave the workflow stage intact. If the modal remains visible,
+            # the next frame will retry it before any hatch/home action; if it
+            # disappeared despite a missed transition, normal planning resumes.
+            self.logger.warning(
+                "Hatch full | startup overlay transition not verified | target=%s",
+                target_type,
+            )
+            self._no_target_since = None
+            return
         if self._stage == "recover_home":
             self._recovery_child.on_action_failure(target_type)
             self._complete = True
@@ -1135,6 +1244,47 @@ class FullHatchPlanner:
     def choose(self, frame: Frame, detections: Sequence[Detection]) -> Target | None:
         if self._complete:
             return None
+
+        # Login overlays sit above a still-detectable outdoor HUD. Handle them
+        # before home/cave recovery or HatchPlanner can interpret that
+        # background anchor as permission to tap the egg pile. A full hatch
+        # run deliberately uses the right-hand Nest shortcut instead of the
+        # detector's left-hand auto-battle shortcut; hunting is only allowed
+        # after the no-ready-egg cooldown has actually begun.
+        by_type = _group(detections)
+        for target_type in STARTUP_SIMPLE_INTERRUPTS:
+            interruption = _best(by_type.get(target_type))
+            if interruption is not None:
+                self._no_target_since = None
+                return _target(interruption)
+        hatch_result_visible = bool(
+            by_type.get(hatch_feature.CLAIM_BUTTON)
+            or by_type.get(hatch_feature.EXPEL_BUTTON)
+        )
+        auto_battle = (
+            None
+            if hatch_result_visible
+            else _best(by_type.get(STARTUP_AUTO_BATTLE_CLOSE))
+        )
+        if auto_battle is not None:
+            self._no_target_since = None
+            return _target(auto_battle)
+        if (
+            not hatch_result_visible
+            and _best(by_type.get(STARTUP_GROWTH_RESULT)) is not None
+        ):
+            self._no_target_since = None
+            return _synthetic(
+                STARTUP_NEST_SHORTCUT,
+                *_scaled(frame, (592.0, 1265.0), self.reference_width),
+            )
+
+        if self._stage == "hatch" and any(
+            item.type in HUNT_ACTIVE_TYPES for item in detections
+        ):
+            self._begin_home_recovery("hatch started from active hunt map")
+            return self.choose(frame, detections)
+
         if self._stage == "recover_home":
             target = self._recovery_child.choose(frame, detections)
             if self._recovery_child.is_failed():
@@ -1145,6 +1295,17 @@ class FullHatchPlanner:
                 self._complete = True
                 return None
             if self._recovery_child.is_complete():
+                if self.standalone_stage is not None:
+                    if self._standalone_returning:
+                        self.logger.info(
+                            "Hatch stage | completed | stage=%s | centered home verified",
+                            self.standalone_stage,
+                        )
+                        self._complete = True
+                        return None
+                    if not self._standalone_started:
+                        self._start_standalone()
+                        return self._choose_current(frame, detections)
                 self.logger.info(
                     "Hatch full | centered home confirmed | recovered=%s",
                     self._recovery_reason or "unknown",
@@ -1216,6 +1377,9 @@ class FullHatchPlanner:
             return target
         if self._stage == "open_nest":
             if NEST_TITLE in by_type:
+                if self.standalone_stage is not None:
+                    self._start_standalone_nest_phase()
+                    return self._choose_current(frame, detections)
                 if self._collect_only_after_empty:
                     self._start_collect()
                 else:
@@ -1263,6 +1427,11 @@ class FullHatchPlanner:
                 self._stage = "close_nest"
                 return self._choose_current(frame, detections)
             if is_home_screen(frame, detections):
+                if self.standalone_stage is not None:
+                    self._begin_home_recovery(
+                        f"standalone {self.standalone_stage} completed"
+                    )
+                    return self._choose_current(frame, detections)
                 if self._collect_only_after_empty:
                     self._start_empty_rescan_wait()
                     return self._choose_current(frame, detections)
@@ -1280,6 +1449,9 @@ class FullHatchPlanner:
         if self._stage == "cave":
             target = self._cave_child.choose(frame, detections)
             if target is None and self._cave_child.is_complete():
+                if self.standalone_stage == "cave":
+                    self._begin_home_recovery("standalone cave completed")
+                    return self._choose_current(frame, detections)
                 self.completed_management_cycles += 1
                 self.logger.info(
                     "Hatch full | completed management cycle %d | restarting Phase A",
@@ -1293,6 +1465,8 @@ class FullHatchPlanner:
         return None
 
     def _begin_home_recovery(self, reason: str) -> None:
+        if self.standalone_stage is not None and self._standalone_started:
+            self._standalone_returning = True
         self.logger.warning("Hatch full | recovering to centered home | %s", reason)
         self._stage = "recover_home"
         self._child = HatchHomeRecoveryPlanner(
@@ -1304,6 +1478,58 @@ class FullHatchPlanner:
 
     def _new_hatch(self) -> hatch_feature.HatchPlanner:
         return hatch_feature.HatchPlanner(**self._hatch_kwargs)
+
+    def _start_standalone(self) -> None:
+        assert self.standalone_stage is not None
+        self._standalone_started = True
+        self._standalone_returning = False
+        self._recovery_reason = None
+        self.logger.info("Hatch stage | starting | stage=%s", self.standalone_stage)
+        if self.standalone_stage == "hatch":
+            self._stage = "hatch"
+            self._child = self._new_hatch()
+            self._hatch_baseline = 0
+            return
+        if self.standalone_stage == "cave":
+            self._stage = "cave"
+            self._child = CaveCullPlanner(
+                self.reader,
+                threshold=self.cull_threshold,
+                reference_width=self.reference_width,
+                safe_margin=self.cave_safe_margin,
+                bottom_exclusion_px=self.cave_bottom_exclusion_px,
+                logger=self.logger,
+            )
+            return
+        self._stage = "open_nest"
+        self._child = object()
+
+    def _start_standalone_nest_phase(self) -> None:
+        assert self.standalone_stage is not None
+        if self.standalone_stage == "attack":
+            self._start_replacement("attack")
+        elif self.standalone_stage == "hp":
+            self._start_replacement("hp")
+        elif self.standalone_stage == "top":
+            self._stage = "top"
+            self._child = AutoPlaceRoundPlanner(
+                TOP_RULE,
+                reference_width=self.reference_width,
+                logger=self.logger,
+            )
+        elif self.standalone_stage == "mass":
+            self._stage = "mass"
+            self._child = AutoPlaceRoundPlanner(
+                MASS_RULE,
+                reference_width=self.reference_width,
+                logger=self.logger,
+            )
+        elif self.standalone_stage == "collect":
+            self._start_collect()
+        else:
+            raise RuntimeError(
+                f"standalone stage does not use My Nest: {self.standalone_stage}"
+            )
 
     def _enter_open_nest(self, *, collect_only: bool) -> None:
         self._stage = "open_nest"
@@ -1372,6 +1598,11 @@ class FullHatchPlanner:
                 f"replacement round stopped at {child.last_stage()}"
             )
             return
+        if self.standalone_stage == self._stage:
+            self._begin_home_recovery(
+                f"standalone {self.standalone_stage} completed"
+            )
+            return
         if self._stage == "attack":
             self._start_replacement("hp")
         else:
@@ -1385,6 +1616,11 @@ class FullHatchPlanner:
     def _advance_autoplace_if_done(self) -> None:
         child = self._autoplace_child
         if not child.is_complete():
+            return
+        if self.standalone_stage == self._stage:
+            self._begin_home_recovery(
+                f"standalone {self.standalone_stage} completed"
+            )
             return
         if self._stage == "top":
             self._stage = "mass"
