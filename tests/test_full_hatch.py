@@ -32,6 +32,7 @@ from dino_bot.full_hatch import (
     PLACE_SORT_BEST,
     PLACE_SORT_LEVEL,
     RECOVERY_BACK,
+    RECOVERY_FOREST,
     RECOVERY_MAP_EXIT,
     RECOVERY_MASK_CLOSE,
     RECOVERY_NO,
@@ -221,6 +222,19 @@ def test_cave_below_threshold_recenters_without_entering() -> None:
         capacity_frame(), [detection(hatch.HOME_ANCHOR, 59, 561)]
     ) is None
     assert planner.is_complete()
+
+
+def test_cave_below_threshold_can_use_hud_when_cave_is_clipped() -> None:
+    planner = CaveCullPlanner(DigitReader(GLYPHS), threshold=300)
+    for _ in range(2):
+        swipe = planner.choose(capacity_frame(), [])
+        assert swipe is not None and swipe.type == CAVE_SWIPE
+        planner.on_action_success(swipe.type)
+
+    target = planner.choose(capacity_frame(), [])
+
+    assert target is not None and target.type == CAVE_RECENTER
+    assert planner.capacity_readable
 
 
 def test_cave_inside_hunt_bottom_exclusion_is_never_opened() -> None:
@@ -568,6 +582,7 @@ def test_full_flow_recovers_shifted_cave_view_before_tapping_egg_pile() -> None:
     planner.on_action_success(target.type)
 
     centered_home = [detection(hatch.HOME_ANCHOR, 59, 561)]
+    assert planner.choose(frame(), centered_home) is None
     target = planner.choose(frame(), centered_home)
     assert target is not None and target.type == CAVE_SWIPE
     assert target.type != hatch.EGG_PILE
@@ -783,6 +798,24 @@ def test_home_recovery_uses_hunt_map_exit_instead_of_android_back() -> None:
 
     assert target is not None and target.type == RECOVERY_MAP_EXIT
     assert (target.x, target.y) == (841, 1295)
+
+
+def test_home_recovery_uses_forest_round_trip_when_home_anchor_is_clipped() -> None:
+    planner = HatchHomeRecoveryPlanner()
+    forest = detection("forest_recenter_button", 841, 1295)
+
+    target = planner.choose(
+        frame(np.zeros((1600, 900, 3), dtype=np.uint8)),
+        [forest],
+    )
+    assert target is not None and target.type == RECOVERY_FOREST
+    planner.on_action_success(target.type)
+
+    target = planner.choose(
+        frame(np.zeros((1600, 900, 3), dtype=np.uint8)),
+        [detection("map_exit_nest_button", 841, 1295)],
+    )
+    assert target is not None and target.type == RECOVERY_MAP_EXIT
 
 
 class FakeClock:

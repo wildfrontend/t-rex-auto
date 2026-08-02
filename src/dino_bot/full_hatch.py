@@ -85,9 +85,11 @@ RECOVERY_MASK_CLOSE = "hatch_recovery_mask_close"
 RECOVERY_CLOSE = "hatch_recovery_close"
 RECOVERY_CLAIM = "hatch_recovery_claim"
 RECOVERY_MAP_EXIT = "hatch_recovery_map_exit"
+RECOVERY_FOREST = "hatch_recovery_forest_recenter"
 RECOVERY_RECENTER = "hatch_recovery_recenter"
 RECOVERY_BACK = "hatch_recovery_back"
 HUNT_MAP_EXIT = "map_exit_nest_button"
+FOREST_RECENTER = "forest_recenter_button"
 STARTUP_GROWTH_RESULT = "startup_growth_result_back"
 STARTUP_AUTO_BATTLE_CLOSE = "startup_auto_battle_close"
 STARTUP_NEST_SHORTCUT = "hatch_startup_nest_shortcut"
@@ -154,6 +156,7 @@ DEFAULT_TARGET_ACTIONS: dict[str, str] = {
     RECOVERY_CLOSE: "tap",
     RECOVERY_CLAIM: "tap",
     RECOVERY_MAP_EXIT: "tap",
+    RECOVERY_FOREST: "tap",
     RECOVERY_RECENTER: "swipe",
     RECOVERY_BACK: "back",
     STARTUP_GROWTH_RESULT: "tap",
@@ -192,6 +195,7 @@ DEFAULT_POST_ACTION_DELAYS_MS: dict[str, int] = {
     RECOVERY_CLOSE: 4000,
     RECOVERY_CLAIM: 5000,
     RECOVERY_MAP_EXIT: 4000,
+    RECOVERY_FOREST: 4000,
     RECOVERY_RECENTER: 4000,
     RECOVERY_BACK: 4000,
     STARTUP_GROWTH_RESULT: 3000,
@@ -228,6 +232,7 @@ DEFAULT_SUCCESS_TRANSITIONS: dict[str, tuple[str, ...]] = {
     SELECT_WEAKEST_BUTTON: (SELECT_CHOOSE_BUTTON,),
     SELECT_CHOOSE_BUTTON: (CAVE_CONTINUOUS_BUTTON,),
     CAVE_CONTINUOUS_BUTTON: (hatch_feature.CLAIM_BUTTON,),
+    RECOVERY_FOREST: (HUNT_MAP_EXIT,),
     hatch_feature.CLAIM_BUTTON: (
         hatch_feature.HATCH_BUTTON,
         hatch_feature.INCUBATOR_TITLE,
@@ -360,7 +365,7 @@ RECOVERY_DETECTION_TYPES: frozenset[str] = frozenset(
         hatch_feature.CLOSE_BUTTON,
         CAVE_CLOSE_BUTTON,
         HUNT_MAP_EXIT,
-        "forest_recenter_button",
+        FOREST_RECENTER,
     }
 )
 
@@ -616,6 +621,15 @@ class HatchHomeRecoveryPlanner:
             # exit control is stable and already template-gated.
             self._stage = "leave_hunt_map"
             return _synthetic(RECOVERY_MAP_EXIT, map_exit.x, map_exit.y)
+
+        forest = _best(by_type.get(FOREST_RECENTER))
+        if forest is not None:
+            # The bottom-right Forest button survives positions where the
+            # hatch home anchor is clipped off-screen. Entering Forest and
+            # immediately using its named map-exit control resets the camera
+            # to a known home position without guessing another swipe.
+            self._stage = "enter_forest_for_recenter"
+            return _synthetic(RECOVERY_FOREST, forest.x, forest.y)
 
         if is_home_screen(frame, detections) and CAVE in by_type:
             if self._recenter_swipes >= len(vectors):
@@ -934,9 +948,56 @@ class CaveCullPlanner:
                 x1, y1, x2, y2 = step.vector
                 return _swipe_target(CAVE_SWIPE, x1, y1, x2, y2)
             if step.kind == RESCAN:
+                # The cave can be partially clipped at the left edge after a
+                # valid calibrated move. Its template then cannot match, but
+                # the structurally validated N/350 HUD remains readable. A
+                # below-threshold value is enough to safely skip entering the
+                # cave and return home.
+                count = read_dino_count(
+                    frame.image,
+                    self.reader,
+                    reference_width=self.reference_width,
+                )
+                if count is not None:
+                    cull = should_cull(count, self.threshold)
+                    self.logger.info(
+                        "Hatch cave | capacity=%d/350 | threshold=%d | cull=%s"
+                        " | cave_visible=False",
+                        count,
+                        self.threshold,
+                        cull,
+                    )
+                    if not cull:
+                        self._capacity_readable = True
+                        self._stage = "recenter"
+                        return self.choose(frame, detections)
                 return None
             if step.kind == STUCK:
-                self.logger.warning("Hatch cave | navigation failed; recentering safely")
+                count = read_dino_count(
+                    frame.image,
+                    self.reader,
+                    reference_width=self.reference_width,
+                )
+                if count is not None:
+                    cull = should_cull(count, self.threshold)
+                    self._capacity_readable = not cull
+                    if cull:
+                        self.logger.error(
+                            "Hatch cave | capacity=%d/350 requires cull but cave target"
+                            " is unavailable; recentering without hatching",
+                            count,
+                        )
+                    else:
+                        self.logger.info(
+                            "Hatch cave | capacity=%d/350 | threshold=%d | cull=False"
+                            " | cave_visible=False",
+                            count,
+                            self.threshold,
+                        )
+                else:
+                    self.logger.warning(
+                        "Hatch cave | navigation failed; recentering safely"
+                    )
                 self._stage = "recenter"
                 return self.choose(frame, detections)
             assert step.kind == DONE and cave is not None

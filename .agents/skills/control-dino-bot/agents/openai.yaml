@@ -1,4 +1,4 @@
 interface:
   display_name: "控制 Dino Mutant Bot"
-  short_description: "安全查詢與控制本機 Dino Mutant Bot 執行狀態"
-  default_prompt: "使用 $control-dino-bot 查詢目前狩獵進度，未經確認不要變更 Bot 狀態。"
+  short_description: "精準辨識模式、Port 並安全控制 Dino Bot"
+  default_prompt: "使用 $control-dino-bot 辨識目前模式與正確 Port，驗證 Bot 狀態後再執行已授權操作。"

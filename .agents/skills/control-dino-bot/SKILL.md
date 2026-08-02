@@ -1,115 +1,114 @@
 ---
 name: control-dino-bot
-description: Safely inspect and operate the local Dino Mutant Bot through its allowlisted status API and control-windows.ps1 entrypoint. Use when the user asks for hunting progress, current Bot status, failures, recent actions, health checks, diagnostic bundles, screenshots, environment diagnostics, starting, stopping, restarting the Bot, restarting the Dino Mutant game App, changing the fast/safe launch profile, or using a non-default local status port. Never use this skill for arbitrary ADB actions, game exploration, or unrequested process control.
+description: Precisely inspect and safely operate the local Dino Mutant Bot through its mode-specific localhost status APIs, verified Windows process identity, allowlisted control-windows.ps1 entrypoint, and read-only shared-log fallback. Use for Bot running/stopped checks, old-process checks, hunting or hatch progress, current stage, recent actions, failures, health, diagnostics, screenshots, start/stop/restart, game restart, speed profile, WSL/Windows connectivity, or status-port questions. Never use for arbitrary ADB, game exploration, raw process killing, or unrequested state changes.
 ---
 
 # Control Dino Mutant Bot
 
-Use only the Bot's structured localhost API and the fixed Windows controller. Keep all access on
-`127.0.0.1`; never expose the service to a LAN or public address.
+Use verified evidence. Never equate an unreachable API with a stopped process.
 
-## Resolve the controller
+## Resolve mode and port first
 
-Resolve the skill directory, then go up three directories to get `BOT_ROOT`. Use the first existing
-path below without searching elsewhere:
+Use an explicitly supplied port when present. Otherwise resolve the mode from the user's command,
+the launcher they used, dashboard state, or the newest `Feature | ...` log line. Use this fixed map:
 
-1. `BOT_ROOT/app/scripts/control-windows.ps1` for a deployed Bot folder.
-2. `BOT_ROOT/scripts/control-windows.ps1` for a source checkout.
+| Mode | Port |
+|---|---:|
+| `hunt` | 8765 |
+| `hatch` | 8766 |
+| `hatch-full` | 8772 |
+| `hatch-hunt` | 8773 |
+| `hatch-stage-*` | 8774 |
 
-If neither path exists, stop and report that the Bot controller is missing. In WSL, convert this
-exact path with `wslpath -w` before passing it to `powershell.exe`; do not scan the filesystem.
+Port 8780 is the dashboard, not a Bot status API. Do not probe arbitrary ports. When asked whether
+an old process remains, check only the old mode's known port and the intended mode's known port.
 
-Use this command shape:
+## Resolve the live controller
+
+For the standard deployment use:
+
+- Windows: `D:\DinoMutantBot-App\app\scripts\control-windows.ps1`
+- WSL: `/mnt/d/DinoMutantBot-App/app/scripts/control-windows.ps1`
+
+Use another runtime root only when the user explicitly supplies it. Use the source checkout's
+`scripts/control-windows.ps1` only for source-development requests, not to control the deployed Bot.
+
+In WSL, convert the exact controller path with `wslpath -w` and call:
 
 ```powershell
 powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
-  -File <control-windows.ps1> -Action <action> -StatusPort <port>
+  -File <control-windows.ps1> -Action <action> -StatusPort <resolved-port>
 ```
 
-Use port `8765` unless the user gives another port or the interactive launcher reports a different
-one. Never probe or scan ports. If the API is unavailable, report the attempted URL and ask the user
-for the configured port.
+## Evidence ladder
+
+1. Run the Windows controller. A successful `/health` identity check plus process/port ownership is
+   authoritative for running/stopped and safe mutations.
+2. If the controller returns an identity error, stop. Never control that port.
+3. If WSL returns `Exec format error`, Windows interop is unavailable. Do not use WSL
+   `127.0.0.1` as evidence about Windows loopback.
+4. For a read-only status question, run the bundled fallback:
+
+```bash
+python3 <skill-root>/scripts/inspect_runtime.py \
+  --runtime-root /mnt/d/DinoMutantBot-App --mode <resolved-mode>
+```
+
+Interpret fallback states exactly:
+
+- `active_recently`: log activity within 30 seconds; strong activity evidence, no process identity.
+- `stopped_by_log`: the last session marker is stop; historical evidence, no process identity.
+- `unknown`: stale or incomplete evidence. Do not call it running or stopped.
+
+For concurrent/old-process questions, log fallback cannot distinguish two writers. Report
+`process_identity_verified=false` and require a Windows-side controller result for certainty.
 
 ## Read-only requests
 
-For progress, status, failure, stuck, black-screen, settings, or recent-action questions, run:
+For status, progress, failure, or recent-action requests run `-Action status` with the resolved port.
+Report `current_stage`, `successful_hunts`, `total_actions`, `verification_failures`,
+`black_screen_detections`, `game_restarts`, and `last_successful_hunt`. Treat only
+`successful_hunts` as confirmed hunts. Use timestamps or a second snapshot before calling a run
+stuck.
 
-```powershell
-... -Action status -StatusPort 8765
-```
-
-Treat `successful_hunts` as confirmed hunts. Report `current_stage`, `successful_hunts`,
-`total_actions`, `verification_failures`, `black_screen_detections`, `game_restarts`, and
-`last_successful_hunt`. Do not infer that the Bot is stuck from one snapshot alone; use timestamps
-and request another status check if the last log may still be advancing.
-
-Run `-Action doctor` only when the user asks to diagnose prerequisites or connectivity. Run
-`-Action snapshot` only when the user explicitly asks for a current screenshot; report the returned
-file path.
-
-Run `-Action diagnostics` only when the user explicitly asks to create or export a diagnostic bundle.
-It creates a sanitized ZIP without a screenshot or any remote connection. Report the returned file
-path and tell the user they can inspect it before uploading it to Codex or a maintainer.
+Run `doctor` only for prerequisite/connectivity diagnosis, `snapshot` only when the user requests a
+current screenshot, and `diagnostics` only when the user requests a diagnostic bundle.
 
 ## State-changing requests
 
-Only start, stop, restart the Bot, or restart the game App when the user explicitly requests that
-action in the current turn. Never infer permission from a status request, a failure, a black screen,
-or an earlier conversation.
-
-The controller enforces confirmation. Pass `-Confirm` only after verifying explicit intent:
+Only start, stop, restart, or restart the game when explicitly requested in the current turn. Pass
+`-Confirm` only after that explicit request:
 
 ```powershell
-... -Action start   -Speed fast -StatusPort 8765 -Confirm
-... -Action stop                -StatusPort 8765 -Confirm
-... -Action restart -Speed fast -StatusPort 8765 -Confirm
-... -Action restart-game        -StatusPort 8765 -Confirm
+... -Action start        -Speed fast -StatusPort <port> -Confirm
+... -Action stop                     -StatusPort <port> -Confirm
+... -Action restart      -Speed fast -StatusPort <port> -Confirm
+... -Action restart-game             -StatusPort <port> -Confirm
 ```
 
-Allow only `fast` or `safe`. Use the user's stated profile; otherwise preserve the known current
-profile, or use `fast` for a new start when no current profile is known. A restart may take up
-to 20 seconds. After a start or restart, query status once and report the result.
+Allow only `fast` or `safe`. Preserve a known profile; otherwise use `fast` for a new start. After
+start/restart, query status once. A mutation requires the Windows controller and verified process
+identity; never substitute log inference or file writes.
 
-`restart` restarts the Bot process. `restart-game` keeps the Bot and emulator running, and asks the
-Bot API to force-stop and relaunch only the configured Dino Mutant package. It never accepts a
-package, activity, emulator instance, or raw ADB command from the caller. The controller waits for
-the status counters to confirm success; report `confirmation=pending` honestly if confirmation
-does not arrive within its timeout.
-
-For custom millisecond timings or changing the port interactively, direct the user to the Chinese
-control window: `[T]` changes timings and `[P]` changes the local API port. Do not edit
-`config.json` or source code as a substitute for a runtime control request. Port cleanup is also a
-human-only launcher action: tell the user to use `[K]` when it is offered and enter the displayed
-confirmation token themselves; never reproduce that action with process commands.
+For custom timings or port changes direct the user to launcher `[T]` or `[P]`. Port cleanup `[K]`
+and its displayed confirmation token are human-only.
 
 ## Allowed HTTP surface
 
-Use only these loopback routes:
-
-- `GET /health`
-- `GET /status`
-- `GET /actions`
-- `GET /settings`
-- `POST /control/stop`, only after explicit stop or restart intent
-- `POST /control/restart-game`, only after explicit game App restart intent
-
-Do not try other routes, methods, parameters, hosts, or payloads.
+Use only loopback routes `GET /health`, `/status`, `/actions`, `/settings`; and, after explicit user
+authorization, `POST /control/stop` or `/control/restart-game`. Never bind or tunnel beyond
+loopback.
 
 ## Hard boundaries
 
-- Do not run `adb`, `taskkill`, `Stop-Process`, or arbitrary shell commands.
-- Do not click, tap, swipe, or explore the game UI directly.
-- Do not change source files, configuration, templates, or detector assets. The `diagnostics` action
-  may only create its timestamped ZIP under the app's `diagnostics` directory.
-- Do not expose, tunnel, or bind the API beyond `127.0.0.1`.
-- Do not guess ports, runtime folders, credentials, or device identifiers.
-- Stop on `confirmation_required`, `status_api_unavailable`, or an unknown response; report it
-  instead of finding another route. Treat `status_api_identity_mismatch`,
-  `status_api_process_identity_missing`, and `status_api_process_identity_mismatch` the same way:
-  do not send a control request and tell the user that the configured port is not a verified Bot.
+- Never run `adb`, `taskkill`, `Stop-Process`, raw taps/swipes, or arbitrary process commands.
+- Never guess ports, runtime roots, package names, device IDs, or process identity.
+- Never mutate source/config/templates as a substitute for runtime control.
+- Stop mutations on `confirmation_required`, `status_api_unavailable`, any identity mismatch, or an
+  unknown response.
 
-## Report results
+## Report
 
-Answer in the user's language. State the action performed, port used when applicable, whether it
-succeeded, and the key status counts or diagnostic bundle path. Mention that the interface is
-local-only when explaining connection behavior.
+State the resolved mode and port, evidence method, whether process identity was verified, action
+result, and key counters. Distinguish `API unreachable`, `log says stopped`, and `process verified
+stopped`; they are not interchangeable.
