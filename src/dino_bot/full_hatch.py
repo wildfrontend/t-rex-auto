@@ -278,6 +278,81 @@ HOME_FOREGROUND_TYPES: frozenset[str] = frozenset(
 )
 
 
+# Keep the full-hatch workflow scoped even when it is combined with hunting.
+# The hatch manifest contains controls for every management phase, while the
+# hunt manifest adds the dinosaur label and the HSV hunt path.  Scanning both
+# manifests on every hatch cycle is the expensive path seen in production
+# logs (roughly 5-10 seconds versus sub-second scoped scans).
+HATCH_DETECTION_TYPES: frozenset[str] = frozenset(
+    {
+        *STARTUP_DETECTION_TYPES,
+        *hatch_feature.DEFAULT_TARGET_ACTIONS,
+        hatch_feature.HOME_ANCHOR,
+        hatch_feature.EXPEL_BUTTON,
+        *HOME_FOREGROUND_TYPES,
+        "duplicate_hunt_alert",
+    }
+)
+
+NEST_DETECTION_TYPES: frozenset[str] = frozenset(
+    {
+        *STARTUP_DETECTION_TYPES,
+        hatch_feature.HOME_ANCHOR,
+        NEST_TITLE,
+        SELECT_TITLE,
+        *nest_filter_feature.DEFAULT_TARGET_ACTIONS,
+        *select_sort_feature.DEFAULT_TARGET_ACTIONS,
+        *replacement_feature.DEFAULT_TARGET_ACTIONS,
+        NEST_GEAR,
+        AUTOPLACE_TITLE,
+        AUTOPLACE_PROMPT,
+        AUTOPLACE_NOTICE,
+        PLACE_HDR_BEST,
+        PLACE_HDR_LEVEL,
+        COLLECT_EGGS_BUTTON,
+        INCUBATOR_FULL_TOAST,
+        CONFIRM_NO,
+        CONFIRM_YES,
+        NESTED_PARENT_WARNING,
+        SELECT_CONFIRM_PROMPT,
+        *HOME_FOREGROUND_TYPES,
+    }
+)
+
+CAVE_DETECTION_TYPES: frozenset[str] = frozenset(
+    {
+        *STARTUP_DETECTION_TYPES,
+        hatch_feature.HOME_ANCHOR,
+        NEST_TITLE,
+        SELECT_TITLE,
+        CAVE,
+        CAVE_CLOSE_BUTTON,
+        CAVE_SELECT_BUTTON,
+        CAVE_CONTINUOUS_BUTTON,
+        SELECT_WEAKEST_BUTTON,
+        SELECT_CHOOSE_BUTTON,
+        hatch_feature.CLAIM_BUTTON,
+        CONFIRM_NO,
+        CONFIRM_YES,
+        NESTED_PARENT_WARNING,
+        SELECT_CONFIRM_PROMPT,
+        *HOME_FOREGROUND_TYPES,
+    }
+)
+
+RECOVERY_DETECTION_TYPES: frozenset[str] = frozenset(
+    {
+        *HATCH_DETECTION_TYPES,
+        *NEST_DETECTION_TYPES,
+        *CAVE_DETECTION_TYPES,
+        hatch_feature.CLOSE_BUTTON,
+        CAVE_CLOSE_BUTTON,
+        HUNT_MAP_EXIT,
+        "forest_recenter_button",
+    }
+)
+
+
 def is_home_screen(frame: Frame, detections: Sequence[Detection]) -> bool:
     """Return whether the unobscured outdoor map is currently foreground.
 
@@ -995,6 +1070,7 @@ class FullHatchPlanner:
         scroll_duration_ms: int = 400,
         max_scrolls: int = 0,
         rescan_interval_seconds: float = 600.0,
+        batch_hatch_count: int = 12,
         require_home_anchor: bool = True,
         home_failure_limit: int = 3,
         home_backoff_seconds: float = 30.0,
@@ -1010,6 +1086,7 @@ class FullHatchPlanner:
         self.reference_width = reference_width
         self.logger = logger or logging.getLogger("dino_bot")
         self.cull_threshold = cull_threshold
+        self.batch_hatch_count = max(1, batch_hatch_count)
         self.cave_safe_margin = max(0, cave_safe_margin)
         self.cave_bottom_exclusion_px = max(0, cave_bottom_exclusion_px)
         self.recovery_timeout_seconds = max(1.0, recovery_timeout_seconds)
@@ -1039,6 +1116,9 @@ class FullHatchPlanner:
         self._recovery_reason: str | None = None
         self._collect_only_after_empty = False
         self._empty_rescan_wait = False
+        self._batch_hatched = 0
+        self._batch_hunt_ready = False
+        self._observed_cooldown_until: float | None = None
         self._navigation_failures: dict[tuple[str, str], int] = {}
         self._pending_claim_verification = False
         self._standalone_started = False
@@ -1066,10 +1146,42 @@ class FullHatchPlanner:
         method = getattr(self._child, "next_ready_delay_ms", None)
         return int(method()) if callable(method) else 0
 
+    def planning_detection_types(self) -> frozenset[str]:
+        """Return the detector types needed by the current hatch phase.
+
+        Full-hatch runs use a separate manifest from hunting, but the combined
+        mode still has both detectors installed.  Returning a phase-scoped set
+        prevents the hunt manifest (especially the full-resolution dinosaur
+        template and HSV path detector) from being evaluated while hatch or
+        nest management is active.
+        """
+
+        if self._stage == "hatch":
+            return HATCH_DETECTION_TYPES
+        if self._stage in {
+            "open_nest",
+            "attack",
+            "hp",
+            "top",
+            "mass",
+            "collect",
+            "collect_button",
+            "close_nest",
+            "verify_nest_closed",
+        }:
+            return NEST_DETECTION_TYPES
+        if self._stage == "cave":
+            return CAVE_DETECTION_TYPES
+        return RECOVERY_DETECTION_TYPES
+
     def is_hunt_cooldown_active(self) -> bool:
         """Whether the no-ready-egg cooldown can be spent hunting."""
 
-        return self._empty_rescan_wait and self.next_ready_delay_ms() > 0
+        return (
+            self._empty_rescan_wait
+            and self._batch_hunt_ready
+            and self.next_ready_delay_ms() > 0
+        )
 
     def reset_workflow(self) -> None:
         if self.standalone_stage is not None:
@@ -1086,6 +1198,9 @@ class FullHatchPlanner:
             )
             self._collect_only_after_empty = False
             self._empty_rescan_wait = False
+            self._batch_hatched = 0
+            self._batch_hunt_ready = False
+            self._observed_cooldown_until = None
             self._navigation_failures.clear()
             self._pending_claim_verification = False
             self._standalone_started = False
@@ -1099,6 +1214,9 @@ class FullHatchPlanner:
         self._recovery_reason = None
         self._collect_only_after_empty = False
         self._empty_rescan_wait = False
+        self._batch_hatched = 0
+        self._batch_hunt_ready = False
+        self._observed_cooldown_until = None
         self._navigation_failures.clear()
         self._pending_claim_verification = False
 
@@ -1124,6 +1242,13 @@ class FullHatchPlanner:
             hatch = self._hatch_child
             hatch.on_action_success(target_type)
             if target_type == hatch_feature.CLAIM_BUTTON:
+                if self._batch_hunt_ready:
+                    self.logger.info(
+                        "Hatch full | starting next growth batch | previous=%d",
+                        self._batch_hatched,
+                    )
+                    self._batch_hatched = 0
+                    self._batch_hunt_ready = False
                 self._pending_claim_verification = False
             if target_type == hatch_feature.CLOSE_BUTTON:
                 if self.standalone_stage == "hatch":
@@ -1131,11 +1256,16 @@ class FullHatchPlanner:
                     return
                 hatched = hatch.hatched - self._hatch_baseline
                 if hatched > 0:
+                    self._batch_hatched += hatched
+                    batch_complete = self._batch_hatched >= self.batch_hatch_count
                     self.logger.info(
-                        "Hatch full | phase A complete | hatched=%d | entering My Nest",
+                        "Hatch full | phase A complete | hatched=%d | batch=%d/%d",
                         hatched,
+                        self._batch_hatched,
+                        self.batch_hatch_count,
                     )
-                    self._enter_open_nest(collect_only=False)
+                    self._batch_hunt_ready = batch_complete
+                    self._enter_open_nest(collect_only=not batch_complete)
                 else:
                     self.logger.info(
                         "Hatch full | no ready incubator eggs | "
@@ -1359,6 +1489,7 @@ class FullHatchPlanner:
     ) -> Target | None:
         by_type = _group(detections)
         if self._stage == "hatch":
+            self._observe_hatch_cooldown(frame, by_type)
             detail_close = _unready_egg_detail_close(frame)
             if detail_close is not None:
                 if self._pending_claim_verification:
@@ -1550,8 +1681,18 @@ class FullHatchPlanner:
         )
 
     def _start_empty_rescan_wait(self) -> None:
+        wait_seconds = float(self._hatch_kwargs["rescan_interval_seconds"])
+        wait_source = "config"
+        if self._observed_cooldown_until is not None:
+            wait_seconds = max(0.0, self._observed_cooldown_until - self.clock())
+            wait_source = "screen-batch"
         self.logger.info(
-            "Hatch full | nest eggs collected after empty incubator | starting rescan cooldown"
+            "Hatch full | nest eggs collected after empty incubator | "
+            "cooldown wait=%.0fs | source=%s | batch=%d/%d",
+            wait_seconds,
+            wait_source,
+            self._batch_hatched,
+            self.batch_hatch_count,
         )
         self._stage = "hatch"
         self._child = self._new_hatch()
@@ -1559,8 +1700,27 @@ class FullHatchPlanner:
         self._collect_only_after_empty = False
         self._empty_rescan_wait = True
         self._hatch_child.begin_rescan_wait(
-            "collected all nest eggs after no ready incubator eggs"
+            "collected all nest eggs after no ready incubator eggs",
+            seconds=wait_seconds,
         )
+        self._observed_cooldown_until = None
+
+    def _observe_hatch_cooldown(
+        self,
+        frame: Frame,
+        by_type: dict[str, list[Detection]],
+    ) -> None:
+        if hatch_feature.INCUBATOR_TITLE not in by_type:
+            return
+        if by_type.get(hatch_feature.HATCH_LABEL):
+            return
+        seconds = hatch_feature.read_hatch_cooldown_seconds(
+            frame.image,
+            self.reader,
+            reference_width=self.reference_width,
+        )
+        if seconds is not None:
+            self._observed_cooldown_until = self.clock() + seconds
 
     def _start_replacement(self, kind: str) -> None:
         if kind == "attack":

@@ -157,6 +157,8 @@ class HatchConfig:
     # Game-imposed incubation cooldown is ~25 minutes; this is only how often
     # the bot re-enters to check, per the plan's rescan rule.
     rescan_interval_seconds: float = 600.0
+    # Keep a growth batch together before running nest management/hunting.
+    batch_hatch_count: int = 12
     require_home_anchor: bool = True
     home_failure_limit: int = 3
     home_backoff_seconds: float = 30.0
@@ -585,6 +587,7 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
             rescan_interval_seconds=float(
                 hatch_data.get("rescan_interval_seconds", 600)
             ),
+            batch_hatch_count=int(hatch_data.get("batch_hatch_count", 12)),
             require_home_anchor=bool(hatch_data.get("require_home_anchor", True)),
             home_failure_limit=int(hatch_data.get("home_failure_limit", 3)),
             home_backoff_seconds=float(hatch_data.get("home_backoff_seconds", 30)),
@@ -685,6 +688,8 @@ def _validate(config: AppConfig) -> None:
         raise ConfigError("hatch.max_scrolls cannot be negative")
     if config.hatch.rescan_interval_seconds < 0:
         raise ConfigError("hatch.rescan_interval_seconds cannot be negative")
+    if config.hatch.batch_hatch_count <= 0:
+        raise ConfigError("hatch.batch_hatch_count must be greater than zero")
     if config.hatch.home_failure_limit <= 0:
         raise ConfigError("hatch.home_failure_limit must be greater than zero")
     if config.hatch.home_backoff_seconds < 0:

@@ -381,6 +381,7 @@ def _create_hatch_engine(
             scroll_duration_ms=hatch.scroll_duration_ms,
             max_scrolls=hatch.max_scrolls,
             rescan_interval_seconds=hatch.rescan_interval_seconds,
+            batch_hatch_count=hatch.batch_hatch_count,
             require_home_anchor=hatch.require_home_anchor,
             home_failure_limit=hatch.home_failure_limit,
             home_backoff_seconds=hatch.home_backoff_seconds,

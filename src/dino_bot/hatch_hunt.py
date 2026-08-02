@@ -123,9 +123,22 @@ class HatchHuntPlanner:
         return min(hunt_delay, until_handoff)
 
     def planning_detection_types(self) -> frozenset[str] | None:
-        if self._mode != "hunt":
+        if self._mode == "hunt":
+            return self.hunt.planning_detection_types()
+        hatch_method = getattr(self.hatch, "planning_detection_types", None)
+        hatch_types = hatch_method() if callable(hatch_method) else None
+        if self._mode != "handoff":
+            return hatch_types
+
+        # Handoff still needs the hunt map evidence to decide whether the
+        # viewport must be recentered before returning to hatch mode. Keep the
+        # hatch safety controls, but add the hunt planner's scoped set instead
+        # of falling back to an expensive combined full scan.
+        hunt_method = getattr(self.hunt, "planning_detection_types", None)
+        hunt_types = hunt_method() if callable(hunt_method) else None
+        if hatch_types is None or hunt_types is None:
             return None
-        return self.hunt.planning_detection_types()
+        return frozenset({*hatch_types, *hunt_types})
 
     def verification_detection_types(self, target_type: str) -> frozenset[str]:
         method = getattr(self._action_owner, "verification_detection_types", None)

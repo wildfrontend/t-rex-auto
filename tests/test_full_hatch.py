@@ -304,6 +304,24 @@ def make_full_planner() -> FullHatchPlanner:
     )
 
 
+def test_full_hatch_scopes_detection_by_workflow_phase() -> None:
+    planner = make_full_planner()
+
+    hatch_types = planner.planning_detection_types()
+    assert hatch.HATCH_BUTTON in hatch_types
+    assert hatch.HOME_ANCHOR in hatch_types
+    assert STARTUP_AUTO_BATTLE_CLOSE in hatch_types
+    assert "dinosaur" not in hatch_types
+    assert "own_hunt_path" not in hatch_types
+
+    planner.on_action_success(hatch.CLOSE_BUTTON)
+    nest_types = planner.planning_detection_types()
+    assert NEST_TITLE in nest_types
+    assert SELECT_TITLE in nest_types
+    assert "dinosaur" not in nest_types
+    assert "own_hunt_path" not in nest_types
+
+
 def test_full_flow_enters_nest_only_after_a_verified_hatch_claim() -> None:
     planner = make_full_planner()
     planner.on_action_success(hatch.CLAIM_BUTTON)
@@ -356,12 +374,46 @@ def test_full_flow_collects_all_nest_eggs_before_empty_rescan_wait() -> None:
     home = [detection(hatch.HOME_ANCHOR, 59, 561)]
     assert planner.choose(frame(), home) is None
     assert planner.next_ready_delay_ms() > 0
-    assert planner.is_hunt_cooldown_active()
+    assert not planner.is_hunt_cooldown_active()
 
     now[0] += 601
     assert not planner.is_hunt_cooldown_active()
     target = planner.choose(frame(), home)
     assert target is not None and target.type == hatch.EGG_PILE
+
+
+def test_full_hatch_accumulates_ten_claims_before_management() -> None:
+    planner = FullHatchPlanner(
+        DigitReader(GLYPHS),
+        egg_pile_point=(450, 1330),
+        batch_hatch_count=12,
+    )
+    planner._hatch_child.hatched = 4
+    planner.on_action_success(hatch.CLOSE_BUTTON)
+    assert planner._stage == "open_nest"
+    assert planner._collect_only_after_empty
+    assert planner._batch_hatched == 4
+
+    planner._stage = "hatch"
+    planner._child = planner._new_hatch()
+    planner._hatch_child.hatched = 8
+    planner.on_action_success(hatch.CLOSE_BUTTON)
+    assert planner._stage == "open_nest"
+    assert not planner._collect_only_after_empty
+    assert planner._batch_hatched == 12
+    assert planner._batch_hunt_ready
+
+
+def test_full_hatch_uses_observed_batch_timer_for_rescan_wait() -> None:
+    now = [1000.0]
+    planner = FullHatchPlanner(
+        DigitReader(GLYPHS),
+        egg_pile_point=(450, 1330),
+        clock=lambda: now[0],
+    )
+    planner._observed_cooldown_until = now[0] + 3725
+    planner._start_empty_rescan_wait()
+    assert planner.next_ready_delay_ms() == 3_725_000
 
 
 def test_home_screen_requires_bright_unobscured_map_and_no_foreground() -> None:

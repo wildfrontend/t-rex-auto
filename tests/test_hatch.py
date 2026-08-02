@@ -6,9 +6,13 @@ from pathlib import Path
 import numpy as np
 
 from dino_bot import hatch
-from dino_bot.hatch import HatchPlanner
-from dino_bot.models import BoundingBox, Detection, Frame
 from dino_bot.config import load_config
+from dino_bot.hatch import (
+    HatchPlanner,
+    parse_hatch_timer_text,
+    read_hatch_cooldown_seconds,
+)
+from dino_bot.models import BoundingBox, Detection, Frame
 
 
 def make_frame(width: int = 900, height: int = 1600) -> Frame:
@@ -116,6 +120,35 @@ def test_close_starts_rescan_wait_and_resumes() -> None:
     assert target is not None and target.type == hatch.EGG_PILE
 
 
+def test_hatch_timer_parser_accepts_compact_digits_and_rejects_bad_time() -> None:
+    assert parse_hatch_timer_text("000537") == 337
+    assert parse_hatch_timer_text("00?20?05") == 1205
+    assert parse_hatch_timer_text("016099") is None
+
+
+def test_hatch_cooldown_reader_uses_longest_visible_timer_for_batch() -> None:
+    class Reader:
+        def __init__(self) -> None:
+            self.values = iter(
+                [
+                    "000537",
+                    "000647",
+                    "001958",
+                    "002005",
+                    "005431",
+                    "010205",
+                    "000000",
+                    "??????",
+                    "",
+                ]
+            )
+
+        def read(self, _crop: np.ndarray) -> str:
+            return next(self.values)
+
+    assert read_hatch_cooldown_seconds(make_frame().image, Reader()) == 3725
+
+
 def test_claim_button_takes_priority_and_counts() -> None:
     planner, _ = make_planner()
     detections = [
@@ -167,6 +200,7 @@ def test_hatch_config_defaults_load(tmp_path) -> None:
     config_path.write_text("{}", encoding="utf-8")
     config = load_config(config_path)
     assert config.hatch.rescan_interval_seconds == 600
+    assert config.hatch.batch_hatch_count == 12
     assert config.hatch.egg_pile == (450.0, 1330.0)
     assert config.hatch.max_scrolls == 0
     assert config.hatch.manifest == tmp_path / "assets/hatch/manifest.json"
@@ -176,10 +210,12 @@ def test_hatch_config_overrides(tmp_path) -> None:
     config_path = tmp_path / "config.json"
     config_path.write_text(
         '{"hatch": {"egg_pile": [400, 1200], "rescan_interval_seconds": 300,'
+        ' "batch_hatch_count": 14,'
         ' "max_scrolls": 6}}',
         encoding="utf-8",
     )
     config = load_config(config_path)
     assert config.hatch.egg_pile == (400.0, 1200.0)
     assert config.hatch.rescan_interval_seconds == 300
+    assert config.hatch.batch_hatch_count == 14
     assert config.hatch.max_scrolls == 6

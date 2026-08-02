@@ -39,6 +39,9 @@ class StubHatch:
     def next_ready_delay_ms(self) -> int:
         return self.cooldown_ms
 
+    def planning_detection_types(self) -> frozenset[str]:
+        return frozenset({"hatch_button"})
+
     def is_hunt_cooldown_active(self) -> bool:
         return self.cooldown_ms > 0
 
@@ -135,6 +138,12 @@ def test_long_hatch_cooldown_switches_to_hunt_and_keeps_action_owner() -> None:
     assert hunt_planner.successes == ["dinosaur"]
 
 
+def test_hatch_mode_uses_hatch_scoped_detection_types() -> None:
+    combined, _, _ = planner(cooldown_ms=0)
+
+    assert combined.planning_detection_types() == frozenset({"hatch_button"})
+
+
 def test_short_cooldown_is_reserved_for_handoff_without_starting_hunt() -> None:
     combined, _, hunt_planner = planner(cooldown_ms=20_000)
     hunt_planner.next_target = target("dinosaur", 300, 700)
@@ -161,6 +170,9 @@ def test_handoff_requests_recenter_when_hunt_map_is_visible() -> None:
     )
     assert chosen is not None and chosen.type == "map_exit_nest_button"
     assert hunt_planner.recenter_requests == ["hatch cooldown handoff"]
+    assert {"hatch_button", "dinosaur"} <= set(
+        combined.planning_detection_types() or ()
+    )
 
 
 def test_handoff_requires_two_centered_frames_before_resuming_hatch() -> None:

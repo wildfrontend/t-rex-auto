@@ -12,7 +12,8 @@ import logging
 import time
 from collections.abc import Callable, Sequence
 
-from .models import Detection, Frame, Target
+from .digits import DigitReader
+from .models import Detection, Frame, Image, Target
 
 # Target types. The hatch_ prefix keeps the vocabulary disjoint from hunt so
 # both features can coexist in one config without colliding.
@@ -61,6 +62,64 @@ DEFAULT_SUCCESS_TRANSITIONS: dict[str, tuple[str, ...]] = {
 # feature-local because the shared config's cycle target normally belongs to
 # hunt (mail_reward_collect_button).
 DEFAULT_CYCLE_COMPLETE_TARGETS: tuple[str, ...] = (CLAIM_BUTTON,)
+
+# Timer text positions in the 900x1600 incubator grid. The visible grid has
+# three columns and three rows; each timer is read without the clock icon or
+# progress bar. The reader accepts both ``HHMMSS`` (the colon dots are too
+# small to survive segmentation) and ``HH?MM?SS``.
+HATCH_TIMER_REGIONS: tuple[tuple[float, float, float, float], ...] = tuple(
+    (x0, y0, x1, y1)
+    for y0, y1 in ((608.0, 638.0), (873.0, 903.0), (1138.0, 1168.0))
+    for x0, x1 in ((200.0, 350.0), (380.0, 530.0), (560.0, 710.0))
+)
+
+
+def parse_hatch_timer_text(text: str) -> int | None:
+    """Parse a six-digit incubator timer returned by :class:`DigitReader`."""
+
+    compact = text.replace("?", "").replace(":", "")
+    if len(compact) != 6 or not compact.isdigit():
+        return None
+    hours, minutes, seconds = (
+        int(compact[0:2]),
+        int(compact[2:4]),
+        int(compact[4:6]),
+    )
+    if minutes >= 60 or seconds >= 60:
+        return None
+    return hours * 3600 + minutes * 60 + seconds
+
+
+def read_hatch_cooldown_seconds(
+    image: Image,
+    reader: DigitReader,
+    *,
+    reference_width: float = 900.0,
+) -> int | None:
+    """Return the longest visible incubator countdown, or ``None``.
+
+    A ready egg has the ``孵化`` label and no timer. Full hatch uses the
+    longest readable timer so a group of eggs can mature together before the
+    next batch is collected and compared. A zero is returned when the timers
+    are visible but already due; unreadable regions are ignored and fail safe
+    to ``None`` when none can be parsed.
+    """
+
+    if image.ndim < 2 or image.shape[1] <= 0 or reference_width <= 0:
+        return None
+    scale = image.shape[1] / reference_width
+    values: list[int] = []
+    for x0, y0, x1, y1 in HATCH_TIMER_REGIONS:
+        left, top, right, bottom = (
+            round(value * scale) for value in (x0, y0, x1, y1)
+        )
+        crop = image[top:bottom, left:right]
+        if crop.size == 0:
+            continue
+        value = parse_hatch_timer_text(reader.read(crop))
+        if value is not None:
+            values.append(value)
+    return max(values) if values else None
 
 
 class HatchPlanner:
@@ -119,10 +178,10 @@ class HatchPlanner:
         remaining = self._wait_until - self.clock()
         return max(0, int(remaining * 1000))
 
-    def begin_rescan_wait(self, reason: str) -> None:
+    def begin_rescan_wait(self, reason: str, *, seconds: float | None = None) -> None:
         """Pause on home until the next configured incubator rescan."""
 
-        self._begin_wait(reason)
+        self._begin_wait(reason, seconds=seconds)
 
     def on_action_success(self, target_type: str) -> None:
         if target_type == EGG_PILE:
