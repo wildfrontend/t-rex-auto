@@ -119,6 +119,11 @@ class HatchPlanner:
         remaining = self._wait_until - self.clock()
         return max(0, int(remaining * 1000))
 
+    def begin_rescan_wait(self, reason: str) -> None:
+        """Pause on home until the next configured incubator rescan."""
+
+        self._begin_wait(reason)
+
     def on_action_success(self, target_type: str) -> None:
         if target_type == EGG_PILE:
             self._home_failures = 0

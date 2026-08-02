@@ -20,7 +20,9 @@ from dino_bot.full_hatch import (
     CAVE_RECENTER,
     CAVE_SELECT_BUTTON,
     CAVE_SWIPE,
+    COLLECT_EGGS_BUTTON,
     NEST_GEAR,
+    NEST_MASK_CLOSE,
     OPEN_NEST,
     PLACE_HDR_BEST,
     PLACE_SORT_BEST,
@@ -200,11 +202,53 @@ def test_full_flow_enters_nest_only_after_a_verified_hatch_claim() -> None:
     assert (target.x, target.y) == (59, 561)
 
 
-def test_full_flow_keeps_rescan_wait_when_nothing_was_hatched() -> None:
-    planner = make_full_planner()
+def test_full_flow_collects_all_nest_eggs_before_empty_rescan_wait() -> None:
+    now = [1000.0]
+    planner = FullHatchPlanner(
+        DigitReader(GLYPHS),
+        egg_pile_point=(450, 1330),
+        max_scrolls=0,
+        clock=lambda: now[0],
+    )
     planner.on_action_success(hatch.CLOSE_BUTTON)
-    assert planner.choose(frame(), [detection(hatch.HOME_ANCHOR, 59, 561)]) is None
+
+    target = planner.choose(frame(), [detection(hatch.HOME_ANCHOR, 59, 561)])
+    assert target is not None and target.type == OPEN_NEST
+    planner.on_action_success(target.type)
+
+    nest = [
+        detection(NEST_TITLE, 450, 260),
+        detection(nest_filter.TAG_HDR_ALL, 228, 168),
+    ]
+    target = planner.choose(frame(), nest)
+    assert target is not None and target.type == nest_filter.FILTER_HEADER
+    planner.on_action_success(target.type)
+
+    target = planner.choose(
+        frame(),
+        nest + [detection(nest_filter.TAG_ALL, 228, 297)],
+    )
+    assert target is not None and target.type == nest_filter.TAG_ALL
+    planner.on_action_success(target.type)
+
+    target = planner.choose(
+        frame(),
+        nest + [detection(COLLECT_EGGS_BUTTON, 650, 1315)],
+    )
+    assert target is not None and target.type == COLLECT_EGGS_BUTTON
+    planner.on_action_success(target.type)
+
+    target = planner.choose(frame(), nest)
+    assert target is not None and target.type == NEST_MASK_CLOSE
+    planner.on_action_success(target.type)
+
+    home = [detection(hatch.HOME_ANCHOR, 59, 561)]
+    assert planner.choose(frame(), home) is None
     assert planner.next_ready_delay_ms() > 0
+
+    now[0] += 601
+    target = planner.choose(frame(), home)
+    assert target is not None and target.type == hatch.EGG_PILE
 
 
 def test_home_screen_requires_bright_unobscured_map_and_no_foreground() -> None:

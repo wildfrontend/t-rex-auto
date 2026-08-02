@@ -7,7 +7,9 @@ This module closes the loop described in ``docs/auto-hatch-plan.md``:
 * auto-place Top and Mass nests;
 * collect every egg and close My Nest;
 * navigate to the cave, cull only above the configured threshold, and return;
-* start the next hatch pass (or keep the incubator rescan cooldown).
+* when no egg was ready, collect completed nest eggs and then keep the
+  incubator rescan cooldown without running the mutation/cave stages;
+* start the next hatch pass.
 
 The planner is deliberately screen-gated.  Fixed coordinates are used only
 inside a screen whose title/anchor has already been detected, and every
@@ -734,6 +736,7 @@ class FullHatchPlanner:
         self._complete = False
         self._no_target_since: float | None = None
         self._recovery_reason: str | None = None
+        self._collect_only_after_empty = False
         self.completed_management_cycles = 0
 
     def last_stage(self) -> str:
@@ -755,6 +758,7 @@ class FullHatchPlanner:
         self._complete = False
         self._no_target_since = None
         self._recovery_reason = None
+        self._collect_only_after_empty = False
 
     def on_action_success(self, target_type: str) -> None:
         if self._stage == "recover_home":
@@ -763,18 +767,25 @@ class FullHatchPlanner:
         if self._stage == "hatch":
             hatch = self._hatch_child
             hatch.on_action_success(target_type)
-            if (
-                target_type == hatch_feature.CLOSE_BUTTON
-                and hatch.hatched > self._hatch_baseline
-            ):
-                self.logger.info(
-                    "Hatch full | phase A complete | hatched=%d | entering My Nest",
-                    hatch.hatched - self._hatch_baseline,
-                )
-                self._stage = "open_nest"
+            if target_type == hatch_feature.CLOSE_BUTTON:
+                hatched = hatch.hatched - self._hatch_baseline
+                if hatched > 0:
+                    self.logger.info(
+                        "Hatch full | phase A complete | hatched=%d | entering My Nest",
+                        hatched,
+                    )
+                    self._enter_open_nest(collect_only=False)
+                else:
+                    self.logger.info(
+                        "Hatch full | no ready incubator eggs | collect all nest eggs before cooldown"
+                    )
+                    self._enter_open_nest(collect_only=True)
             return
         if self._stage == "open_nest" and target_type == OPEN_NEST:
-            self._start_replacement("attack")
+            if self._collect_only_after_empty:
+                self._start_collect()
+            else:
+                self._start_replacement("attack")
             return
         if self._stage in ("attack", "hp"):
             child = self._replacement_child
@@ -884,7 +895,10 @@ class FullHatchPlanner:
             return self._hatch_child.choose(frame, detections)
         if self._stage == "open_nest":
             if NEST_TITLE in by_type:
-                self._start_replacement("attack")
+                if self._collect_only_after_empty:
+                    self._start_collect()
+                else:
+                    self._start_replacement("attack")
                 return self._choose_current(frame, detections)
             anchor = _best(by_type.get(hatch_feature.HOME_ANCHOR))
             return _synthetic(OPEN_NEST, anchor.x, anchor.y) if anchor is not None else None
@@ -928,6 +942,9 @@ class FullHatchPlanner:
                 self._stage = "close_nest"
                 return self._choose_current(frame, detections)
             if is_home_screen(frame, detections):
+                if self._collect_only_after_empty:
+                    self._start_empty_rescan_wait()
+                    return self._choose_current(frame, detections)
                 self._stage = "cave"
                 self._child = CaveCullPlanner(
                     self.reader,
@@ -964,6 +981,35 @@ class FullHatchPlanner:
 
     def _new_hatch(self) -> hatch_feature.HatchPlanner:
         return hatch_feature.HatchPlanner(**self._hatch_kwargs)
+
+    def _enter_open_nest(self, *, collect_only: bool) -> None:
+        self._stage = "open_nest"
+        # Drop HatchPlanner's own close-triggered wait while My Nest is being
+        # opened. Otherwise that cooldown could mask recovery if the home
+        # frame takes longer than expected to settle.
+        self._child = object()
+        self._collect_only_after_empty = collect_only
+
+    def _start_collect(self) -> None:
+        self._stage = "collect"
+        self._child = nest_filter_feature.NestTagFilterTestPlanner(
+            reference_width=self.reference_width,
+            target_label="所有",
+            target_option_type=nest_filter_feature.TAG_ALL,
+            target_header_type=nest_filter_feature.TAG_HDR_ALL,
+        )
+
+    def _start_empty_rescan_wait(self) -> None:
+        self.logger.info(
+            "Hatch full | nest eggs collected after empty incubator | starting rescan cooldown"
+        )
+        self._stage = "hatch"
+        self._child = self._new_hatch()
+        self._hatch_baseline = 0
+        self._collect_only_after_empty = False
+        self._hatch_child.begin_rescan_wait(
+            "collected all nest eggs after no ready incubator eggs"
+        )
 
     def _start_replacement(self, kind: str) -> None:
         if kind == "attack":
@@ -1023,13 +1069,7 @@ class FullHatchPlanner:
                 logger=self.logger,
             )
         else:
-            self._stage = "collect"
-            self._child = nest_filter_feature.NestTagFilterTestPlanner(
-                reference_width=self.reference_width,
-                target_label="所有",
-                target_option_type=nest_filter_feature.TAG_ALL,
-                target_header_type=nest_filter_feature.TAG_HDR_ALL,
-            )
+            self._start_collect()
 
     @property
     def _hatch_child(self) -> hatch_feature.HatchPlanner:
