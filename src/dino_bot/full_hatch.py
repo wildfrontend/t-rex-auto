@@ -1534,7 +1534,13 @@ class FullHatchPlanner:
         if self.next_ready_delay_ms() > 0:
             self._no_target_since = None
             return None
-        if self._stage != "hatch" and is_centered_home_screen(frame, detections):
+        # CaveCullPlanner owns its own two-frame return-to-home confirmation.
+        # Do not let the outer recovery guard interrupt that confirmation;
+        # capacity preflight uses the same planner before the first hatch.
+        if (
+            self._stage not in {"hatch", "cave", "capacity_preflight"}
+            and is_centered_home_screen(frame, detections)
+        ):
             self._begin_home_recovery("unexpected return to home")
             return self.choose(frame, detections)
         now = self.clock()
