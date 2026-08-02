@@ -703,7 +703,7 @@ class FullHatchPlanner:
         require_home_anchor: bool = True,
         home_failure_limit: int = 3,
         home_backoff_seconds: float = 30.0,
-        cull_threshold: int = 300,
+        cull_threshold: int = 320,
         recovery_timeout_seconds: float = 15.0,
         logger: logging.Logger | None = None,
         clock: Callable[[], float] | None = None,

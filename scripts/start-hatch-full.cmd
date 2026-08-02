@@ -11,7 +11,7 @@ if not exist "%hatch_runner%" (
 
 echo FULL AUTO HATCH
 echo Hatch eggs, optimize Attack and HP parents, auto-place Top and Mass,
-echo collect eggs, then cull in the cave only when dinosaur count is above 300.
+echo collect eggs, then cull in the cave only when dinosaur count is above 320.
 echo Start this launcher from the normal home screen.
 echo.
 
