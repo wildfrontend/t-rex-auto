@@ -16,12 +16,14 @@ BOOST_COST = 1
 class HatchBoostInventory:
     remaining: int
     used_total: int
+    enabled: bool
     updated_at: str
 
     def as_dict(self) -> dict[str, int | str]:
         return {
             "remaining": self.remaining,
             "used_total": self.used_total,
+            "enabled": self.enabled,
             "updated_at": self.updated_at,
             "maximum": MAX_BOOST_STOCK,
             "cost": BOOST_COST,
@@ -40,14 +42,14 @@ class HatchBoostInventoryStore:
     def snapshot(self) -> HatchBoostInventory:
         with self._connect() as connection:
             row = connection.execute(
-                "SELECT remaining, used_total, updated_at "
+                "SELECT remaining, used_total, enabled, updated_at "
                 "FROM local_inventory WHERE name = ?",
                 ("hatch_cooldown_boost",),
             ).fetchone()
         if row is None:
             self._initialize()
             return self.snapshot()
-        return HatchBoostInventory(int(row[0]), int(row[1]), str(row[2]))
+        return HatchBoostInventory(int(row[0]), int(row[1]), bool(row[2]), str(row[3]))
 
     def set_remaining(self, remaining: int) -> HatchBoostInventory:
         value = self._validate_stock(remaining)
@@ -56,6 +58,17 @@ class HatchBoostInventoryStore:
             connection.execute(
                 "UPDATE local_inventory SET remaining = ?, updated_at = ? WHERE name = ?",
                 (value, updated_at, "hatch_cooldown_boost"),
+            )
+        return self.snapshot()
+
+    def set_enabled(self, enabled: bool) -> HatchBoostInventory:
+        if not isinstance(enabled, bool):
+            raise ValueError("boost enabled must be a boolean")
+        updated_at = self._now()
+        with self._connect() as connection:
+            connection.execute(
+                "UPDATE local_inventory SET enabled = ?, updated_at = ? WHERE name = ?",
+                (int(enabled), updated_at, "hatch_cooldown_boost"),
             )
         return self.snapshot()
 
@@ -79,11 +92,20 @@ class HatchBoostInventoryStore:
             connection.execute(
                 "CREATE TABLE IF NOT EXISTS local_inventory ("
                 "name TEXT PRIMARY KEY, remaining INTEGER NOT NULL, "
-                "used_total INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL)"
+                "used_total INTEGER NOT NULL DEFAULT 0, enabled INTEGER NOT NULL DEFAULT 0, "
+                "updated_at TEXT NOT NULL)"
             )
+            columns = {
+                str(row[1])
+                for row in connection.execute("PRAGMA table_info(local_inventory)")
+            }
+            if "enabled" not in columns:
+                connection.execute(
+                    "ALTER TABLE local_inventory ADD COLUMN enabled INTEGER NOT NULL DEFAULT 0"
+                )
             connection.execute(
                 "INSERT OR IGNORE INTO local_inventory "
-                "(name, remaining, used_total, updated_at) VALUES (?, ?, 0, ?)",
+                "(name, remaining, used_total, enabled, updated_at) VALUES (?, ?, 0, 0, ?)",
                 ("hatch_cooldown_boost", self.default_stock, self._now()),
             )
 

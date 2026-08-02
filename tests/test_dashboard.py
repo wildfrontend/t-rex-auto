@@ -51,6 +51,7 @@ def test_dashboard_serves_assets_overview_and_health(tmp_path: Path) -> None:
     assert overview["hatch_boost_inventory"]["remaining"] == 100
     assert overview["hatch_boost_inventory"]["maximum"] == 100
     assert overview["hatch_boost_inventory"]["cost"] == 1
+    assert overview["hatch_boost_inventory"]["enabled"] is False
 
 
 def test_dashboard_updates_local_boost_inventory(tmp_path: Path) -> None:
@@ -82,6 +83,34 @@ def test_dashboard_updates_local_boost_inventory(tmp_path: Path) -> None:
 
     assert result["inventory"]["remaining"] == 73
     assert overview["hatch_boost_inventory"]["remaining"] == 73
+
+
+def test_dashboard_toggles_boost_for_next_hatch_cycle(tmp_path: Path) -> None:
+    assets = tmp_path / "assets"
+    write_assets(assets)
+    server = DashboardServer(
+        tmp_path,
+        tmp_path / "logs",
+        tmp_path / "data" / "stats.sqlite3",
+        port=0,
+        assets=assets,
+    )
+
+    with server:
+        body = json.dumps({"enabled": True}).encode()
+        update = Request(
+            f"{server.url}/api/control/set-boost-enabled",
+            data=body,
+            method="POST",
+            headers={
+                "Content-Type": "application/json",
+                "X-Dino-Dashboard": "1",
+            },
+        )
+        with urlopen(update, timeout=2) as response:  # noqa: S310
+            result = json.load(response)
+
+    assert result["inventory"]["enabled"] is True
 
 
 def test_dashboard_controls_require_same_origin_header(tmp_path: Path) -> None:

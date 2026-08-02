@@ -96,6 +96,7 @@ function render(data) {
   const stock = Number(inventory.remaining ?? 100);
   $("boostStockValue").textContent = stock;
   $("boostUsedTotal").textContent = Number(inventory.used_total || 0);
+  $("boostEnabled").checked = inventory.enabled === true;
   if (document.activeElement !== $("boostStockInput")) {
     $("boostStockInput").value = stock;
   }
@@ -194,6 +195,36 @@ $("boostStockUpdate").addEventListener("click", async () => {
     result.textContent = String(error.message || error);
   } finally {
     $("boostStockUpdate").disabled = false;
+  }
+});
+
+$("boostEnabled").addEventListener("change", async () => {
+  const checkbox = $("boostEnabled");
+  const result = $("commandResult");
+  checkbox.disabled = true;
+  result.classList.remove("error");
+  result.textContent = checkbox.checked
+    ? "設定下一輪孵化使用加速券…"
+    : "關閉加速券使用…";
+  try {
+    const response = await fetch("/api/control/set-boost-enabled", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Dino-Dashboard": "1",
+      },
+      body: JSON.stringify({ enabled: checkbox.checked }),
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "HTTP " + response.status);
+    result.textContent = payload.message;
+    await refresh();
+  } catch (error) {
+    checkbox.checked = !checkbox.checked;
+    result.classList.add("error");
+    result.textContent = String(error.message || error);
+  } finally {
+    checkbox.disabled = false;
   }
 });
 refresh();

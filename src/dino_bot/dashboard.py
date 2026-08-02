@@ -522,6 +522,22 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                     "inventory": inventory.as_dict(),
                     "message": f"冷卻加速券庫存已更新為 {inventory.remaining}",
                 }
+            elif action == "set-boost-enabled":
+                payload = self._read_json()
+                enabled = payload.get("enabled")
+                if not isinstance(enabled, bool):
+                    raise ValueError("enabled must be a boolean")
+                inventory = self.server.hatch_inventory.set_enabled(enabled)
+                result = {
+                    "accepted": True,
+                    "action": action,
+                    "inventory": inventory.as_dict(),
+                    "message": (
+                        "下一輪孵化將使用冷卻加速券"
+                        if enabled
+                        else "已關閉冷卻加速券使用"
+                    ),
+                }
             elif action in {"diagnostics", "snapshot", "open-logs"}:
                 result = self.server.controller.run_tool(action)
             else:

@@ -41,6 +41,7 @@ from .cave_navigation import (
 )
 from .cull import read_dino_count, should_cull
 from .digits import DigitReader
+from .hatch_inventory import HatchBoostInventoryStore
 from .models import Detection, Frame, Target
 from .nests import ATTACK_RULE, HP_RULE, MASS_RULE, TOP_RULE, AutoPlaceRule
 from .overlays import (
@@ -65,6 +66,9 @@ AUTOPLACE_YES = "hatch_autoplace_yes"
 COLLECT_EGGS_BUTTON = "hatch_collect_eggs_button"
 NEST_MASK_CLOSE = "hatch_nest_mask_close"
 HATCH_DETAIL_CLOSE = "hatch_unready_detail_close"
+HATCH_BOOST_BUTTON = "hatch_cooldown_boost_button"
+HATCH_BOOST_CONFIRM = "hatch_cooldown_boost_confirm_yes"
+HATCH_BOOST_POINT = (450.0, 1380.0)
 
 CAVE_SWIPE = "hatch_cave_swipe"
 CAVE_RECENTER = "hatch_cave_recenter"
@@ -134,6 +138,8 @@ DEFAULT_TARGET_ACTIONS: dict[str, str] = {
     COLLECT_EGGS_BUTTON: "tap",
     NEST_MASK_CLOSE: "tap",
     HATCH_DETAIL_CLOSE: "tap",
+    HATCH_BOOST_BUTTON: "tap",
+    HATCH_BOOST_CONFIRM: "tap",
     CAVE_SWIPE: "swipe",
     CAVE_RECENTER: "swipe",
     CAVE: "tap",
@@ -170,6 +176,8 @@ DEFAULT_POST_ACTION_DELAYS_MS: dict[str, int] = {
     COLLECT_EGGS_BUTTON: 5000,
     NEST_MASK_CLOSE: 3000,
     HATCH_DETAIL_CLOSE: 3000,
+    HATCH_BOOST_BUTTON: 3000,
+    HATCH_BOOST_CONFIRM: 3000,
     CAVE_SWIPE: 3000,
     CAVE_RECENTER: 3500,
     CAVE: 4000,
@@ -208,6 +216,8 @@ DEFAULT_SUCCESS_TRANSITIONS: dict[str, tuple[str, ...]] = {
     AUTOPLACE_YES: (NEST_TITLE,),
     COLLECT_EGGS_BUTTON: (INCUBATOR_FULL_TOAST, NEST_TITLE),
     HATCH_DETAIL_CLOSE: (hatch_feature.INCUBATOR_TITLE,),
+    HATCH_BOOST_BUTTON: (CONFIRM_YES, CONFIRM_NO),
+    HATCH_BOOST_CONFIRM: (hatch_feature.INCUBATOR_TITLE,),
     # The home anchor also remains visible behind My Nest; choose() verifies
     # that NEST_TITLE disappeared before advancing to cave navigation.
     NEST_MASK_CLOSE: (hatch_feature.HOME_ANCHOR,),
@@ -289,6 +299,8 @@ HATCH_DETECTION_TYPES: frozenset[str] = frozenset(
         *hatch_feature.DEFAULT_TARGET_ACTIONS,
         hatch_feature.HOME_ANCHOR,
         hatch_feature.EXPEL_BUTTON,
+        CONFIRM_YES,
+        CONFIRM_NO,
         *HOME_FOREGROUND_TYPES,
         "duplicate_hunt_alert",
     }
@@ -1071,6 +1083,7 @@ class FullHatchPlanner:
         max_scrolls: int = 0,
         rescan_interval_seconds: float = 600.0,
         batch_hatch_count: int = 12,
+        boost_inventory: HatchBoostInventoryStore | None = None,
         require_home_anchor: bool = True,
         home_failure_limit: int = 3,
         home_backoff_seconds: float = 30.0,
@@ -1087,6 +1100,7 @@ class FullHatchPlanner:
         self.logger = logger or logging.getLogger("dino_bot")
         self.cull_threshold = cull_threshold
         self.batch_hatch_count = max(1, batch_hatch_count)
+        self.boost_inventory = boost_inventory
         self.cave_safe_margin = max(0, cave_safe_margin)
         self.cave_bottom_exclusion_px = max(0, cave_bottom_exclusion_px)
         self.recovery_timeout_seconds = max(1.0, recovery_timeout_seconds)
@@ -1119,11 +1133,15 @@ class FullHatchPlanner:
         self._batch_hatched = 0
         self._batch_hunt_ready = False
         self._observed_cooldown_until: float | None = None
+        self._boost_enabled_for_cycle = False
+        self._boost_attempted = False
+        self._boost_confirmation_pending = False
         self._navigation_failures: dict[tuple[str, str], int] = {}
         self._pending_claim_verification = False
         self._standalone_started = False
         self._standalone_returning = False
         self.completed_management_cycles = 0
+        self._start_hatch_cycle()
         if self.standalone_stage is not None:
             self._stage = "recover_home"
             self._child = HatchHomeRecoveryPlanner(
@@ -1219,6 +1237,7 @@ class FullHatchPlanner:
         self._observed_cooldown_until = None
         self._navigation_failures.clear()
         self._pending_claim_verification = False
+        self._start_hatch_cycle()
 
     def on_action_success(self, target_type: str) -> None:
         if target_type == STARTUP_NEST_SHORTCUT:
@@ -1241,6 +1260,27 @@ class FullHatchPlanner:
         if self._stage == "hatch":
             hatch = self._hatch_child
             hatch.on_action_success(target_type)
+            if target_type == HATCH_BOOST_BUTTON:
+                self._boost_attempted = True
+                self._boost_confirmation_pending = True
+                return
+            if target_type == HATCH_BOOST_CONFIRM and self._boost_confirmation_pending:
+                self._boost_confirmation_pending = False
+                consumed = (
+                    self.boost_inventory.consume_one()
+                    if self.boost_inventory is not None
+                    else None
+                )
+                if consumed is None:
+                    self.logger.warning(
+                        "Hatch boost | confirmation succeeded but Bot budget was empty"
+                    )
+                else:
+                    self.logger.info(
+                        "Hatch boost | used 1 ticket | remaining budget=%d",
+                        consumed.remaining,
+                    )
+                return
             if target_type == hatch_feature.CLAIM_BUTTON:
                 if self._batch_hunt_ready:
                     self.logger.info(
@@ -1489,6 +1529,12 @@ class FullHatchPlanner:
     ) -> Target | None:
         by_type = _group(detections)
         if self._stage == "hatch":
+            if self._boost_confirmation_pending:
+                yes = _best(by_type.get(CONFIRM_YES))
+                no = _best(by_type.get(CONFIRM_NO))
+                if yes is not None and no is not None:
+                    return _synthetic(HATCH_BOOST_CONFIRM, yes.x, yes.y)
+                return None
             self._observe_hatch_cooldown(frame, by_type)
             detail_close = _unready_egg_detail_close(frame)
             if detail_close is not None:
@@ -1500,6 +1546,11 @@ class FullHatchPlanner:
                         self._hatch_child.hatched,
                     )
                 return _synthetic(HATCH_DETAIL_CLOSE, *detail_close)
+            if self._should_use_hatch_boost(by_type):
+                return _synthetic(
+                    HATCH_BOOST_BUTTON,
+                    *_scaled(frame, HATCH_BOOST_POINT, self.reference_width),
+                )
             target = self._hatch_child.choose(frame, detections)
             if target is not None and target.type == hatch_feature.EGG_PILE:
                 safe_point = _egg_pile_safe_tap(frame)
@@ -1591,6 +1642,7 @@ class FullHatchPlanner:
                 self._stage = "hatch"
                 self._child = self._new_hatch()
                 self._hatch_baseline = 0
+                self._start_hatch_cycle()
                 return self._choose_current(frame, detections)
             return target
         return None
@@ -1610,6 +1662,22 @@ class FullHatchPlanner:
     def _new_hatch(self) -> hatch_feature.HatchPlanner:
         return hatch_feature.HatchPlanner(**self._hatch_kwargs)
 
+    def _start_hatch_cycle(self) -> None:
+        """Snapshot the dashboard boost permission for this hatch pass."""
+
+        self._boost_attempted = False
+        self._boost_confirmation_pending = False
+        self._boost_enabled_for_cycle = False
+        if self.boost_inventory is None:
+            return
+        inventory = self.boost_inventory.snapshot()
+        self._boost_enabled_for_cycle = inventory.enabled and inventory.remaining > 0
+        self.logger.info(
+            "Hatch boost | next cycle permission=%s | budget=%d",
+            self._boost_enabled_for_cycle,
+            inventory.remaining,
+        )
+
     def _start_standalone(self) -> None:
         assert self.standalone_stage is not None
         self._standalone_started = True
@@ -1620,6 +1688,7 @@ class FullHatchPlanner:
             self._stage = "hatch"
             self._child = self._new_hatch()
             self._hatch_baseline = 0
+            self._start_hatch_cycle()
             return
         if self.standalone_stage == "cave":
             self._stage = "cave"
@@ -1697,6 +1766,7 @@ class FullHatchPlanner:
         self._stage = "hatch"
         self._child = self._new_hatch()
         self._hatch_baseline = 0
+        self._start_hatch_cycle()
         self._collect_only_after_empty = False
         self._empty_rescan_wait = True
         self._hatch_child.begin_rescan_wait(
@@ -1721,6 +1791,22 @@ class FullHatchPlanner:
         )
         if seconds is not None:
             self._observed_cooldown_until = self.clock() + seconds
+
+    def _should_use_hatch_boost(
+        self,
+        by_type: dict[str, list[Detection]],
+    ) -> bool:
+        return (
+            self._boost_enabled_for_cycle
+            and not self._boost_attempted
+            and hatch_feature.INCUBATOR_TITLE in by_type
+            and not by_type.get(hatch_feature.HATCH_LABEL)
+            and bool(by_type.get(hatch_feature.CLOSE_BUTTON))
+            and (
+                self.boost_inventory is None
+                or self.boost_inventory.snapshot().remaining > 0
+            )
+        )
 
     def _start_replacement(self, kind: str) -> None:
         if kind == "attack":

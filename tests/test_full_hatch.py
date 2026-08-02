@@ -21,6 +21,8 @@ from dino_bot.full_hatch import (
     CAVE_SELECT_BUTTON,
     CAVE_SWIPE,
     COLLECT_EGGS_BUTTON,
+    HATCH_BOOST_BUTTON,
+    HATCH_BOOST_CONFIRM,
     HATCH_DETAIL_CLOSE,
     NEST_GEAR,
     NEST_MASK_CLOSE,
@@ -46,6 +48,7 @@ from dino_bot.full_hatch import (
     is_centered_home_screen,
     is_home_screen,
 )
+from dino_bot.hatch_inventory import HatchBoostInventoryStore
 from dino_bot.models import BoundingBox, Detection, Frame
 from dino_bot.nests import MASS_RULE, TOP_RULE
 from dino_bot.overlays import CONFIRM_NO, CONFIRM_YES, SELECT_CONFIRM_PROMPT
@@ -414,6 +417,39 @@ def test_full_hatch_uses_observed_batch_timer_for_rescan_wait() -> None:
     planner._observed_cooldown_until = now[0] + 3725
     planner._start_empty_rescan_wait()
     assert planner.next_ready_delay_ms() == 3_725_000
+
+
+def test_boost_permission_applies_only_to_the_next_hatch_cycle(tmp_path) -> None:
+    inventory = HatchBoostInventoryStore(tmp_path / "stats.sqlite3")
+    planner = FullHatchPlanner(
+        DigitReader(GLYPHS),
+        egg_pile_point=(450, 1330),
+        boost_inventory=inventory,
+    )
+    grid = [
+        detection(hatch.INCUBATOR_TITLE, 450, 40),
+        detection(hatch.CLOSE_BUTTON, 800, 1380),
+    ]
+
+    # The default-off setting is snapshotted when this hatch cycle begins.
+    inventory.set_enabled(True)
+    target = planner.choose(frame(), grid)
+    assert target is not None and target.type == hatch.CLOSE_BUTTON
+
+    planner._child = planner._new_hatch()
+    planner._start_hatch_cycle()
+    target = planner.choose(frame(), grid)
+    assert target is not None and target.type == HATCH_BOOST_BUTTON
+    planner.on_action_success(target.type)
+
+    prompt = grid + [
+        detection(CONFIRM_YES, 365, 850),
+        detection(CONFIRM_NO, 535, 850),
+    ]
+    target = planner.choose(frame(), prompt)
+    assert target is not None and target.type == HATCH_BOOST_CONFIRM
+    planner.on_action_success(target.type)
+    assert inventory.snapshot().remaining == 99
 
 
 def test_home_screen_requires_bright_unobscured_map_and_no_foreground() -> None:

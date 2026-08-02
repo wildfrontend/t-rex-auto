@@ -30,6 +30,7 @@ from .events import EventLog, JsonlEventLog, NullEventLog
 from .full_hatch import FullHatchPlanner
 from .hatch import HatchPlanner
 from .hatch_hunt import HatchHuntPlanner
+from .hatch_inventory import HatchBoostInventoryStore
 from .logging import configure_logging
 from .models import ActionKind
 from .modes import create_mode
@@ -373,6 +374,9 @@ def _create_hatch_engine(
             reference_size=open_cv_detector.reference_size,
         )
     if full:
+        hatch_inventory = HatchBoostInventoryStore(
+            config.root / "data" / "stats.sqlite3"
+        )
         full_planner = FullHatchPlanner(
             DigitReader(hatch.manifest.parent / "digits"),
             egg_pile_point=(hatch.egg_pile[0], hatch.egg_pile[1]),
@@ -382,6 +386,7 @@ def _create_hatch_engine(
             max_scrolls=hatch.max_scrolls,
             rescan_interval_seconds=hatch.rescan_interval_seconds,
             batch_hatch_count=hatch.batch_hatch_count,
+            boost_inventory=hatch_inventory,
             require_home_anchor=hatch.require_home_anchor,
             home_failure_limit=hatch.home_failure_limit,
             home_backoff_seconds=hatch.home_backoff_seconds,
