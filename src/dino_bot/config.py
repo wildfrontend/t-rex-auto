@@ -164,6 +164,8 @@ class HatchConfig:
     home_backoff_seconds: float = 30.0
     # Phase C: cull only when the cave-view N/350 readout exceeds this.
     cull_threshold: int = 320
+    # 洞穴容量估算(上次實讀+累積孵化)達到此值就觸發篩選+淘汰。
+    cave_screen_trigger: int = 300
 
 
 @dataclass(frozen=True, slots=True)
@@ -592,6 +594,7 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
             home_failure_limit=int(hatch_data.get("home_failure_limit", 3)),
             home_backoff_seconds=float(hatch_data.get("home_backoff_seconds", 30)),
             cull_threshold=int(hatch_data.get("cull_threshold", 320)),
+            cave_screen_trigger=int(hatch_data.get("cave_screen_trigger", 300)),
         ),
         training=TrainingConfig(
             fps=float(training_data.get("fps", 2)),
@@ -690,6 +693,8 @@ def _validate(config: AppConfig) -> None:
         raise ConfigError("hatch.rescan_interval_seconds cannot be negative")
     if config.hatch.batch_hatch_count <= 0:
         raise ConfigError("hatch.batch_hatch_count must be greater than zero")
+    if config.hatch.cave_screen_trigger <= 0:
+        raise ConfigError("hatch.cave_screen_trigger must be greater than zero")
     if config.hatch.home_failure_limit <= 0:
         raise ConfigError("hatch.home_failure_limit must be greater than zero")
     if config.hatch.home_backoff_seconds < 0:

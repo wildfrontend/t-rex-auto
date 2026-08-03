@@ -391,6 +391,7 @@ def _create_hatch_engine(
             home_failure_limit=hatch.home_failure_limit,
             home_backoff_seconds=hatch.home_backoff_seconds,
             cull_threshold=hatch.cull_threshold,
+            cave_screen_trigger=hatch.cave_screen_trigger,
             cave_safe_margin=80,
             cave_bottom_exclusion_px=config.planner.bottom_exclusion_px,
             stage_scoped_scan=config.planner.stage_scoped_scan,

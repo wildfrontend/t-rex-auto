@@ -1071,3 +1071,35 @@ def test_full_flow_blind_screen_uses_bounded_back_then_requires_home_proof() -> 
     assert planner.choose(frame(), home) is None
     target = planner.choose(frame(), home)
     assert target is not None and target.type == CAVE_SWIPE
+
+
+def test_cave_estimate_triggers_screening_before_batch_threshold() -> None:
+    planner = FullHatchPlanner(
+        DigitReader(GLYPHS),
+        egg_pile_point=(450, 1330),
+        batch_hatch_count=48,
+    )
+    planner._child = planner._new_hatch()
+    planner._start_hatch_cycle()
+    planner._cave_population = 290
+    planner._hatch_child.hatched = 12
+    planner.on_action_success(hatch.CLOSE_BUTTON)
+    # 估算 290+12=302 >= 300:即使批次 12/48 未滿也觸發篩選。
+    assert planner._management_pending is True
+    assert planner._collect_only_after_empty is False
+
+
+def test_cave_estimate_below_trigger_keeps_collect_only_cycle() -> None:
+    planner = FullHatchPlanner(
+        DigitReader(GLYPHS),
+        egg_pile_point=(450, 1330),
+        batch_hatch_count=48,
+    )
+    planner._child = planner._new_hatch()
+    planner._start_hatch_cycle()
+    planner._cave_population = 200
+    planner._hatch_child.hatched = 12
+    planner.on_action_success(hatch.CLOSE_BUTTON)
+    # 估算 212 < 300 且批次 12/48 未滿:維持一般收蛋循環。
+    assert planner._management_pending is False
+    assert planner._collect_only_after_empty is True
