@@ -152,6 +152,11 @@ class AdbClient:
     def screencap_png(self) -> bytes:
         return bytes(self.run(["exec-out", "screencap", "-p"], binary=True))
 
+    def screencap_raw(self) -> bytes:
+        """Uncompressed framebuffer dump; skips the device-side PNG encoder."""
+
+        return bytes(self.run(["exec-out", "screencap"], binary=True))
+
 
 class AdbActionDriver:
     def __init__(self, client: AdbClient, device_size: tuple[int, int] | None = None):

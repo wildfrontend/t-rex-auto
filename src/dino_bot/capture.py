@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+import struct
 import sys
 import time
 from collections.abc import Sequence
@@ -176,17 +177,45 @@ class AdbScreencapCapture:
     def __init__(self, client: AdbClient):
         self.client = client
         self._sequence = 0
+        self._raw_supported: bool | None = None
 
     def capture(self) -> Frame:
-        try:
-            payload = self.client.screencap_png()
-        except AdbError as exc:
-            raise CaptureError(str(exc)) from exc
-        image = cv2.imdecode(np.frombuffer(payload, dtype=np.uint8), cv2.IMREAD_COLOR)
+        image = None
+        if self._raw_supported is not False:
+            image = self._capture_raw()
+            self._raw_supported = image is not None
         if image is None:
-            raise CaptureError("ADB returned an invalid PNG screenshot")
+            try:
+                payload = self.client.screencap_png()
+            except AdbError as exc:
+                raise CaptureError(str(exc)) from exc
+            image = cv2.imdecode(np.frombuffer(payload, dtype=np.uint8), cv2.IMREAD_COLOR)
+            if image is None:
+                raise CaptureError("ADB returned an invalid PNG screenshot")
         self._sequence += 1
         return Frame(image=image, source="emulator:adb", sequence=self._sequence)
+
+    def _capture_raw(self) -> np.ndarray | None:
+        """Decode the raw screencap dump (~2x faster than the PNG path)."""
+
+        try:
+            payload = self.client.screencap_raw()
+        except AdbError:
+            return None
+        if len(payload) < 16:
+            return None
+        width, height, pixel_format = struct.unpack_from("<III", payload, 0)
+        if pixel_format != 1 or not width or not height:  # 1 = RGBA_8888
+            return None
+        # Android emits a 16-byte header (w, h, format, colorspace) since API
+        # 26 and a 12-byte one before that; the payload length disambiguates.
+        for header in (16, 12):
+            if len(payload) - header == width * height * 4:
+                rgba = np.frombuffer(payload, dtype=np.uint8, offset=header)
+                return cv2.cvtColor(
+                    rgba.reshape(height, width, 4), cv2.COLOR_RGBA2BGR
+                )
+        return None
 
     def close(self) -> None:
         pass
