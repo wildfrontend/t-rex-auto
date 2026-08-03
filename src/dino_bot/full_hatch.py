@@ -1253,6 +1253,7 @@ class FullHatchPlanner:
         self._complete = False
         self._no_target_since: float | None = None
         self._recovery_reason: str | None = None
+        self._recovery_rounds = 0
         self._collect_only_after_empty = False
         self._empty_rescan_wait = False
         # A fresh planner instance must prove that the dinosaur capacity is
@@ -1632,6 +1633,15 @@ class FullHatchPlanner:
         if self._stage == "recover_home":
             target = self._recovery_child.choose(frame, detections)
             if self._recovery_child.is_failed():
+                if self.standalone_stage is None and self._recovery_rounds < 2:
+                    # 畫面轉場常只比恢復預算慢幾秒;連續模式先重試,
+                    # 不要一次失敗就把整個流程標記結束。
+                    self._recovery_rounds += 1
+                    self._begin_home_recovery(
+                        f"retry {self._recovery_rounds}/2 after failed recovery"
+                        f" ({self._recovery_reason or 'unknown'})"
+                    )
+                    return None
                 self.logger.error(
                     "Hatch full | recovery failed | reason=%s",
                     self._recovery_reason or "unknown",
@@ -1650,6 +1660,7 @@ class FullHatchPlanner:
                     if not self._standalone_started:
                         self._start_standalone()
                         return self._choose_current(frame, detections)
+                self._recovery_rounds = 0
                 self.logger.info(
                     "Hatch full | centered home confirmed | recovered=%s",
                     self._recovery_reason or "unknown",

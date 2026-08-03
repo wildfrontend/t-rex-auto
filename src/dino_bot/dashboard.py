@@ -375,34 +375,58 @@ class DashboardController:
         if mode == "hatch-stage" and stage not in HATCH_STAGE_LABELS:
             raise RuntimeError("Unsupported hatch stage")
         with self._start_lock:
-            active = self.discover()
-            if active["running"]:
-                raise RuntimeError(f"Bot already running in {active['mode_label']} mode")
             now = time.monotonic()
             if now - self._last_start < 5:
                 raise RuntimeError("Bot start already requested")
-            if os.name == "nt":
-                creation_flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0) | getattr(
-                    subprocess, "CREATE_NEW_PROCESS_GROUP", 0
-                )
-                subprocess.Popen(  # noqa: S603 - fixed local PowerShell runner and allowlist
-                    self._runner_command(mode, stage=stage),
-                    cwd=self.runtime_root,
-                    creationflags=creation_flags,
-                )
-            else:
-                self.logs_dir.mkdir(parents=True, exist_ok=True)
-                launch_log = self.logs_dir / f"dashboard-launch-{mode}.log"
-                with launch_log.open("ab") as stream:
-                    subprocess.Popen(  # noqa: S603 - fixed local Python entrypoint and allowlist
-                        self._bot_command(mode, stage=stage),
-                        cwd=self.app_root,
-                        stdout=stream,
-                        stderr=subprocess.STDOUT,
-                        start_new_session=True,
-                    )
             self._last_start = now
-        return {"accepted": True, "action": "start", "mode": mode, "stage": stage}
+            active = self.discover()
+            if not active["running"]:
+                self._launch(mode, stage=stage)
+                return {"accepted": True, "action": "start", "mode": mode, "stage": stage}
+            previous_label = str(active["mode_label"])
+            with suppress(RuntimeError):
+                self.stop()
+
+        def start_after_stop() -> None:
+            deadline = time.monotonic() + 25
+            while time.monotonic() < deadline:
+                if not self.discover()["running"]:
+                    time.sleep(1)
+                    with suppress(RuntimeError), self._start_lock:
+                        self._launch(mode, stage=stage)
+                    return
+                time.sleep(0.5)
+
+        threading.Thread(target=start_after_stop, daemon=True).start()
+        return {
+            "accepted": True,
+            "action": "switch",
+            "mode": mode,
+            "stage": stage,
+            "message": f"正在停止{previous_label}，隨後自動啟動新模式",
+        }
+
+    def _launch(self, mode: str, *, stage: str | None = None) -> None:
+        if os.name == "nt":
+            creation_flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0) | getattr(
+                subprocess, "CREATE_NEW_PROCESS_GROUP", 0
+            )
+            subprocess.Popen(  # noqa: S603 - fixed local PowerShell runner and allowlist
+                self._runner_command(mode, stage=stage),
+                cwd=self.runtime_root,
+                creationflags=creation_flags,
+            )
+        else:
+            self.logs_dir.mkdir(parents=True, exist_ok=True)
+            launch_log = self.logs_dir / f"dashboard-launch-{mode}.log"
+            with launch_log.open("ab") as stream:
+                subprocess.Popen(  # noqa: S603 - fixed local Python entrypoint and allowlist
+                    self._bot_command(mode, stage=stage),
+                    cwd=self.app_root,
+                    stdout=stream,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                )
 
     def _active_control(self, action: str) -> dict[str, Any]:
         active = self.discover()

@@ -48,7 +48,10 @@ class HatchHuntPlanner:
         return self.hunt.completion_type
 
     def is_complete(self) -> bool:
-        return False
+        # 內層孵蛋流程宣告結束(含恢復重試耗盡)時,讓引擎乾淨停止,
+        # 而不是留下一個只掃描不動作的殭屍程序。
+        is_complete = getattr(self.hatch, "is_complete", None)
+        return bool(is_complete()) if callable(is_complete) else False
 
     def last_stage(self) -> str:
         child = self.hatch if self._mode == "hatch" else self.hunt
