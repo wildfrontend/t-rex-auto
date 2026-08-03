@@ -8,6 +8,8 @@ import json
 import re
 import sqlite3
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -108,8 +110,20 @@ class MetricsStore:
         connection.execute("PRAGMA busy_timeout=5000")
         return connection
 
+    @contextmanager
+    def _session(self) -> Iterator[sqlite3.Connection]:
+        """Transactional connection that is always closed; sqlite3's own
+        context manager only commits or rolls back and leaks the file handle."""
+
+        connection = self._connect()
+        try:
+            with connection:
+                yield connection
+        finally:
+            connection.close()
+
     def _initialize(self) -> None:
-        with self._connect() as connection:
+        with self._session() as connection:
             connection.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS sources (
@@ -157,7 +171,7 @@ class MetricsStore:
                 if path.is_file() and identity is not None and identity[0] == today:
                     paths.append(path)
             paths.sort(key=_log_sort_key)
-            with self._connect() as connection:
+            with self._session() as connection:
                 for path in paths:
                     self._ingest_path(connection, path)
                 self._compact_history(connection, today)
@@ -224,11 +238,7 @@ class MetricsStore:
             size = path.stat().st_size
         except OSError:
             return
-        if previous_signature and previous_signature != signature:
-            offset = 0
-            generation += 1
-            state = {}
-        elif size < offset:
+        if previous_signature and previous_signature != signature or size < offset:
             offset = 0
             generation += 1
             state = {}
@@ -565,7 +575,7 @@ class MetricsStore:
     def snapshot(self, recent_limit: int = 20) -> dict[str, Any]:
         self.refresh()
         today = datetime.now().astimezone().date().isoformat()
-        with self._connect() as connection:
+        with self._session() as connection:
             session_row = connection.execute(
                 """
                 SELECT occurred_at, payload_json FROM metric_events

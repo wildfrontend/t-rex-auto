@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -40,7 +42,7 @@ class HatchBoostInventoryStore:
         self._initialize()
 
     def snapshot(self) -> HatchBoostInventory:
-        with self._connect() as connection:
+        with self._session() as connection:
             row = connection.execute(
                 "SELECT remaining, used_total, enabled, updated_at "
                 "FROM local_inventory WHERE name = ?",
@@ -54,7 +56,7 @@ class HatchBoostInventoryStore:
     def set_remaining(self, remaining: int) -> HatchBoostInventory:
         value = self._validate_stock(remaining)
         updated_at = self._now()
-        with self._connect() as connection:
+        with self._session() as connection:
             connection.execute(
                 "UPDATE local_inventory SET remaining = ?, updated_at = ? WHERE name = ?",
                 (value, updated_at, "hatch_cooldown_boost"),
@@ -65,7 +67,7 @@ class HatchBoostInventoryStore:
         if not isinstance(enabled, bool):
             raise ValueError("boost enabled must be a boolean")
         updated_at = self._now()
-        with self._connect() as connection:
+        with self._session() as connection:
             connection.execute(
                 "UPDATE local_inventory SET enabled = ?, updated_at = ? WHERE name = ?",
                 (int(enabled), updated_at, "hatch_cooldown_boost"),
@@ -76,7 +78,7 @@ class HatchBoostInventoryStore:
         """Atomically consume one verified boost, or return None at zero stock."""
 
         updated_at = self._now()
-        with self._connect() as connection:
+        with self._session() as connection:
             cursor = connection.execute(
                 "UPDATE local_inventory "
                 "SET remaining = remaining - 1, used_total = used_total + 1, updated_at = ? "
@@ -88,7 +90,7 @@ class HatchBoostInventoryStore:
         return self.snapshot()
 
     def _initialize(self) -> None:
-        with self._connect() as connection:
+        with self._session() as connection:
             connection.execute(
                 "CREATE TABLE IF NOT EXISTS local_inventory ("
                 "name TEXT PRIMARY KEY, remaining INTEGER NOT NULL, "
@@ -111,6 +113,18 @@ class HatchBoostInventoryStore:
 
     def _connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self.database, timeout=5.0)
+
+    @contextmanager
+    def _session(self) -> Iterator[sqlite3.Connection]:
+        """Transactional connection that is always closed; sqlite3's own
+        context manager only commits or rolls back and leaks the file handle."""
+
+        connection = self._connect()
+        try:
+            with connection:
+                yield connection
+        finally:
+            connection.close()
 
     @staticmethod
     def _now() -> str:
