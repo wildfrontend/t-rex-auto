@@ -195,9 +195,13 @@ class DashboardController:
         logs_dir: Path,
         *,
         bot_ports: dict[str, int] | None = None,
+        config_path: Path | None = None,
     ) -> None:
         self.runtime_root = runtime_root
+        candidate = runtime_root / "app"
+        self.app_root = candidate if candidate.is_dir() else runtime_root
         self.logs_dir = logs_dir
+        self.config_path = config_path or self.app_root / "config.json"
         self.bot_ports = dict(bot_ports or DEFAULT_BOT_PORTS)
         self._start_lock = threading.Lock()
         self._last_start = 0.0
@@ -231,8 +235,74 @@ class DashboardController:
             "workflow": _workflow_status(self.logs_dir, None),
         }
 
+    def _bot_command(self, mode: str, *, stage: str | None = None) -> list[str]:
+        """Direct Python launch used on non-Windows hosts (no PowerShell runner)."""
+
+        command = [
+            sys.executable,
+            str(self.app_root / "main.py"),
+            "--config",
+            str(self.config_path),
+        ]
+        if mode == "hunt":
+            command += [
+                "run",
+                "--mode",
+                "runtime",
+                "--max-actions",
+                "0",
+                "--max-cycles",
+                "0",
+                "--batch-size",
+                "10",
+                "--mail-after-hunts",
+                "30",
+                "--speed",
+                "fast",
+                "--status-port",
+                str(self.bot_ports[mode]),
+                "--verbose",
+            ]
+        elif mode == "hatch-hunt":
+            command += [
+                "run",
+                "--feature",
+                "hatch-hunt",
+                "--mode",
+                "debug",
+                "--speed",
+                "safe",
+                "--status-port",
+                str(self.bot_ports[mode]),
+                "--max-actions",
+                "0",
+                "--max-cycles",
+                "0",
+                "--verbose",
+            ]
+        elif mode == "hatch-stage" and stage in HATCH_STAGE_LABELS:
+            command += [
+                "run",
+                "--feature",
+                f"hatch-stage-{stage}",
+                "--mode",
+                "debug",
+                "--speed",
+                "safe",
+                "--status-port",
+                str(self.bot_ports[mode]),
+                "--max-actions",
+                "0",
+                "--max-cycles",
+                "0",
+                "--verbose",
+            ]
+        else:
+            raise RuntimeError("Unsupported Bot mode")
+        return command
+
     def _runner_command(self, mode: str, *, stage: str | None = None) -> list[str]:
-        scripts = self.runtime_root / "app" / "scripts"
+        scripts = self.app_root / "scripts"
         if mode == "hunt":
             runner = scripts / "run-windows.ps1"
             arguments = [
@@ -311,16 +381,26 @@ class DashboardController:
             now = time.monotonic()
             if now - self._last_start < 5:
                 raise RuntimeError("Bot start already requested")
-            if os.name != "nt":
-                raise RuntimeError("Bot launch is only available on Windows")
-            creation_flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0) | getattr(
-                subprocess, "CREATE_NEW_PROCESS_GROUP", 0
-            )
-            subprocess.Popen(  # noqa: S603 - fixed local PowerShell runner and allowlist
-                self._runner_command(mode, stage=stage),
-                cwd=self.runtime_root,
-                creationflags=creation_flags,
-            )
+            if os.name == "nt":
+                creation_flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0) | getattr(
+                    subprocess, "CREATE_NEW_PROCESS_GROUP", 0
+                )
+                subprocess.Popen(  # noqa: S603 - fixed local PowerShell runner and allowlist
+                    self._runner_command(mode, stage=stage),
+                    cwd=self.runtime_root,
+                    creationflags=creation_flags,
+                )
+            else:
+                self.logs_dir.mkdir(parents=True, exist_ok=True)
+                launch_log = self.logs_dir / f"dashboard-launch-{mode}.log"
+                with launch_log.open("ab") as stream:
+                    subprocess.Popen(  # noqa: S603 - fixed local Python entrypoint and allowlist
+                        self._bot_command(mode, stage=stage),
+                        cwd=self.app_root,
+                        stdout=stream,
+                        stderr=subprocess.STDOUT,
+                        start_new_session=True,
+                    )
             self._last_start = now
         return {"accepted": True, "action": "start", "mode": mode, "stage": stage}
 
@@ -359,19 +439,22 @@ class DashboardController:
         return {"accepted": True, "action": "restart", "mode": mode}
 
     def run_tool(self, action: str) -> dict[str, Any]:
-        main_script = self.runtime_root / "app" / "main.py"
-        config = self.runtime_root / "app" / "config.json"
+        main_script = self.app_root / "main.py"
+        config = self.config_path
         if action == "open-logs":
-            startfile = getattr(os, "startfile", None)
-            if not callable(startfile):
-                raise RuntimeError("Opening folders is only available on Windows")
             self.logs_dir.mkdir(parents=True, exist_ok=True)
-            startfile(str(self.logs_dir))
+            startfile = getattr(os, "startfile", None)
+            if callable(startfile):
+                startfile(str(self.logs_dir))
+            elif sys.platform == "darwin":
+                subprocess.run(["/usr/bin/open", str(self.logs_dir)], check=False)
+            else:
+                raise RuntimeError("Opening folders is only available on Windows and macOS")
             return {"accepted": True, "action": action}
         if action == "diagnostics":
             command = [sys.executable, str(main_script), "--config", str(config), "diagnostics"]
         elif action == "snapshot":
-            output = self.runtime_root / "app" / "debug" / (
+            output = self.app_root / "debug" / (
                 "dashboard-" + datetime.now().strftime("%Y%m%d-%H%M%S") + ".png"
             )
             command = [
@@ -563,6 +646,7 @@ class DashboardServer:
         *,
         port: int = 8780,
         assets: Path | None = None,
+        config_path: Path | None = None,
     ) -> None:
         self.runtime_root = runtime_root
         self.logs_dir = logs_dir
@@ -571,7 +655,7 @@ class DashboardServer:
         self.assets = assets or Path(__file__).with_name("dashboard_assets")
         self.metrics = MetricsStore(database, logs_dir)
         self.hatch_inventory = HatchBoostInventoryStore(database)
-        self.controller = DashboardController(runtime_root, logs_dir)
+        self.controller = DashboardController(runtime_root, logs_dir, config_path=config_path)
         self._server: _DashboardHttpServer | None = None
         self._thread: threading.Thread | None = None
 

@@ -286,11 +286,17 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "dashboard":
         port = max(1, min(int(args.port), 65535))
         database = config.root / "data" / "stats.sqlite3"
+        runtime_root = (
+            config.root.parent
+            if (config.root.parent / "app" / "main.py").is_file()
+            else config.root
+        )
         server = DashboardServer(
-            config.root.parent,
+            runtime_root,
             config.logs_dir,
             database,
             port=port,
+            config_path=Path(args.config).resolve(),
         )
         print(f"Dino dashboard: http://127.0.0.1:{port}")
         print(f"Statistics database: {database}")
