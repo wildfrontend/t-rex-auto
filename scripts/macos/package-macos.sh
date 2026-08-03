@@ -35,6 +35,7 @@ cp -a \
 cp -a "${project_root}/scripts/macos/start-bot.command" "${package_root}/start-bot.command"
 cp -a "${project_root}/scripts/macos/stop-bot.command" "${package_root}/stop-bot.command"
 cp -a "${project_root}/使用教學.md" "${package_root}/使用教學.md"
+cp -a "${project_root}/新手啟動指南.md" "${package_root}/新手啟動指南.md"
 
 # 儀表板啟動器(套件版:venv 建在 app/.venv,第一次啟動會自動安裝)。
 cat >"${package_root}/start-dashboard.command" <<'LAUNCHER'
