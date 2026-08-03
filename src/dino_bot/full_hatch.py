@@ -366,6 +366,10 @@ CAVE_DETECTION_TYPES: frozenset[str] = frozenset(
         CAVE_CONTINUOUS_BUTTON,
         SELECT_WEAKEST_BUTTON,
         SELECT_CHOOSE_BUTTON,
+        # select_dino 階段的「所有」標籤:表頭已對就跳過、選單開著
+        # 就點選項 — 兩個防呆都要看得見這兩型才會生效。
+        nest_filter_feature.TAG_HDR_ALL,
+        nest_filter_feature.TAG_ALL,
         hatch_feature.CLAIM_BUTTON,
         CONFIRM_NO,
         CONFIRM_YES,
