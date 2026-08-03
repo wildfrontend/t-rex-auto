@@ -92,7 +92,9 @@ def _post_json(url: str, timeout: float = 3.0) -> dict[str, Any]:
         raise RuntimeError(f"Bot control unavailable: {exc}") from exc
 
 
-def _latest_log_lines(logs_dir: Path, limit: int = 300) -> list[str]:
+def _latest_log_lines(logs_dir: Path, limit: int = 4000) -> list[str]:
+    # 狩獵每次貢獻約 6 行 INFO;視窗太小會把冷卻等待行擠出去,
+    # 進度條就退回預設的「檢查孵蛋」。4000 行足以涵蓋最長冷卻。
     paths = sorted(logs_dir.glob("20*.log"))
     if not paths:
         return []
