@@ -104,6 +104,9 @@ class MetricsStore:
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:
+        # 目錄可能在執行中被外力移除(例如重新打包);連線前重建,
+        # 讓錯誤自我修復而不是每個請求都失敗。
+        self.database.parent.mkdir(parents=True, exist_ok=True)
         connection = sqlite3.connect(self.database, timeout=5)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA journal_mode=WAL")

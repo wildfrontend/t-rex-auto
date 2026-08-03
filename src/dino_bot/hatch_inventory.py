@@ -112,6 +112,7 @@ class HatchBoostInventoryStore:
             )
 
     def _connect(self) -> sqlite3.Connection:
+        self.database.parent.mkdir(parents=True, exist_ok=True)
         return sqlite3.connect(self.database, timeout=5.0)
 
     @contextmanager
