@@ -1,4 +1,4 @@
-"""Dino Mutant Bot framework."""
+"""猛龍計畫自動化框架。"""
 
 from .config import AppConfig, load_config
 

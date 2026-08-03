@@ -86,7 +86,7 @@ class _StatusHandler(BaseHTTPRequestHandler):
             self._send_json(
                 200,
                 {
-                    "service": "Dino Mutant Bot local status and control API",
+                    "service": "猛龍計畫本機狀態與控制 API",
                     "read_endpoints": ["/health", "/status", "/actions", "/settings"],
                     "control_endpoints": [
                         f"POST {path}"

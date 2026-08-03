@@ -24,7 +24,7 @@ $RunnerScript = Join-Path $PSScriptRoot "run-windows.ps1"
 $LogRoot = Join-Path $AppRoot "logs"
 $ConfigPath = Join-Path $AppRoot "config.json"
 $UserSettingsPath = Join-Path $RuntimeRoot "user-settings.json"
-$Host.UI.RawUI.WindowTitle = "Dino Mutant Bot - 互動控制台"
+$Host.UI.RawUI.WindowTitle = "猛龍計畫 - 互動控制台"
 
 function Get-EmulatorConfiguration {
     if (-not (Test-Path -LiteralPath $ConfigPath)) {
@@ -406,7 +406,7 @@ function Read-AvailableStatusPort {
         }
         $SuggestedPort = if ($Candidate -lt 65535) { $Candidate + 1 } else { 8765 }
         if ($IsDinoBot) {
-            Write-Host "API 身分：Dino Mutant Bot（已驗證）" -ForegroundColor Green
+            Write-Host "API 身分：猛龍計畫（已驗證）" -ForegroundColor Green
             Write-Host "選項：[N]改用 $SuggestedPort  [K]清理 Dino Bot 占用  [Q]取消，或直接輸入 Port"
         } else {
             Write-Host "選項：[N]改用 $SuggestedPort  [Q]取消，或直接輸入 Port"
@@ -806,7 +806,7 @@ function Invoke-Diagnostics {
 }
 
 Write-Host "========================================" -ForegroundColor Cyan
-Write-Host " Dino Mutant Bot - 中文互動控制台 " -ForegroundColor Cyan
+Write-Host " 猛龍計畫 - 中文互動控制台 " -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "執行位置：$RuntimeRoot"
 Write-Host "AI 狀態接口：http://127.0.0.1:$StatusPort/status（僅限本機）"

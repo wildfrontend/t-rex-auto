@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -45,7 +46,12 @@ def test_dashboard_serves_assets_overview_and_health(tmp_path: Path) -> None:
             overview = json.load(response)
 
     assert "dashboard" in html
-    assert health == {"ok": True, "service": "dino-dashboard", "api_version": 1}
+    assert health == {
+        "ok": True,
+        "service": "dino-dashboard",
+        "api_version": 1,
+        "process_id": os.getpid(),
+    }
     assert overview["active"]["running"] is False
     assert overview["metrics"]["counters"]["hunt"]["total"] == 0
     assert overview["hatch_boost_inventory"]["remaining"] == 100

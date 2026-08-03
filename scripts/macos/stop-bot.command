@@ -18,7 +18,7 @@ else
   exit "${exit_code}"
 fi
 
-echo "正在安全關閉 Dino Mutant Bot（Port ${status_port}）……"
+echo "正在安全關閉猛龍計畫（Port ${status_port}）……"
 python3 "${controller}" \
   stop \
   --status-port "${status_port}" \

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Allowlisted local controller for the macOS Dino Mutant Bot."""
+"""猛龍計畫的 macOS 本機白名單控制器。"""
 
 from __future__ import annotations
 

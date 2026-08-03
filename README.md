@@ -1,4 +1,4 @@
-# Dino Mutant Bot
+# 猛龍計畫
 
 以 BlueStacks 5 為執行環境的可擴充 Python Bot Framework。核心採用
 `Sense → Think → Act → Verify` 回饋循環，不依賴錄製 Macro。
@@ -10,7 +10,7 @@ Feature 方式加入，不需要修改核心狀態機。
 並保留多世代壓縮日誌、v0.2.17 的錨點／供給量規劃、卡死逃生與半解析度比對，
 以及雙視窗啟動器、可調整狩獵速度及本機 AI 狀態接口：
 
-- 使用者只需雙擊 `start-hunt.cmd`；啟動器會先檢查 Python、ADB、素材及畫面擷取。
+- 使用者只需雙擊 `start-dashboard.cmd`；首次啟動會安裝 runtime，Bot 模式由網頁介面選擇。
 - 孵蛋使用獨立的 `start-hatch-bot.cmd`，固定啟動 hatch feature，不會落入狩獵流程。
 - 一個視窗顯示原始即時 LOG，另一個繁體中文互動視窗提供統計、調速、重啟與診斷工具。
 - `127.0.0.1:8765` 提供結構化狀態與白名單控制接口，讓同一台電腦上的 AI 安全操作。
@@ -217,37 +217,15 @@ PYTHONPATH=/tmp/t-rex-auto-deps:src python3 main.py template \
 
 ## 執行
 
-部署後只需要雙擊：
+發佈包解壓後只需要雙擊：
 
 ```text
-D:\DinoMutantBot\start-hunt.cmd
+D:\DinoMutantBot\start-dashboard.cmd
 ```
 
-啟動流程會先做環境檢查，再開啟兩個視窗：
-
-- `Dino Mutant Bot - Control`：互動控制、統計、調速、診斷與 AI API 資訊。
-- Bot LOG 視窗：保留完整 Capture、Detect、Planning、Action、Verify、Recover 日誌。
-
-互動視窗可使用：
-
-```text
-S  查詢成功狩獵、操作、失敗、黑屏、重啟及最近動作
-T  改用 fast、safe 或自訂時間，並以新參數重啟 Bot
-P  切換本機接口 Port；Port 被占用時會顯示程式與 PID
-D  環境檢查、ADB 截圖、完整 JSON、原始日誌、開啟日誌資料夾
-E  產生不含截圖的 Codex 診斷包並開啟輸出資料夾
-A  顯示本機 AI API 端點
-R  使用目前參數重啟
-Q  停止 Bot 並關閉控制流程
-```
-
-也可在終端預先指定模式：
-
-```bat
-D:\DinoMutantBot\start-hunt.cmd fast
-D:\DinoMutantBot\start-hunt.cmd safe
-D:\DinoMutantBot\start-hunt.cmd fast 8877
-```
+Dashboard 會在目前 CMD 視窗前景執行並開啟瀏覽器；純狩獵、孵蛋＋狩獵、
+安全停止、重啟與診斷都從網頁操作。關閉 CMD 視窗或按 `Ctrl+C` 即可停止
+Dashboard，不建立登入啟動項或隱藏 watcher。
 
 `fast` 是預設值，使用 300/900/1200 ms 的選恐龍、狩獵、確認期限；
 `safe` 使用 1500/5000/3000 ms，適合反應較慢的電腦。

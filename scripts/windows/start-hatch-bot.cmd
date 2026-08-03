@@ -1,6 +1,6 @@
 @echo off
 setlocal
-title Dino Mutant Bot - Hatch
+title 猛龍計畫 - Hatch
 
 set "hatch_runner=%~dp0app\scripts\run-hatch-windows.ps1"
 if not exist "%hatch_runner%" (

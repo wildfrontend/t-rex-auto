@@ -23,7 +23,7 @@ from .status_server import LocalStatusServer
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="dino-bot", description="Dino Mutant Bot")
+    parser = argparse.ArgumentParser(prog="dino-bot", description="猛龍計畫")
     parser.add_argument("--config", default="config.json", help="path to config.json")
     subcommands = parser.add_subparsers(dest="command", required=True)
 

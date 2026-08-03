@@ -22,7 +22,7 @@ $MainScript = Join-Path $AppRoot "main.py"
 $ConfigPath = Join-Path $AppRoot "config.json"
 
 if (-not (Test-Path -LiteralPath $PythonExecutable)) {
-    throw "Windows runtime is not installed. Run start-hunt.cmd for guided setup."
+    throw "Windows runtime is not installed. Run start-dashboard.cmd for guided setup."
 }
 if (-not (Test-Path -LiteralPath $MainScript)) {
     throw "Hatch entrypoint not found: $MainScript"
@@ -56,7 +56,7 @@ $RunArguments = @(
     "--verbose"
 )
 
-Write-Host "Dino Mutant Bot - $Feature" -ForegroundColor Cyan
+Write-Host "猛龍計畫 - $Feature" -ForegroundColor Cyan
 Write-Host "Mode: $Mode | Speed: $Speed | Max actions: $MaxActions | Max cycles: $MaxCycles"
 Write-Host "Local Hatch status API: http://127.0.0.1:$StatusPort/status"
 

@@ -5,7 +5,7 @@ set -euo pipefail
 project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 version="$(sed -n 's/^version = "\(.*\)"/\1/p' "${project_root}/pyproject.toml")"
 output_root="${1:-${HOME}/Downloads}"
-package_root="${output_root}/猛龍計劃-v${version}-macOS"
+package_root="${output_root}/DinoMutantBot-v${version}-macOS"
 package_app="${package_root}/app"
 
 rm -rf "${package_root}" "${package_root}.zip"
@@ -51,7 +51,7 @@ if [[ ! -x "${runtime_python}" ]]; then
 fi
 
 cd "${app_root}"
-echo "猛龍計劃 儀表板啟動中:http://127.0.0.1:8780"
+echo "猛龍計畫儀表板正在啟動：http://127.0.0.1:8780"
 echo "(關閉本視窗或按 Ctrl+C 即停止儀表板)"
 exec "${runtime_python}" "${app_root}/main.py" \
   --config "${app_root}/config.json" dashboard --port 8780 --open-browser
@@ -61,6 +61,6 @@ chmod +x "${package_root}/start-dashboard.command"
 find "${package_root}" -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
 find "${package_root}" -name ".DS_Store" -delete 2>/dev/null || true
 
-(cd "${output_root}" && zip -qr "猛龍計劃-v${version}-macOS.zip" "猛龍計劃-v${version}-macOS")
+(cd "${output_root}" && zip -qr "DinoMutantBot-v${version}-macOS.zip" "DinoMutantBot-v${version}-macOS")
 echo "已打包:${package_root}"
 echo "已打包:${package_root}.zip"

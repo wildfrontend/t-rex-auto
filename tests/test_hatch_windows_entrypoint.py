@@ -17,17 +17,24 @@ def test_hatch_entrypoint_is_separate_and_fixed_to_hatch() -> None:
     assert '-MaxCycles "%hatch_max_cycles%"' in command
 
 
-def test_windows_deploy_exposes_exactly_three_user_entrypoints() -> None:
+def test_windows_deploy_exposes_only_dashboard_entrypoint() -> None:
     deploy = (REPO / "scripts/windows/deploy-windows.sh").read_text(encoding="utf-8")
+    package = (REPO / "scripts/windows/package-windows-lite.sh").read_text(
+        encoding="utf-8"
+    )
 
     assert 'scripts/windows/run-hatch-windows.ps1"' in deploy
     assert 'scripts/windows/run-dashboard-windows.ps1"' in deploy
-    assert 'scripts/windows/watch-dashboard-windows.ps1"' in deploy
-    assert 'scripts/windows/start-hunt.cmd"' in deploy
+    assert 'scripts/windows/watch-dashboard-windows.ps1"' not in deploy
+    assert 'cp -a "${project_root}/scripts/windows/start-hunt.cmd"' not in deploy
     assert 'scripts/windows/start-dashboard.cmd"' in deploy
-    assert 'scripts/windows/start-hatch-hunt.cmd"' in deploy
+    assert 'scripts/windows/start-hatch-hunt.cmd"' not in deploy
     assert 'legacy_launchers="${runtime_app}/scripts/legacy-launchers"' in deploy
     assert "start-bot.cmd" in deploy
+    assert 'scripts/windows/start-dashboard.cmd"' in package
+    assert 'scripts/windows/start-hunt.cmd"' not in package
+    assert 'scripts/windows/start-hatch-hunt.cmd"' not in package
+    assert 'package_name="DinoMutantBot-v${version}-Windows-Lite"' in package
 
 
 def test_hatch_runner_allows_dashboard_standalone_stages() -> None:
@@ -41,25 +48,34 @@ def test_hunt_entrypoint_name_matches_its_feature() -> None:
     command = (REPO / "scripts/windows/start-hunt.cmd").read_text(encoding="utf-8")
 
     assert "launcher-windows.ps1" in command
-    assert "Dino Mutant Bot - Hunt" in command
+    assert "猛龍計畫 - Hunt" in command
     assert not (REPO / "scripts/windows/start-bot.cmd").exists()
 
 
 def test_dashboard_entrypoint_uses_loopback_web_service() -> None:
     command = (REPO / "scripts/windows/start-dashboard.cmd").read_text(encoding="utf-8")
     runner = (REPO / "scripts/windows/run-dashboard-windows.ps1").read_text(encoding="utf-8")
-    watcher = (REPO / "scripts/windows/watch-dashboard-windows.ps1").read_text(
-        encoding="utf-8"
+    uninstaller = (REPO / "scripts/windows/uninstall-windows.ps1").read_text(
+        encoding="utf-8-sig"
+    )
+    cleanup = (REPO / "scripts/windows/cleanup-runtime-windows.ps1").read_text(
+        encoding="utf-8-sig"
     )
 
     assert "run-dashboard-windows.ps1" in command
     assert 'set "dashboard_port=8780"' in command
-    assert '"--server-only"' in command.lower()
-    assert "Install-LoginStartup" in runner
+    assert '"--server-only"' not in command.lower()
+    assert "Remove-LegacyLoginStartup" in runner
     assert "Dino Dashboard Server.cmd" in runner
-    assert "WindowStyle Hidden" in runner
-    assert '"dashboard"' in watcher
-    assert "DinoMutantBotDashboard-$Port" in watcher
+    assert "WindowStyle Hidden" not in runner
+    assert "--open-browser" in runner
+    assert "& $PythonExecutable @DashboardArguments" in runner
+    assert not (REPO / "scripts/windows/watch-dashboard-windows.ps1").exists()
+    assert '"%~1"=="uninstall"' in command
+    assert "dino-mutant-bot-status" in uninstaller
+    assert "shutdown-dashboard" in uninstaller
+    assert 'ArgumentList @("kill-server")' in uninstaller
+    assert "DinoPendingDelete" in cleanup
 
 
 def test_filter_test_entrypoint_is_isolated_and_cycle_limited() -> None:

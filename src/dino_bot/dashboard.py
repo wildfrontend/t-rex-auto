@@ -610,7 +610,12 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         elif path == "/api/health":
             self._send_json(
                 200,
-                {"ok": True, "service": "dino-dashboard", "api_version": DASHBOARD_VERSION},
+                {
+                    "ok": True,
+                    "service": "dino-dashboard",
+                    "api_version": DASHBOARD_VERSION,
+                    "process_id": os.getpid(),
+                },
             )
         elif path == "/api/overview":
             self._send_json(
@@ -649,6 +654,18 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 result = self.server.controller.restart_game()
             elif action == "restart-bot":
                 result = self.server.controller.restart_bot()
+            elif action == "shutdown-dashboard":
+                result = {
+                    "accepted": True,
+                    "action": action,
+                    "message": "Dashboard shutdown requested",
+                }
+
+                def shutdown_later() -> None:
+                    time.sleep(0.1)
+                    self.server.shutdown()
+
+                threading.Thread(target=shutdown_later, daemon=True).start()
             elif action == "set-boost-stock":
                 payload = self._read_json()
                 remaining = payload.get("remaining")

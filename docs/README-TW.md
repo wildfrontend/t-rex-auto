@@ -1,4 +1,4 @@
-# Dino Mutant Bot 文字版使用教學
+# 猛龍計畫文字版使用教學
 
 適用於 Windows 10／11。
 

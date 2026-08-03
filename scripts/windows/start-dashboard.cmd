@@ -1,6 +1,25 @@
 @echo off
 setlocal
-title Dino Mutant Bot - Dashboard
+title 猛龍計畫 - Dashboard
+
+if /I "%~1"=="uninstall" (
+  set "uninstaller=%~dp0app\scripts\uninstall-windows.ps1"
+  if not exist "%~dp0app\scripts\uninstall-windows.ps1" (
+    echo ERROR: Uninstaller not found: %~dp0app\scripts\uninstall-windows.ps1
+    pause
+    exit /b 1
+  )
+  powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass ^
+    -File "%~dp0app\scripts\uninstall-windows.ps1" ^
+    -RuntimeRoot "%~dp0."
+  if errorlevel 1 (
+    echo.
+    echo Uninstall did not complete.
+    pause
+    exit /b 1
+  )
+  exit /b 0
+)
 
 set "dashboard_runner=%~dp0app\scripts\run-dashboard-windows.ps1"
 if not exist "%dashboard_runner%" (
@@ -9,25 +28,32 @@ if not exist "%dashboard_runner%" (
   exit /b 1
 )
 
-set "dashboard_port=%~1"
-set "dashboard_mode="
-if /I "%~1"=="--server-only" (
-  set "dashboard_port=8780"
-  set "dashboard_mode=-ServerOnly"
-) else (
-  if "%dashboard_port%"=="" set "dashboard_port=8780"
+set "runtime_python=%~dp0python\python.exe"
+set "runtime_installer=%~dp0app\scripts\install-windows-runtime.ps1"
+if not exist "%runtime_python%" (
+  if not exist "%runtime_installer%" (
+    echo ERROR: Windows runtime installer not found: %runtime_installer%
+    pause
+    exit /b 1
+  )
+  echo Windows runtime is not installed. Starting guided setup...
+  powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass ^
+    -File "%runtime_installer%" ^
+    -RuntimeRoot "%~dp0."
+  if errorlevel 1 (
+    echo.
+    echo Windows runtime installation failed.
+    pause
+    exit /b 1
+  )
 )
 
-if defined dashboard_mode (
-  powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass ^
-    -File "%dashboard_runner%" ^
-    -Port "%dashboard_port%" ^
-    %dashboard_mode%
-) else (
-  powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass ^
-    -File "%dashboard_runner%" ^
-    -Port "%dashboard_port%"
-)
+set "dashboard_port=%~1"
+if "%dashboard_port%"=="" set "dashboard_port=8780"
+
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass ^
+  -File "%dashboard_runner%" ^
+  -Port "%dashboard_port%"
 set "dashboard_exit_code=%ERRORLEVEL%"
 
 if not "%dashboard_exit_code%"=="0" (

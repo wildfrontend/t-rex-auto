@@ -6,7 +6,7 @@ $AppRoot = Split-Path -Parent $PSScriptRoot
 $RuntimeRoot = Split-Path -Parent $AppRoot
 $PythonExecutable = Join-Path $RuntimeRoot "python\python.exe"
 if (-not (Test-Path $PythonExecutable)) {
-    throw "Windows runtime is not installed. Run start-hunt.cmd for guided setup."
+    throw "Windows runtime is not installed. Run start-dashboard.cmd for guided setup."
 }
 $DoctorExitCode = 1
 Push-Location $RuntimeRoot

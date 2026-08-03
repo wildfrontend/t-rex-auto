@@ -28,7 +28,8 @@ cp -a \
   "${project_root}/scripts/windows/run-windows.ps1" \
   "${project_root}/scripts/windows/run-hatch-windows.ps1" \
   "${project_root}/scripts/windows/run-dashboard-windows.ps1" \
-  "${project_root}/scripts/windows/watch-dashboard-windows.ps1" \
+  "${project_root}/scripts/windows/uninstall-windows.ps1" \
+  "${project_root}/scripts/windows/cleanup-runtime-windows.ps1" \
   "${project_root}/scripts/windows/doctor-windows.ps1" \
   "${project_root}/scripts/windows/launcher-windows.ps1" \
   "${project_root}/scripts/windows/control-windows.ps1" \
@@ -37,16 +38,16 @@ cp -a \
   "${project_root}/scripts/windows/python312._pth" \
   "${project_root}/scripts/windows/watch-running-bot.ps1" \
   "${runtime_app}/scripts/"
-cp -a "${project_root}/scripts/windows/start-hunt.cmd" "${runtime_root}/start-hunt.cmd"
 cp -a "${project_root}/scripts/windows/start-dashboard.cmd" "${runtime_root}/start-dashboard.cmd"
-cp -a "${project_root}/scripts/windows/start-hatch-hunt.cmd" "${runtime_root}/start-hatch-hunt.cmd"
 
-# Keep the portable root limited to the three user-facing entrypoints. Older
+# Keep the portable root limited to the Dashboard entrypoint. Older
 # development launchers remain recoverable under app/scripts instead of being
 # deleted from an existing installation.
 legacy_launchers="${runtime_app}/scripts/legacy-launchers"
 mkdir -p "${legacy_launchers}"
 for launcher in \
+  start-hunt.cmd \
+  start-hatch-hunt.cmd \
   start-bot.cmd \
   start-hatch-bot.cmd \
   start-hatch-full.cmd \
