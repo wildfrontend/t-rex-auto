@@ -234,6 +234,7 @@
     "activity": "com.unity3d.player.UnityPlayerActivity"
   },
   "hatch": {
-    "batch_hatch_count": 48
+    "batch_hatch_count": 48,
+    "cave_screen_trigger": 300
   }
 }
