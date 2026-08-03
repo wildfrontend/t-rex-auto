@@ -69,6 +69,9 @@ HATCH_DETAIL_CLOSE = "hatch_unready_detail_close"
 HATCH_BOOST_BUTTON = "hatch_cooldown_boost_button"
 HATCH_BOOST_CONFIRM = "hatch_cooldown_boost_confirm_yes"
 HATCH_BOOST_POINT = (450.0, 1380.0)
+# 按鈕帶中段(避開左側 50% 圖示與右側票券圖示)的取樣框,900 寬座標。
+_BOOST_BAR_SAMPLE = (380, 1355, 520, 1405)
+_BOOST_BAR_MIN_SATURATION = 80.0
 
 CAVE_SWIPE = "hatch_cave_swipe"
 CAVE_RECENTER = "hatch_cave_recenter"
@@ -422,6 +425,25 @@ def is_centered_home_screen(frame: Frame, detections: Sequence[Detection]) -> bo
     return abs(pile[0] - expected_x) <= 100 * scale and abs(
         pile[1] - expected_y
     ) <= 100 * scale
+
+
+def _hatch_boost_ready(frame: Frame) -> bool:
+    """Return whether the incubator cooldown-boost bar is pressable.
+
+    The bar keeps its template shape while a boost is running, but the game
+    desaturates it to gray for the countdown; normalized template matching is
+    brightness-invariant, so color saturation is the only reliable signal.
+    """
+
+    if frame.image.size == 0:
+        return False
+    scale = frame.width / 900.0
+    x0, y0, x1, y1 = (round(value * scale) for value in _BOOST_BAR_SAMPLE)
+    roi = frame.image[y0:y1, x0:x1]
+    if not roi.size:
+        return False
+    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+    return float(hsv[:, :, 1].mean()) >= _BOOST_BAR_MIN_SATURATION
 
 
 def _egg_pile_base_center(frame: Frame) -> tuple[float, float] | None:
@@ -1720,10 +1742,17 @@ class FullHatchPlanner:
                     )
                 return _synthetic(HATCH_DETAIL_CLOSE, *detail_close)
             if self._should_use_hatch_boost(by_type):
-                return _synthetic(
-                    HATCH_BOOST_BUTTON,
-                    *_scaled(frame, HATCH_BOOST_POINT, self.reference_width),
-                )
+                if not _hatch_boost_ready(frame):
+                    # 加速已在生效倒數(按鈕帶轉灰);本週期不再嘗試。
+                    self._boost_attempted = True
+                    self.logger.info(
+                        "Hatch boost | already active (gray countdown bar) | skip this cycle"
+                    )
+                else:
+                    return _synthetic(
+                        HATCH_BOOST_BUTTON,
+                        *_scaled(frame, HATCH_BOOST_POINT, self.reference_width),
+                    )
             target = self._hatch_child.choose(frame, detections)
             if target is not None and target.type == hatch_feature.EGG_PILE:
                 if not self._capacity_checked:

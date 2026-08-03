@@ -594,6 +594,14 @@ def test_full_hatch_uses_observed_batch_timer_for_rescan_wait() -> None:
     assert planner.next_ready_delay_ms() == 3_725_000
 
 
+def boost_ready_frame() -> Frame:
+    """Home incubator frame whose boost bar shows the saturated ready state."""
+
+    ready = frame()
+    ready.image[1355:1405, 380:520] = (30, 140, 240)
+    return ready
+
+
 def test_boost_permission_applies_only_to_the_next_hatch_cycle(tmp_path) -> None:
     inventory = HatchBoostInventoryStore(tmp_path / "stats.sqlite3")
     planner = FullHatchPlanner(
@@ -608,12 +616,12 @@ def test_boost_permission_applies_only_to_the_next_hatch_cycle(tmp_path) -> None
 
     # The default-off setting is snapshotted when this hatch cycle begins.
     inventory.set_enabled(True)
-    target = planner.choose(frame(), grid)
+    target = planner.choose(boost_ready_frame(), grid)
     assert target is not None and target.type == hatch.CLOSE_BUTTON
 
     planner._child = planner._new_hatch()
     planner._start_hatch_cycle()
-    target = planner.choose(frame(), grid)
+    target = planner.choose(boost_ready_frame(), grid)
     assert target is not None and target.type == HATCH_BOOST_BUTTON
     planner.on_action_success(target.type)
 
@@ -621,10 +629,33 @@ def test_boost_permission_applies_only_to_the_next_hatch_cycle(tmp_path) -> None
         detection(CONFIRM_YES, 365, 850),
         detection(CONFIRM_NO, 535, 850),
     ]
-    target = planner.choose(frame(), prompt)
+    target = planner.choose(boost_ready_frame(), prompt)
     assert target is not None and target.type == HATCH_BOOST_CONFIRM
     planner.on_action_success(target.type)
     assert inventory.snapshot().remaining == 99
+
+
+def test_boost_skipped_while_countdown_bar_is_gray(tmp_path) -> None:
+    inventory = HatchBoostInventoryStore(tmp_path / "stats.sqlite3")
+    inventory.set_enabled(True)
+    planner = FullHatchPlanner(
+        DigitReader(GLYPHS),
+        egg_pile_point=(450, 1330),
+        boost_inventory=inventory,
+    )
+    planner._child = planner._new_hatch()
+    planner._start_hatch_cycle()
+    grid = [
+        detection(hatch.INCUBATOR_TITLE, 450, 40),
+        detection(hatch.CLOSE_BUTTON, 800, 1380),
+    ]
+
+    # The default frame keeps the bar desaturated (active countdown): the
+    # planner must fall through instead of pressing the dead button.
+    target = planner.choose(frame(), grid)
+    assert target is not None and target.type == hatch.CLOSE_BUTTON
+    assert planner._boost_attempted is True
+    assert inventory.snapshot().remaining == 100
 
 
 def test_home_screen_requires_bright_unobscured_map_and_no_foreground() -> None:
