@@ -139,10 +139,23 @@ def _workflow_status(logs_dir: Path, mode: str | None) -> dict[str, Any]:
                 "cave": "cave",
             }.get(stage_name, "hatch")
             label = HATCH_STAGE_LABELS.get(stage_name, "單階段孵化")
-        elif (
-            "Hatch full | phase A complete" in message
-            or "Hatch 攻擊特化 |" in message
-        ):
+        elif "Hatch full | screening stage starting | stage=" in message:
+            stage_name = message.split("stage=", 1)[1].split(" ", 1)[0]
+            stage, label = {
+                "attack": ("nest_attack", "篩選攻擊親代"),
+                "hp": ("nest_hp", "篩選 HP 親代"),
+                "top": ("nest_top", "頂尖自動放置"),
+                "mass": ("nest_mass", "量產自動放置"),
+            }.get(stage_name, ("nest_attack", "篩選攻擊親代"))
+        elif "Hatch full | screening complete" in message:
+            stage, label = "collect", "收集所有巢蛋"
+        elif "Hatch full | phase A complete" in message:
+            # 只有觸發篩選的批次才會進入親代篩選;一般循環接著收蛋。
+            if "trigger=none" in message:
+                stage, label = "collect", "收集所有巢蛋"
+            else:
+                stage, label = "nest_attack", "篩選攻擊親代"
+        elif "Hatch 攻擊特化 |" in message:
             stage, label = "nest_attack", "篩選攻擊親代"
         elif "Hatch HP特化 |" in message:
             stage, label = "nest_hp", "篩選 HP 親代"
@@ -166,7 +179,19 @@ def _workflow_status(logs_dir: Path, mode: str | None) -> dict[str, Any]:
             cooldown_remaining = 0
         elif "Hatch+Hunt | egg cooldown" in message and "switching to hunt" in message:
             stage, label = "cooldown_hunt", "冷卻期間狩獵"
-        elif "Hatch | wait " in message and "collected all nest eggs" in message:
+        elif "interim nest collection during hunt idle" in message:
+            # 差事出發時帶著剩餘冷卻;收完會自動回狩獵。
+            try:
+                duration = int(float(message.split("resume=", 1)[1].split("s", 1)[0]))
+                if latest_date:
+                    started = datetime.fromisoformat(f"{latest_date}T{time_text}").astimezone()
+                    elapsed = (datetime.now().astimezone() - started).total_seconds()
+                    cooldown_remaining = max(0, round(duration - elapsed))
+                    stage, label = "cooldown_hunt", "冷卻期間狩獵"
+            except (ValueError, IndexError):
+                pass
+        elif "Hatch | wait " in message:
+            # 兩種等待都算冷卻:關閉孵化器後、收完巢蛋後。
             try:
                 duration = int(float(message.split("Hatch | wait ", 1)[1].split("s", 1)[0]))
                 if latest_date:
@@ -177,6 +202,9 @@ def _workflow_status(logs_dir: Path, mode: str | None) -> dict[str, Any]:
                         stage, label = "cooldown_hunt", "冷卻期間狩獵"
                     elif cooldown_remaining > 0:
                         stage, label = "handoff", "返回孵蛋首頁"
+                    else:
+                        # 冷卻已過:回孵化器檢查,不再殘留舊狀態。
+                        stage, label = "hatch", "檢查孵蛋"
             except (ValueError, IndexError):
                 pass
     return {
