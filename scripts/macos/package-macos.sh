@@ -46,7 +46,7 @@ runtime_python="${app_root}/.venv/bin/python"
 
 if [[ ! -x "${runtime_python}" ]]; then
   echo "第一次啟動:正在建立 macOS 執行環境。"
-  "${app_root}/scripts/macos/install-macos-runtime.sh"
+  "${app_root}/scripts/install-macos-runtime.sh"
 fi
 
 cd "${app_root}"
