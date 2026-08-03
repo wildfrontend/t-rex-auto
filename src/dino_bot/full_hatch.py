@@ -335,6 +335,9 @@ NEST_DETECTION_TYPES: frozenset[str] = frozenset(
         AUTOPLACE_TITLE,
         AUTOPLACE_PROMPT,
         AUTOPLACE_NOTICE,
+        # 排序設定完成後要按的主按鈕;漏掃會讓 top/mass 階段
+        # 在 verify_settings_closed 空轉直到恢復假完成。
+        AUTOPLACE_BUTTON,
         PLACE_HDR_BEST,
         PLACE_HDR_LEVEL,
         # 展開的排序選單選項也要掃:規劃看不見它們時會重按表頭,
