@@ -215,7 +215,9 @@ class SelectSortTestPlanner:
         for first, second in zip(values, values[1:], strict=False):
             if first != second:
                 return first > second
-        return None
+        # 全部同值時任何順序都成立;視為降冪通過,避免在同值高原
+        # (例如攻擊全 296)上無限重試。空清單仍視為讀取失敗。
+        return True if values else None
 
     @staticmethod
     def _monotonic_prefix(values: list[int], *, descending: bool) -> list[int]:

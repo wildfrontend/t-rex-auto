@@ -141,7 +141,10 @@ def test_ascending_attack_values_toggle_direction_once() -> None:
     assert planner.last_stage() == "direction_failed"
 
 
-def test_equal_values_fail_closed_without_arrow_tap() -> None:
+def test_equal_values_pass_as_already_sorted() -> None:
+    # 同值高原上任何順序都成立;舊的 fail-closed 會讓 full-hatch
+    # 篩選在恢復與重試之間無限循環(2026-08-03 生產實例:攻擊全
+    # 296)。同值中任選皆不會降級 — 替換另有「嚴格優於親代」門檻。
     planner, frame = planner_for((276, 276, 276))
     target = planner.choose(
         frame,
@@ -151,8 +154,7 @@ def test_equal_values_fail_closed_without_arrow_tap() -> None:
         ),
     )
     assert target is None
-    assert not planner.is_complete()
-    assert planner.last_stage() == "direction_unreadable"
+    assert planner.is_complete()
 
 
 def test_non_monotonic_ocr_tail_does_not_change_descending_direction() -> None:
