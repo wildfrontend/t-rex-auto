@@ -33,10 +33,12 @@ def test_known_header_is_opened() -> None:
     assert (target.x, target.y) == (228, 168)
 
 
-def test_attack_header_is_reselected_for_on_device_verification() -> None:
+def test_attack_header_already_selected_skips_reselect() -> None:
+    # 表頭已是目標標籤就不再重開重選(舊行為每次都重選一次)。
     planner = NestTagFilterTestPlanner()
     target = planner.choose(frame(), nest(detection(nest_filter.TAG_HDR_ATTACK, 218, 168)))
-    assert target is not None and target.type == nest_filter.FILTER_HEADER
+    assert target is None
+    assert planner.is_complete()
 
 
 def test_unrecognized_remembered_header_uses_scaled_safe_point() -> None:

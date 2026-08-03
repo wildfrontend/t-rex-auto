@@ -166,7 +166,13 @@ class AttackReplacementTestPlanner:
             by_type.setdefault(item.type, []).append(item)
 
         if self._stage.startswith("filter_"):
-            return self._filter_planner.choose(frame, detections)
+            target = self._filter_planner.choose(frame, detections)
+            if target is None and self._filter_planner.is_complete():
+                # 表頭已是目標標籤(nest_filter 直接判完成):跳過點選,
+                # 立即進入親代讀取。
+                self._stage = "nest_left"
+                return self.choose(frame, detections)
+            return target
         if self._stage.startswith("nest_"):
             return self._choose_parent(frame, by_type)
         if self._stage.startswith("select_"):

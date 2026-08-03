@@ -145,8 +145,14 @@ class NestTagFilterTestPlanner:
             self._stage = "select_target"
             return self._target(option)
 
-        # Even when the header already says attack, open and reselect it once.
-        # This verifies both menu expansion and option selection on device.
+        # 表頭已顯示目標且選單未展開:不必重開重選,直接完成。
+        already = self._best(by_type.get(self.target_header_type))
+        dropdown_open = any(by_type.get(t) for t in OPTION_LABELS)
+        if already is not None and not dropdown_open:
+            self._complete = True
+            self._stage = "filter_already_set"
+            return None
+
         header_hits = [
             item
             for target_type in HEADER_LABELS

@@ -330,6 +330,8 @@ NEST_DETECTION_TYPES: frozenset[str] = frozenset(
         # parked the workflow at ``target_filter_required``.
         *nest_filter_feature.HEADER_LABELS,
         *select_sort_feature.DEFAULT_TARGET_ACTIONS,
+        # 排序表頭狀態:看得見「已是攻擊力排序」才能跳過重選。
+        select_sort_feature.SORT_HDR_ATTACK,
         *replacement_feature.DEFAULT_TARGET_ACTIONS,
         NEST_GEAR,
         AUTOPLACE_TITLE,

@@ -90,14 +90,7 @@ def test_top_autoplace_round_requires_screen_anchors_and_known_prompt(caplog) ->
         detection(nest_filter.TAG_HDR_TOP, 228, 168),
     ]
 
-    target = planner.choose(frame(), nest)
-    assert target is not None and target.type == nest_filter.FILTER_HEADER
-    planner.on_action_success(target.type)
-
-    target = planner.choose(frame(), nest + [detection(nest_filter.TAG_TOP, 228, 297)])
-    assert target is not None and target.type == nest_filter.TAG_TOP
-    planner.on_action_success(target.type)
-
+    # 表頭已是「頂尖」:標籤選擇直接跳過,進入設定齒輪。
     target = planner.choose(frame(), nest + [detection(NEST_GEAR, 210, 276)])
     assert target is not None and target.type == NEST_GEAR
     planner.on_action_success(target.type)
@@ -140,17 +133,7 @@ def test_mass_autoplace_round_selects_level_and_confirms_application() -> None:
         detection(nest_filter.TAG_HDR_MASS, 228, 168),
     ]
 
-    target = planner.choose(frame(), nest)
-    assert target is not None and target.type == nest_filter.FILTER_HEADER
-    planner.on_action_success(target.type)
-
-    target = planner.choose(
-        frame(),
-        nest + [detection(nest_filter.TAG_MASS, 228, 254)],
-    )
-    assert target is not None and target.type == nest_filter.TAG_MASS
-    planner.on_action_success(target.type)
-
+    # 表頭已是「量產」:標籤選擇直接跳過,進入設定齒輪。
     target = planner.choose(frame(), nest + [detection(NEST_GEAR, 210, 276)])
     assert target is not None and target.type == NEST_GEAR
     planner.on_action_success(target.type)
@@ -527,17 +510,7 @@ def test_full_flow_collects_all_nest_eggs_before_empty_rescan_wait() -> None:
         detection(NEST_TITLE, 450, 260),
         detection(nest_filter.TAG_HDR_ALL, 228, 168),
     ]
-    target = planner.choose(frame(), nest)
-    assert target is not None and target.type == nest_filter.FILTER_HEADER
-    planner.on_action_success(target.type)
-
-    target = planner.choose(
-        frame(),
-        nest + [detection(nest_filter.TAG_ALL, 228, 297)],
-    )
-    assert target is not None and target.type == nest_filter.TAG_ALL
-    planner.on_action_success(target.type)
-
+    # 表頭已是「所有」:標籤選擇直接跳過,進入收蛋按鈕。
     target = planner.choose(
         frame(),
         nest + [detection(COLLECT_EGGS_BUTTON, 650, 1315)],

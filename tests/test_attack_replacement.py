@@ -123,17 +123,7 @@ def test_starts_by_converging_main_nest_filter_to_attack() -> None:
     frame = nest_frame(reader, Stats(30, 282, 1), Stats(30, 282, 1))
     planner = AttackReplacementTestPlanner(reader)  # type: ignore[arg-type]
 
-    open_filter = planner.choose(frame, nest_detections())
-    assert open_filter is not None and open_filter.type == nest_filter.FILTER_HEADER
-    planner.on_action_success(open_filter.type)
-
-    select_attack = planner.choose(
-        frame,
-        nest_detections(detection(nest_filter.TAG_ATTACK, 229, 383)),
-    )
-    assert select_attack is not None and select_attack.type == nest_filter.TAG_ATTACK
-    planner.on_action_success(select_attack.type)
-
+    # 表頭已是「攻擊」:標籤收斂直接跳過,馬上進入親代讀取。
     left = planner.choose(frame, nest_detections())
     assert left is not None and left.type == attack_replacement.PARENT_LEFT
 
