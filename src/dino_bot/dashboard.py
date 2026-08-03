@@ -205,6 +205,7 @@ class DashboardController:
         self.bot_ports = dict(bot_ports or DEFAULT_BOT_PORTS)
         self._start_lock = threading.Lock()
         self._last_start = 0.0
+        self._explicit_stop_at = 0.0
 
     def discover(self) -> dict[str, Any]:
         for mode in ("hatch-hunt", "hunt", "hatch-stage"):
@@ -435,6 +436,7 @@ class DashboardController:
         return _post_json(f"http://127.0.0.1:{active['port']}/control/{action}")
 
     def stop(self) -> dict[str, Any]:
+        self._explicit_stop_at = time.monotonic()
         return self._active_control("stop")
 
     def restart_game(self) -> dict[str, Any]:
@@ -682,11 +684,16 @@ class DashboardServer:
         self.controller = DashboardController(runtime_root, logs_dir, config_path=config_path)
         self._server: _DashboardHttpServer | None = None
         self._thread: threading.Thread | None = None
+        self._auto_resume_thread: threading.Thread | None = None
+        self._auto_resume_stop = threading.Event()
 
     @property
     def url(self) -> str:
         port = self._server.server_address[1] if self._server else self.port
         return f"http://127.0.0.1:{port}"
+
+    AUTO_RESUME_MODE = "hatch-hunt"
+    AUTO_RESUME_IDLE_SECONDS = 10.0
 
     def start(self) -> None:
         if self._server is not None:
@@ -698,6 +705,53 @@ class DashboardServer:
             self.controller,
             self.assets,
         )
+        if self._auto_resume_thread is None:
+            self._auto_resume_thread = threading.Thread(
+                target=self._watch_stage_completion, daemon=True
+            )
+            self._auto_resume_thread.start()
+
+    def _watch_stage_completion(self) -> None:
+        """Queue the continuous mode after a standalone stage finishes on its own.
+
+        A stage that exits by itself leaves nothing running; if the user takes
+        no action within the grace window, resume hatch-hunt. An explicit
+        dashboard stop suppresses the resume - stopping means stopping.
+        """
+
+        last_mode: str | None = None
+        idle_since: float | None = None
+        while not self._auto_resume_stop.wait(3):
+            try:
+                active = self.controller.discover()
+            except Exception:
+                continue
+            if active["running"]:
+                last_mode = str(active["mode"])
+                idle_since = None
+                continue
+            if last_mode != "hatch-stage":
+                idle_since = None
+                continue
+            now = time.monotonic()
+            if now - self.controller._explicit_stop_at < 60:
+                # 使用者主動按停止:這次不自動接手。
+                last_mode = None
+                idle_since = None
+                continue
+            if now - self.controller._last_start < 30:
+                # 剛有啟動請求(可能是切換的延遲啟動),不插手。
+                idle_since = None
+                continue
+            if idle_since is None:
+                idle_since = now
+                continue
+            if now - idle_since < self.AUTO_RESUME_IDLE_SECONDS:
+                continue
+            last_mode = None
+            idle_since = None
+            with suppress(RuntimeError):
+                self.controller.start(self.AUTO_RESUME_MODE)
 
     def serve_forever(self, *, open_browser: bool = False) -> None:
         self.start()
@@ -721,6 +775,7 @@ class DashboardServer:
         self._thread.start()
 
     def close(self) -> None:
+        self._auto_resume_stop.set()
         if self._server is None:
             return
         self._server.shutdown()
