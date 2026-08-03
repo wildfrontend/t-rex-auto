@@ -1092,6 +1092,8 @@ class CaveCullPlanner:
                 self._stage = "recenter"
                 return self.choose(frame, detections)
             self._capacity_readable = True
+            # 無論是否需要淘汰都先記錄讀數,容量估算靠它播種。
+            self._capacity_before = count
             self._cull_required = should_cull(count, self.threshold)
             self.logger.info(
                 "Hatch cave | capacity=%d/350 | threshold=%d | cull=%s",
