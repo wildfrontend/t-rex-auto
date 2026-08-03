@@ -15,3 +15,4 @@ capture/*
 !logs/.gitkeep
 !debug/.gitkeep
 !capture/.gitkeep
+start-dashboard.command
