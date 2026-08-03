@@ -643,6 +643,7 @@ def test_boost_permission_applies_only_to_the_next_hatch_cycle(tmp_path) -> None
 
     planner._child = planner._new_hatch()
     planner._start_hatch_cycle()
+    planner._observed_cooldown_until = planner.clock() + 300  # 蛋冷卻中
     target = planner.choose(boost_ready_frame(), grid)
     assert target is not None and target.type == HATCH_BOOST_BUTTON
     planner.on_action_success(target.type)
@@ -667,6 +668,7 @@ def test_boost_skipped_while_countdown_bar_is_gray(tmp_path) -> None:
     )
     planner._child = planner._new_hatch()
     planner._start_hatch_cycle()
+    planner._observed_cooldown_until = planner.clock() + 300  # 蛋冷卻中
     grid = [
         detection(hatch.INCUBATOR_TITLE, 450, 40),
         detection(hatch.CLOSE_BUTTON, 800, 1380),
@@ -678,6 +680,43 @@ def test_boost_skipped_while_countdown_bar_is_gray(tmp_path) -> None:
     assert target is not None and target.type == hatch.CLOSE_BUTTON
     assert planner._boost_attempted is True
     assert inventory.snapshot().remaining == 100
+
+
+def test_boost_deferred_while_incubator_is_empty(tmp_path) -> None:
+    inventory = HatchBoostInventoryStore(tmp_path / "stats.sqlite3")
+    inventory.set_enabled(True)
+    planner = FullHatchPlanner(
+        DigitReader(GLYPHS),
+        egg_pile_point=(450, 1330),
+        boost_inventory=inventory,
+    )
+    planner._child = planner._new_hatch()
+    planner._start_hatch_cycle()
+    planner._capacity_checked = True
+    grid = [
+        detection(hatch.INCUBATOR_TITLE, 450, 40),
+        detection(hatch.CLOSE_BUTTON, 800, 1380),
+    ]
+
+    # 空孵化器(沒有冷卻讀數):即使按鈕帶是橘色也不按,改標記回訪。
+    target = planner.choose(boost_ready_frame(), grid)
+    assert target is not None and target.type == hatch.CLOSE_BUTTON
+    assert planner._boost_revisit_pending is True
+    assert inventory.snapshot().remaining == 100
+
+    # 收蛋完成回到主畫面:轉入回訪孵化器的孵化階段。
+    planner._collect_only_after_empty = True
+    planner._stage = "verify_nest_closed"
+    home = [detection(hatch.HOME_ANCHOR, 59, 561)]
+    planner.choose(frame(), home)
+    assert planner._stage == "hatch"
+    assert planner._boost_revisit_pending is False
+    assert planner._collect_done_for_cycle is True
+
+    # 回訪結束關閉孵化器:直接進入等待,不再重複收蛋。
+    planner.on_action_success(hatch.CLOSE_BUTTON)
+    assert planner._collect_done_for_cycle is False
+    assert planner._empty_rescan_wait is True
 
 
 def test_home_screen_requires_bright_unobscured_map_and_no_foreground() -> None:

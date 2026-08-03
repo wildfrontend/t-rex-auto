@@ -1279,6 +1279,8 @@ class FullHatchPlanner:
         self._boost_enabled_for_cycle = False
         self._boost_attempted = False
         self._boost_confirmation_pending = False
+        self._boost_revisit_pending = False
+        self._collect_done_for_cycle = False
         self._navigation_failures: dict[tuple[str, str], int] = {}
         self._pending_claim_verification = False
         self._standalone_started = False
@@ -1501,6 +1503,11 @@ class FullHatchPlanner:
                         self._screening_completed.clear()
                     self._enter_open_nest(collect_only=not batch_complete)
                 else:
+                    if self._collect_done_for_cycle:
+                        # 加速回訪的收尾:本週期已收過蛋,直接進入等待。
+                        self._collect_done_for_cycle = False
+                        self._start_empty_rescan_wait()
+                        return
                     self.logger.info(
                         "Hatch full | no ready incubator eggs | "
                         "collect all nest eggs before cooldown"
@@ -1780,8 +1787,16 @@ class FullHatchPlanner:
                         self._hatch_child.hatched,
                     )
                 return _synthetic(HATCH_DETAIL_CLOSE, *detail_close)
-            if self._should_use_hatch_boost(by_type):
-                if not _hatch_boost_ready(frame):
+            if self._boost_allowed(by_type):
+                if not self._eggs_cooling():
+                    # 孵化器目前是空的:先收蛋讓新蛋開始冷卻,收完
+                    # 回訪再按,加速期才不會空燒在沒有蛋的時段上。
+                    if not self._boost_revisit_pending:
+                        self._boost_revisit_pending = True
+                        self.logger.info(
+                            "Hatch boost | incubator empty | defer until eggs collected"
+                        )
+                elif not _hatch_boost_ready(frame):
                     # 加速已在生效倒數(按鈕帶轉灰);本週期不再嘗試。
                     self._boost_attempted = True
                     self.logger.info(
@@ -1894,6 +1909,18 @@ class FullHatchPlanner:
                     )
                     return self._choose_current(frame, detections)
                 if self._collect_only_after_empty:
+                    if self._boost_revisit_pending:
+                        # 蛋剛收進孵化器開始冷卻;回訪按加速,讓加速期
+                        # 從冷卻第一秒就生效,同時讀到砍半後的精確倒數。
+                        self._boost_revisit_pending = False
+                        self._collect_done_for_cycle = True
+                        self.logger.info(
+                            "Hatch boost | revisiting incubator to boost collected eggs"
+                        )
+                        self._stage = "hatch"
+                        self._child = self._new_hatch()
+                        self._hatch_baseline = 0
+                        return self._choose_current(frame, detections)
                     self._start_empty_rescan_wait()
                     return self._choose_current(frame, detections)
                 missing = self._missing_screening_stages()
@@ -1948,6 +1975,10 @@ class FullHatchPlanner:
                 self._capacity_checked = True
                 self._management_pending = False
                 self._screening_completed.clear()
+                # 這個批次已完整篩選+放置;歸零計數,否則下一輪
+                # batch 仍 >= 門檻會立刻重跑整套管理流程。
+                self._batch_hatched = 0
+                self._batch_hunt_ready = False
                 self.logger.info(
                     "Hatch full | completed management cycle %d | restarting Phase A",
                     self.completed_management_cycles,
@@ -2002,6 +2033,8 @@ class FullHatchPlanner:
         self._boost_attempted = False
         self._boost_confirmation_pending = False
         self._boost_enabled_for_cycle = False
+        self._boost_revisit_pending = False
+        self._collect_done_for_cycle = False
         if self.boost_inventory is None:
             return
         inventory = self.boost_inventory.snapshot()
@@ -2126,10 +2159,7 @@ class FullHatchPlanner:
         if seconds is not None:
             self._observed_cooldown_until = self.clock() + seconds
 
-    def _should_use_hatch_boost(
-        self,
-        by_type: dict[str, list[Detection]],
-    ) -> bool:
+    def _boost_allowed(self, by_type: dict[str, list[Detection]]) -> bool:
         return (
             self._boost_enabled_for_cycle
             and not self._boost_attempted
@@ -2141,6 +2171,22 @@ class FullHatchPlanner:
                 or self.boost_inventory.snapshot().remaining > 0
             )
         )
+
+    def _eggs_cooling(self) -> bool:
+        """Whether the incubator currently holds eggs mid-cooldown."""
+
+        return (
+            self._observed_cooldown_until is not None
+            and self._observed_cooldown_until > self.clock()
+        )
+
+    def _should_use_hatch_boost(
+        self,
+        by_type: dict[str, list[Detection]],
+    ) -> bool:
+        # 空孵化器不按加速:加速期從按下就開始倒數,蛋要等收蛋後才
+        # 入孵化器,先按等於白燒加速時間。收蛋後回訪時再按。
+        return self._boost_allowed(by_type) and self._eggs_cooling()
 
     def _start_replacement(self, kind: str) -> None:
         if kind == "attack":
