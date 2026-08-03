@@ -6,7 +6,7 @@ set -euo pipefail
 project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 version="$(sed -n 's/^version = "\(.*\)"/\1/p' "${project_root}/pyproject.toml")"
 output_root="${1:-${HOME}/Downloads}"
-package_root="${output_root}/DinoMutantBot-v${version}-Windows-Lite"
+package_root="${output_root}/猛龍計劃-v${version}-Windows-Lite"
 package_app="${package_root}/app"
 
 rm -rf "${package_root}" "${package_root}.zip"
@@ -53,6 +53,6 @@ fi
 find "${package_root}" -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
 find "${package_root}" -name ".DS_Store" -delete 2>/dev/null || true
 
-(cd "${output_root}" && zip -qr "DinoMutantBot-v${version}-Windows-Lite.zip" "DinoMutantBot-v${version}-Windows-Lite")
+(cd "${output_root}" && zip -qr "猛龍計劃-v${version}-Windows-Lite.zip" "猛龍計劃-v${version}-Windows-Lite")
 echo "已打包:${package_root}"
 echo "已打包:${package_root}.zip"
