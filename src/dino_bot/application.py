@@ -393,6 +393,7 @@ def _create_hatch_engine(
             cull_threshold=hatch.cull_threshold,
             cave_safe_margin=80,
             cave_bottom_exclusion_px=config.planner.bottom_exclusion_px,
+            stage_scoped_scan=config.planner.stage_scoped_scan,
             standalone_stage=standalone_stage,
             logger=logger,
         )

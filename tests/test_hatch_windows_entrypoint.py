@@ -135,6 +135,7 @@ def test_hatch_hunt_entrypoint_is_combined_unbounded_and_separate() -> None:
     assert '-StatusPort "%combined_status_port%"' in command
     assert 'set "combined_status_port=8773"' in command
     assert 'set "combined_max_actions=0"' in command
+    assert 'set "combined_speed=fast"' in command
     assert '-MaxCycles "0"' in command
     assert '"hatch-hunt"' in runner
     assert "Auto Hatch + Hunt" in command

@@ -19,7 +19,7 @@ set "combined_mode=%~1"
 if "%combined_mode%"=="" set "combined_mode=debug"
 
 set "combined_speed=%~2"
-if "%combined_speed%"=="" set "combined_speed=safe"
+if "%combined_speed%"=="" set "combined_speed=fast"
 
 set "combined_status_port=%~3"
 if "%combined_status_port%"=="" set "combined_status_port=8773"

@@ -120,7 +120,7 @@
     "recenter_min_candidates": 1,
     "blind_idle_seconds": 20,
     "mail_stage_timeout_seconds": 20,
-    "stage_scoped_scan": true,
+    "stage_scoped_scan": false,
     "full_scan_interval_seconds": 30,
     "full_scan_after_idle_cycles": 2,
     "map_settle_frames": 2,

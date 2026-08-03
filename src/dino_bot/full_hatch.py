@@ -120,6 +120,7 @@ HUNT_ACTIVE_TYPES: frozenset[str] = frozenset(
 STANDALONE_STAGES: frozenset[str] = frozenset(
     {"hatch", "attack", "hp", "top", "mass", "collect", "cave"}
 )
+SCREENING_STAGES: tuple[str, ...] = ("attack", "hp", "top", "mass")
 
 PLACE_SORT_BEST = "hatch_place_sort_best"
 PLACE_SORT_LEVEL = "hatch_place_sort_level"
@@ -318,6 +319,13 @@ NEST_DETECTION_TYPES: frozenset[str] = frozenset(
         NEST_TITLE,
         SELECT_TITLE,
         *nest_filter_feature.DEFAULT_TARGET_ACTIONS,
+        # The option tap is verified against a collapsed tag header, but the
+        # replacement/autoplace planners must prove that same header again on
+        # the following planning frame before touching parents or settings.
+        # Keeping only actionable controls in this scoped set made every
+        # verified Attack/HP/Top/Mass selection disappear one frame later and
+        # parked the workflow at ``target_filter_required``.
+        *nest_filter_feature.HEADER_LABELS,
         *select_sort_feature.DEFAULT_TARGET_ACTIONS,
         *replacement_feature.DEFAULT_TARGET_ACTIONS,
         NEST_GEAR,
@@ -865,6 +873,7 @@ class CaveCullPlanner:
         safe_margin: int = 80,
         bottom_exclusion_px: int = 180,
         selection_size: int = DEFAULT_CULL_BATCH_SIZE,
+        allow_cull: bool = True,
         logger: logging.Logger | None = None,
     ) -> None:
         self.reader = reader
@@ -873,6 +882,7 @@ class CaveCullPlanner:
         self.safe_margin = max(0, safe_margin)
         self.bottom_exclusion_px = max(0, bottom_exclusion_px)
         self.selection_size = max(1, selection_size)
+        self.allow_cull = bool(allow_cull)
         self.logger = logger or logging.getLogger("dino_bot")
         self.navigator = CaveNavigator(reference_width=reference_width)
         self._stage = "navigate"
@@ -884,6 +894,7 @@ class CaveCullPlanner:
         self._complete = False
         self._capacity_before: int | None = None
         self._capacity_readable: bool | None = None
+        self._cull_required = False
         self._selected_count = 0
 
     def last_stage(self) -> str:
@@ -897,6 +908,12 @@ class CaveCullPlanner:
         """Whether this run proved the N/350 readout instead of skipping it."""
 
         return self._capacity_readable is True
+
+    @property
+    def cull_required(self) -> bool:
+        """Whether the readable capacity crossed the configured threshold."""
+
+        return self._cull_required
 
     def on_action_success(self, target_type: str) -> None:
         if target_type == CAVE_SWIPE:
@@ -960,6 +977,7 @@ class CaveCullPlanner:
                 )
                 if count is not None:
                     cull = should_cull(count, self.threshold)
+                    self._cull_required = cull
                     self.logger.info(
                         "Hatch cave | capacity=%d/350 | threshold=%d | cull=%s"
                         " | cave_visible=False",
@@ -968,6 +986,10 @@ class CaveCullPlanner:
                         cull,
                     )
                     if not cull:
+                        self._capacity_readable = True
+                        self._stage = "recenter"
+                        return self.choose(frame, detections)
+                    if not self.allow_cull:
                         self._capacity_readable = True
                         self._stage = "recenter"
                         return self.choose(frame, detections)
@@ -980,13 +1002,21 @@ class CaveCullPlanner:
                 )
                 if count is not None:
                     cull = should_cull(count, self.threshold)
-                    self._capacity_readable = not cull
+                    self._cull_required = cull
+                    self._capacity_readable = not cull or not self.allow_cull
                     if cull:
-                        self.logger.error(
-                            "Hatch cave | capacity=%d/350 requires cull but cave target"
-                            " is unavailable; recentering without hatching",
-                            count,
-                        )
+                        if self.allow_cull:
+                            self.logger.error(
+                                "Hatch cave | capacity=%d/350 requires cull but cave"
+                                " target is unavailable; recentering without hatching",
+                                count,
+                            )
+                        else:
+                            self.logger.info(
+                                "Hatch cave | capacity=%d/350 requires screening"
+                                " before cull | cave_visible=False",
+                                count,
+                            )
                     else:
                         self.logger.info(
                             "Hatch cave | capacity=%d/350 | threshold=%d | cull=False"
@@ -1019,13 +1049,14 @@ class CaveCullPlanner:
                 self._stage = "recenter"
                 return self.choose(frame, detections)
             self._capacity_readable = True
+            self._cull_required = should_cull(count, self.threshold)
             self.logger.info(
                 "Hatch cave | capacity=%d/350 | threshold=%d | cull=%s",
                 count,
                 self.threshold,
                 should_cull(count, self.threshold),
             )
-            if not should_cull(count, self.threshold):
+            if not self._cull_required or not self.allow_cull:
                 self._stage = "recenter"
                 return self.choose(frame, detections)
             self._capacity_before = count
@@ -1161,6 +1192,7 @@ class FullHatchPlanner:
         cave_safe_margin: int = 80,
         cave_bottom_exclusion_px: int = 180,
         recovery_timeout_seconds: float = 15.0,
+        stage_scoped_scan: bool = True,
         standalone_stage: str | None = None,
         logger: logging.Logger | None = None,
         clock: Callable[[], float] | None = None,
@@ -1174,6 +1206,7 @@ class FullHatchPlanner:
         self.cave_safe_margin = max(0, cave_safe_margin)
         self.cave_bottom_exclusion_px = max(0, cave_bottom_exclusion_px)
         self.recovery_timeout_seconds = max(1.0, recovery_timeout_seconds)
+        self.stage_scoped_scan = bool(stage_scoped_scan)
         if standalone_stage is not None and standalone_stage not in STANDALONE_STAGES:
             raise ValueError(f"unsupported standalone hatch stage: {standalone_stage}")
         self.standalone_stage = standalone_stage
@@ -1207,6 +1240,11 @@ class FullHatchPlanner:
         self._capacity_checked = False
         self._batch_hatched = 0
         self._batch_hunt_ready = False
+        # Cleanup is destructive: a capacity-triggered or batch-triggered
+        # management pass must retain proof that every screening stage
+        # completed, including across bounded home recovery.
+        self._management_pending = False
+        self._screening_completed: set[str] = set()
         self._observed_cooldown_until: float | None = None
         self._boost_enabled_for_cycle = False
         self._boost_attempted = False
@@ -1239,7 +1277,7 @@ class FullHatchPlanner:
         method = getattr(self._child, "next_ready_delay_ms", None)
         return int(method()) if callable(method) else 0
 
-    def planning_detection_types(self) -> frozenset[str]:
+    def planning_detection_types(self) -> frozenset[str] | None:
         """Return the detector types needed by the current hatch phase.
 
         Full-hatch runs use a separate manifest from hunting, but the combined
@@ -1249,6 +1287,8 @@ class FullHatchPlanner:
         nest management is active.
         """
 
+        if not self.stage_scoped_scan:
+            return None
         if self._stage == "hatch":
             return HATCH_DETECTION_TYPES
         if self._stage in {
@@ -1300,6 +1340,24 @@ class FullHatchPlanner:
             self._standalone_started = False
             self._standalone_returning = False
             return
+        if self._management_pending:
+            # A game/startup interruption must not erase an unfinished
+            # screening checklist and later allow cleanup to proceed. Recover
+            # home, reopen My Nest, and resume the first incomplete stage.
+            self._stage = "recover_home"
+            self._child = HatchHomeRecoveryPlanner(
+                reference_width=self.reference_width,
+                logger=self.logger,
+            )
+            self._complete = False
+            self._no_target_since = None
+            self._recovery_reason = "resume incomplete screening after workflow reset"
+            self._collect_only_after_empty = False
+            self._empty_rescan_wait = False
+            self._observed_cooldown_until = None
+            self._navigation_failures.clear()
+            self._pending_claim_verification = False
+            return
         self._stage = "hatch"
         self._child = self._new_hatch()
         self._hatch_baseline = 0
@@ -1310,6 +1368,8 @@ class FullHatchPlanner:
         self._empty_rescan_wait = False
         self._batch_hatched = 0
         self._batch_hunt_ready = False
+        self._management_pending = False
+        self._screening_completed.clear()
         self._observed_cooldown_until = None
         self._navigation_failures.clear()
         self._pending_claim_verification = False
@@ -1368,6 +1428,7 @@ class FullHatchPlanner:
                     )
                     self._batch_hatched = 0
                     self._batch_hunt_ready = False
+                    self._screening_completed.clear()
                 self._pending_claim_verification = False
             if target_type == hatch_feature.CLOSE_BUTTON:
                 if self.standalone_stage == "hatch":
@@ -1384,6 +1445,9 @@ class FullHatchPlanner:
                         self.batch_hatch_count,
                     )
                     self._batch_hunt_ready = batch_complete
+                    if batch_complete and not self._management_pending:
+                        self._management_pending = True
+                        self._screening_completed.clear()
                     self._enter_open_nest(collect_only=not batch_complete)
                 else:
                     self.logger.info(
@@ -1399,7 +1463,7 @@ class FullHatchPlanner:
             if self._collect_only_after_empty:
                 self._start_collect()
             else:
-                self._start_replacement("attack")
+                self._start_next_screening_stage()
             return
         if self._stage in ("attack", "hp"):
             child = self._replacement_child
@@ -1568,6 +1632,21 @@ class FullHatchPlanner:
                     "Hatch full | centered home confirmed | recovered=%s",
                     self._recovery_reason or "unknown",
                 )
+                if self._management_pending:
+                    missing = self._missing_screening_stages()
+                    self.logger.info(
+                        "Hatch full | resuming screening after recovery"
+                        " | completed=%s | missing=%s",
+                        self._format_screening_stages(self._screening_completed),
+                        self._format_screening_stages(missing),
+                    )
+                    self._stage = "open_nest"
+                    self._child = object()
+                    self._collect_only_after_empty = False
+                    self._empty_rescan_wait = False
+                    self._no_target_since = None
+                    self._recovery_reason = None
+                    return self._choose_current(frame, detections)
                 self.reset_workflow()
                 return self._choose_current(frame, detections)
             return target
@@ -1666,6 +1745,19 @@ class FullHatchPlanner:
                     )
                     self._complete = True
                     return None
+                if self._capacity_child.cull_required:
+                    self.logger.warning(
+                        "Hatch capacity | cleanup blocked until screening completes"
+                        " | required=%s",
+                        self._format_screening_stages(SCREENING_STAGES),
+                    )
+                    self._management_pending = True
+                    self._screening_completed.clear()
+                    self._stage = "open_nest"
+                    self._child = object()
+                    self._collect_only_after_empty = False
+                    self._no_target_since = None
+                    return self._choose_current(frame, detections)
                 self._capacity_checked = True
                 self.logger.info(
                     "Hatch capacity | preflight complete | safe to hatch"
@@ -1684,7 +1776,7 @@ class FullHatchPlanner:
                 if self._collect_only_after_empty:
                     self._start_collect()
                 else:
-                    self._start_replacement("attack")
+                    self._start_next_screening_stage()
                 return self._choose_current(frame, detections)
             anchor = _best(by_type.get(hatch_feature.HOME_ANCHOR))
             return _synthetic(OPEN_NEST, anchor.x, anchor.y) if anchor is not None else None
@@ -1736,6 +1828,23 @@ class FullHatchPlanner:
                 if self._collect_only_after_empty:
                     self._start_empty_rescan_wait()
                     return self._choose_current(frame, detections)
+                missing = self._missing_screening_stages()
+                if missing:
+                    self.logger.error(
+                        "Hatch full | cleanup blocked; screening incomplete"
+                        " | completed=%s | missing=%s",
+                        self._format_screening_stages(self._screening_completed),
+                        self._format_screening_stages(missing),
+                    )
+                    self._management_pending = True
+                    self._stage = "open_nest"
+                    self._child = object()
+                    return self._choose_current(frame, detections)
+                self.logger.info(
+                    "Hatch full | screening gate passed; cave cleanup permitted"
+                    " | completed=%s",
+                    self._format_screening_stages(self._screening_completed),
+                )
                 self._stage = "cave"
                 self._child = CaveCullPlanner(
                     self.reader,
@@ -1748,12 +1857,29 @@ class FullHatchPlanner:
                 return self._choose_current(frame, detections)
             return None
         if self._stage == "cave":
+            if self.standalone_stage is None:
+                missing = self._missing_screening_stages()
+                if not self._management_pending or missing:
+                    self.logger.error(
+                        "Hatch full | cave cleanup denied by screening gate"
+                        " | management_pending=%s | missing=%s",
+                        self._management_pending,
+                        self._format_screening_stages(missing),
+                    )
+                    self._management_pending = True
+                    self._stage = "open_nest"
+                    self._child = object()
+                    self._collect_only_after_empty = False
+                    return self._choose_current(frame, detections)
             target = self._cave_child.choose(frame, detections)
             if target is None and self._cave_child.is_complete():
                 if self.standalone_stage == "cave":
                     self._begin_home_recovery("standalone cave completed")
                     return self._choose_current(frame, detections)
                 self.completed_management_cycles += 1
+                self._capacity_checked = True
+                self._management_pending = False
+                self._screening_completed.clear()
                 self.logger.info(
                     "Hatch full | completed management cycle %d | restarting Phase A",
                     self.completed_management_cycles,
@@ -1792,6 +1918,9 @@ class FullHatchPlanner:
             reference_width=self.reference_width,
             safe_margin=self.cave_safe_margin,
             bottom_exclusion_px=self.cave_bottom_exclusion_px,
+            # Preflight may read capacity, but it must never delete dinosaurs
+            # before the four screening stages have completed.
+            allow_cull=False,
             logger=self.logger,
         )
         self._no_target_since = None
@@ -1968,6 +2097,46 @@ class FullHatchPlanner:
             logger=self.logger,
         )
 
+    def _start_next_screening_stage(self) -> None:
+        """Resume the first unproven stage; collect only after all four pass."""
+
+        missing = self._missing_screening_stages()
+        if not missing:
+            self.logger.info(
+                "Hatch full | screening complete | completed=%s",
+                self._format_screening_stages(self._screening_completed),
+            )
+            self._start_collect()
+            return
+        next_stage = missing[0]
+        self.logger.info(
+            "Hatch full | screening stage starting | stage=%s | completed=%s",
+            next_stage,
+            self._format_screening_stages(self._screening_completed),
+        )
+        if next_stage in {"attack", "hp"}:
+            self._start_replacement(next_stage)
+            return
+        self._stage = next_stage
+        rule = TOP_RULE if next_stage == "top" else MASS_RULE
+        self._child = AutoPlaceRoundPlanner(
+            rule,
+            reference_width=self.reference_width,
+            logger=self.logger,
+        )
+
+    def _missing_screening_stages(self) -> tuple[str, ...]:
+        return tuple(
+            stage for stage in SCREENING_STAGES
+            if stage not in self._screening_completed
+        )
+
+    @staticmethod
+    def _format_screening_stages(stages: Sequence[str] | set[str]) -> str:
+        selected = set(stages)
+        ordered = [stage for stage in SCREENING_STAGES if stage in selected]
+        return ",".join(ordered) if ordered else "none"
+
     def _advance_replacement_if_done(self) -> None:
         child = self._replacement_child
         if not child.is_complete():
@@ -1986,15 +2155,13 @@ class FullHatchPlanner:
                 f"standalone {self.standalone_stage} completed"
             )
             return
-        if self._stage == "attack":
-            self._start_replacement("hp")
-        else:
-            self._stage = "top"
-            self._child = AutoPlaceRoundPlanner(
-                TOP_RULE,
-                reference_width=self.reference_width,
-                logger=self.logger,
-            )
+        completed_stage = self._stage
+        self._screening_completed.add(completed_stage)
+        self.logger.info(
+            "Hatch full | screening stage completed | stage=%s",
+            completed_stage,
+        )
+        self._start_next_screening_stage()
 
     def _advance_autoplace_if_done(self) -> None:
         child = self._autoplace_child
@@ -2005,15 +2172,13 @@ class FullHatchPlanner:
                 f"standalone {self.standalone_stage} completed"
             )
             return
-        if self._stage == "top":
-            self._stage = "mass"
-            self._child = AutoPlaceRoundPlanner(
-                MASS_RULE,
-                reference_width=self.reference_width,
-                logger=self.logger,
-            )
-        else:
-            self._start_collect()
+        completed_stage = self._stage
+        self._screening_completed.add(completed_stage)
+        self.logger.info(
+            "Hatch full | screening stage completed | stage=%s",
+            completed_stage,
+        )
+        self._start_next_screening_stage()
 
     @property
     def _hatch_child(self) -> hatch_feature.HatchPlanner:

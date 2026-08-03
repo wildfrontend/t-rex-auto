@@ -313,6 +313,26 @@ def test_cave_above_threshold_runs_weakest_continuous_battle(
     ) in caplog.text
 
 
+def test_capacity_probe_records_required_cull_without_opening_cave(monkeypatch) -> None:
+    monkeypatch.setattr("dino_bot.full_hatch.read_dino_count", lambda *args, **kwargs: 301)
+    planner = CaveCullPlanner(
+        DigitReader(GLYPHS),
+        threshold=300,
+        allow_cull=False,
+    )
+    for _ in range(2):
+        swipe = planner.choose(frame(), [])
+        assert swipe is not None and swipe.type == CAVE_SWIPE
+        planner.on_action_success(swipe.type)
+
+    target = planner.choose(frame(), [detection("hatch_cave", 209, 1150)])
+
+    assert target is not None and target.type == CAVE_RECENTER
+    assert target.type != "hatch_cave"
+    assert planner.capacity_readable
+    assert planner.cull_required
+
+
 def make_full_planner() -> FullHatchPlanner:
     return FullHatchPlanner(
         DigitReader(GLYPHS),
@@ -335,8 +355,44 @@ def test_full_hatch_scopes_detection_by_workflow_phase() -> None:
     nest_types = planner.planning_detection_types()
     assert NEST_TITLE in nest_types
     assert SELECT_TITLE in nest_types
+    assert set(nest_filter.HEADER_LABELS) <= nest_types
     assert "dinosaur" not in nest_types
     assert "own_hunt_path" not in nest_types
+
+
+def test_full_hatch_can_request_full_scan_for_every_workflow_phase() -> None:
+    planner = FullHatchPlanner(
+        DigitReader(GLYPHS),
+        egg_pile_point=(450, 1330),
+        max_scrolls=0,
+        stage_scoped_scan=False,
+    )
+
+    assert planner.planning_detection_types() is None
+    planner._stage = "attack"
+    assert planner.planning_detection_types() is None
+    planner._stage = "cave"
+    assert planner.planning_detection_types() is None
+
+
+def test_attack_filter_header_survives_into_next_scoped_planning_frame() -> None:
+    planner = make_full_planner()
+    planner._start_replacement("attack")
+    planner._replacement_child.on_action_success(nest_filter.TAG_ATTACK)
+
+    visible = [
+        detection(NEST_TITLE, 450, 260),
+        detection(nest_filter.TAG_HDR_ATTACK, 217, 166),
+    ]
+    scoped = [
+        item
+        for item in visible
+        if item.type in planner.planning_detection_types()
+    ]
+
+    planner.choose(frame(), scoped)
+
+    assert planner._replacement_child.last_stage() != "target_filter_required"
 
 
 def test_full_hatch_preflights_capacity_before_first_egg_pile_tap() -> None:
@@ -365,6 +421,83 @@ def test_full_hatch_preflights_capacity_before_first_egg_pile_tap() -> None:
     target = planner.choose(capacity_frame(), home)
     assert target is not None and target.type == hatch.EGG_PILE
     assert planner._capacity_checked
+
+
+def test_full_capacity_preflight_screens_before_required_cull(monkeypatch) -> None:
+    monkeypatch.setattr("dino_bot.full_hatch.read_dino_count", lambda *args, **kwargs: 321)
+    planner = FullHatchPlanner(
+        DigitReader(GLYPHS),
+        egg_pile_point=(450, 1330),
+        max_scrolls=0,
+        cull_threshold=320,
+    )
+    home = [detection(hatch.HOME_ANCHOR, 59, 561)]
+
+    for _ in range(2):
+        target = planner.choose(frame(), home)
+        assert target is not None and target.type == CAVE_SWIPE
+        planner.on_action_success(target.type)
+
+    cave = [detection("hatch_cave", 209, 1150)]
+    for _ in range(2):
+        target = planner.choose(frame(), cave)
+        assert target is not None and target.type == CAVE_RECENTER
+        assert target.type != "hatch_cave"
+        planner.on_action_success(target.type)
+
+    assert planner.choose(frame(), home) is None
+    target = planner.choose(frame(), home)
+
+    assert target is not None and target.type == OPEN_NEST
+    assert planner._management_pending
+    assert not planner._capacity_checked
+
+
+def test_cleanup_gate_reopens_nest_when_one_screening_stage_is_missing() -> None:
+    planner = make_full_planner()
+    planner._stage = "verify_nest_closed"
+    planner._child = object()
+    planner._management_pending = True
+    planner._collect_only_after_empty = False
+    planner._screening_completed = {"attack", "hp", "top"}
+    home = [detection(hatch.HOME_ANCHOR, 59, 561)]
+
+    target = planner.choose(frame(), home)
+
+    assert target is not None and target.type == OPEN_NEST
+    assert target.type != CAVE_SWIPE
+    assert planner._missing_screening_stages() == ("mass",)
+
+
+def test_cleanup_gate_allows_cave_only_after_every_screening_stage() -> None:
+    planner = make_full_planner()
+    planner._stage = "verify_nest_closed"
+    planner._child = object()
+    planner._management_pending = True
+    planner._collect_only_after_empty = False
+    planner._screening_completed = {"attack", "hp", "top", "mass"}
+    home = [detection(hatch.HOME_ANCHOR, 59, 561)]
+
+    target = planner.choose(frame(), home)
+
+    assert target is not None and target.type == CAVE_SWIPE
+    assert planner._stage == "cave"
+
+
+def test_workflow_reset_preserves_and_resumes_incomplete_screening() -> None:
+    planner = make_full_planner()
+    planner._management_pending = True
+    planner._screening_completed = {"attack"}
+
+    planner.reset_workflow()
+
+    assert planner._stage == "recover_home"
+    home = [detection(hatch.HOME_ANCHOR, 59, 561)]
+    assert planner.choose(frame(), home) is None
+    target = planner.choose(frame(), home)
+    assert target is not None and target.type == OPEN_NEST
+    planner.on_action_success(target.type)
+    assert planner._stage == "hp"
 
 
 def test_full_flow_enters_nest_only_after_a_verified_hatch_claim() -> None:

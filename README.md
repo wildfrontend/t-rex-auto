@@ -407,7 +407,8 @@ D:\DinoMutantBot\python\python.exe `
 - `stalls.snapshots_enabled` / `snapshot_limit` / `snapshot_min_interval_seconds`:
   卡死畫面要不要存、留幾張、最短間隔幾秒，預設 `true` / 10 / 60。一段卡死每 20 秒會重報一次，
   沒有間隔下限的話一段三分鐘的卡死就會用九張幾乎一樣的圖洗掉全部保留額度。
-- `planner.stage_scoped_scan`: 規劃階段只掃目前階段用得到的素材，預設 `true`。登入／裝置
+- `planner.stage_scoped_scan`: 規劃階段只掃目前階段用得到的素材，程式預設 `true`；目前
+  `config.json` 設為 `false`，使用較慢但每輪完整辨識的 Full Scan 穩定模式。登入／裝置
   紀錄／開場優惠三個對話框佔一次全掃描的四分之一，而它們跑起來之後不可能再出現；實測地圖
   階段因此省 42%、信箱流程省 56%。設為 `false` 可回到每個 cycle 都掃全部。
 - `planner.full_scan_after_idle_cycles`: 連續幾個 cycle 規劃不出目標就把下一次掃描放回全部，
