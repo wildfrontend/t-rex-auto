@@ -232,5 +232,8 @@
     "launch_wait_seconds": 15,
     "package": "com.mondayoff.dinomutant",
     "activity": "com.unity3d.player.UnityPlayerActivity"
+  },
+  "hatch": {
+    "batch_hatch_count": 48
   }
 }
