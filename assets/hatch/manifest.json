@@ -229,6 +229,16 @@
       "type": "hatch_cave_close_button",
       "file": "templates/hatch-cave-close-button.png",
       "threshold": 0.9
+    },
+    {
+      "type": "hatch_confirm_yes",
+      "file": "templates/hatch-confirm-yes-ticket.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_confirm_no",
+      "file": "templates/hatch-confirm-no-v2.png",
+      "threshold": 0.9
     }
   ]
 }
