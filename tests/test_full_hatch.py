@@ -594,6 +594,28 @@ def test_full_hatch_uses_observed_batch_timer_for_rescan_wait() -> None:
     assert planner.next_ready_delay_ms() == 3_725_000
 
 
+def test_interim_collection_pins_remaining_cooldown() -> None:
+    now = [1000.0]
+    planner = FullHatchPlanner(
+        DigitReader(GLYPHS),
+        egg_pile_point=(450, 1330),
+        clock=lambda: now[0],
+    )
+    planner._start_empty_rescan_wait()
+    remaining_ms = planner.next_ready_delay_ms()
+    assert planner.is_hunt_cooldown_active()
+
+    assert planner.begin_interim_collection() is True
+    assert planner._stage == "open_nest"
+    assert planner._collect_only_after_empty
+    # 差事結束後的等待必須接續原本的倒數,而不是重新起算。
+    assert planner._observed_cooldown_until == now[0] + remaining_ms / 1000
+
+    # 差事進行中不再宣告可狩獵,也不可重複觸發。
+    assert not planner.is_hunt_cooldown_active()
+    assert planner.begin_interim_collection() is False
+
+
 def boost_ready_frame() -> Frame:
     """Home incubator frame whose boost bar shows the saturated ready state."""
 

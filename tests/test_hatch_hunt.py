@@ -202,3 +202,34 @@ def test_startup_interruption_during_hunt_restarts_hatch_first() -> None:
     assert chosen is not None and chosen.type == STARTUP_NEST_SHORTCUT
     assert hatch_planner.cooldown_ms == 0
     assert hunt_planner.reset_count == 1
+
+
+def test_hunt_idle_window_triggers_interim_collection_errand() -> None:
+    combined, hatch_planner, hunt_planner = planner()
+    hunt_planner.next_target = target("dinosaur", 300, 700)
+    assert combined.choose(frame(), []) is not None  # 進入 hunt 模式
+
+    calls: list[bool] = []
+    hatch_planner.begin_interim_collection = lambda: calls.append(True) or True
+
+    hunt_planner.next_target = None
+    hunt_planner.delay_ms = 30_000  # 狩獵側全目標冷卻中
+    combined.choose(frame(), [])
+    assert calls == [True]
+    assert combined._mode == "handoff"
+
+
+def test_hunt_idle_errand_skipped_when_handback_is_near() -> None:
+    combined, hatch_planner, hunt_planner = planner(cooldown_ms=100_000)
+    hunt_planner.next_target = target("dinosaur", 300, 700)
+    assert combined.choose(frame(), []) is not None
+
+    calls: list[bool] = []
+    hatch_planner.begin_interim_collection = lambda: calls.append(True) or True
+
+    hunt_planner.next_target = None
+    hunt_planner.delay_ms = 30_000
+    combined.choose(frame(), [])
+    # 距離正式交棒不到 margin(30s handoff + 90s),不值得跑差事。
+    assert calls == []
+    assert combined._mode == "hunt"

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Sequence
 from math import hypot
 from typing import Any
@@ -40,6 +41,11 @@ class HatchHuntPlanner:
         self._mode = "hatch"
         self._action_owner: Any = None
         self._centered_frames = 0
+        # 狩獵閒置差事:狩獵側全目標冷卻時,把空窗拿去收巢蛋。
+        self.errand_min_idle_ms = 15_000
+        self.errand_margin_ms = 90_000
+        self.errand_interval_seconds = 180.0
+        self._next_errand_at = 0.0
 
     @property
     def completion_type(self) -> str:
@@ -105,6 +111,23 @@ class HatchHuntPlanner:
                 self.logger.info(
                     "Hatch+Hunt | cooldown handoff window | remaining=%.0fs",
                     remaining / 1000,
+                )
+                return self._choose_handoff(frame, detections)
+            hunt_idle = self.hunt.next_ready_delay_ms()
+            if (
+                hunt_idle >= self.errand_min_idle_ms
+                and remaining > self.handoff_ms + self.errand_margin_ms
+                and time.monotonic() >= self._next_errand_at
+                and self.hatch.begin_interim_collection()
+            ):
+                # 狩獵側全目標都在冷卻;把這段空窗換成一趟回家收蛋,
+                # 收完由既有的冷卻切換邏輯自動回到狩獵。
+                self._next_errand_at = time.monotonic() + self.errand_interval_seconds
+                self._mode = "handoff"
+                self._centered_frames = 0
+                self.logger.info(
+                    "Hatch+Hunt | hunt idle %.0fs | interim collection errand",
+                    hunt_idle / 1000,
                 )
                 return self._choose_handoff(frame, detections)
             return self._choose_owned(self.hunt, frame, detections)

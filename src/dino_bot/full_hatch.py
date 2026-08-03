@@ -1340,6 +1340,27 @@ class FullHatchPlanner:
             and self.next_ready_delay_ms() > 0
         )
 
+    def begin_interim_collection(self) -> bool:
+        """Spend a hunt idle window on one collect-only nest round.
+
+        把剩餘冷卻釘進 observed deadline:收蛋結束後的等待會接續原本的
+        倒數,而不是從設定值重新起算(`_start_empty_rescan_wait` 會在
+        沒有 observed 值時退回整段設定時間)。
+        """
+
+        if not self.is_hunt_cooldown_active():
+            return False
+        if self._observed_cooldown_until is None:
+            self._observed_cooldown_until = (
+                self.clock() + self.next_ready_delay_ms() / 1000
+            )
+        self.logger.info(
+            "Hatch full | interim nest collection during hunt idle | resume=%.0fs",
+            max(0.0, self._observed_cooldown_until - self.clock()),
+        )
+        self._enter_open_nest(collect_only=True)
+        return True
+
     def reset_workflow(self) -> None:
         if self.standalone_stage is not None:
             self._stage = "recover_home"
