@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 runtime_root="${1:-/mnt/d/DinoMutantBot-App}"
 runtime_python_source="${2:-}"
 runtime_app="${runtime_root}/app"
@@ -25,21 +25,21 @@ cp -a \
 # fill in anything that is missing.
 cp -a --update=none "${project_root}/tools" "${runtime_app}/"
 cp -a \
-  "${project_root}/scripts/run-windows.ps1" \
-  "${project_root}/scripts/run-hatch-windows.ps1" \
-  "${project_root}/scripts/run-dashboard-windows.ps1" \
-  "${project_root}/scripts/watch-dashboard-windows.ps1" \
-  "${project_root}/scripts/doctor-windows.ps1" \
-  "${project_root}/scripts/launcher-windows.ps1" \
-  "${project_root}/scripts/control-windows.ps1" \
-  "${project_root}/scripts/install-windows-runtime.ps1" \
-  "${project_root}/scripts/setup-windows.ps1" \
-  "${project_root}/scripts/python312._pth" \
-  "${project_root}/scripts/watch-running-bot.ps1" \
+  "${project_root}/scripts/windows/run-windows.ps1" \
+  "${project_root}/scripts/windows/run-hatch-windows.ps1" \
+  "${project_root}/scripts/windows/run-dashboard-windows.ps1" \
+  "${project_root}/scripts/windows/watch-dashboard-windows.ps1" \
+  "${project_root}/scripts/windows/doctor-windows.ps1" \
+  "${project_root}/scripts/windows/launcher-windows.ps1" \
+  "${project_root}/scripts/windows/control-windows.ps1" \
+  "${project_root}/scripts/windows/install-windows-runtime.ps1" \
+  "${project_root}/scripts/windows/setup-windows.ps1" \
+  "${project_root}/scripts/windows/python312._pth" \
+  "${project_root}/scripts/windows/watch-running-bot.ps1" \
   "${runtime_app}/scripts/"
-cp -a "${project_root}/scripts/start-hunt.cmd" "${runtime_root}/start-hunt.cmd"
-cp -a "${project_root}/scripts/start-dashboard.cmd" "${runtime_root}/start-dashboard.cmd"
-cp -a "${project_root}/scripts/start-hatch-hunt.cmd" "${runtime_root}/start-hatch-hunt.cmd"
+cp -a "${project_root}/scripts/windows/start-hunt.cmd" "${runtime_root}/start-hunt.cmd"
+cp -a "${project_root}/scripts/windows/start-dashboard.cmd" "${runtime_root}/start-dashboard.cmd"
+cp -a "${project_root}/scripts/windows/start-hatch-hunt.cmd" "${runtime_root}/start-hatch-hunt.cmd"
 
 # Keep the portable root limited to the three user-facing entrypoints. Older
 # development launchers remain recoverable under app/scripts instead of being

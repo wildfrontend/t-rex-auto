@@ -29,7 +29,7 @@ Feature 方式加入，不需要修改核心狀態機。
 ```text
 WSL /home/louis/github/wildfrontend/t-rex-auto
   ├─ 原始碼、Git、離線測試
-  └─ scripts/deploy-windows.sh
+  └─ scripts/windows/deploy-windows.sh
                │
                ▼
 Windows D:\DinoMutantBot
@@ -136,7 +136,7 @@ C:\Users\Louis\AppData\Local\Android\Sdk\platform-tools\adb.exe
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass `
-  -File scripts\install-windows-runtime.ps1
+  -File scripts\windows\install-windows-runtime.ps1
 ```
 
 ### 3. 從 WSL 部署
@@ -145,8 +145,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
 封裝成可直接分享的完整資料夾：
 
 ```bash
-bash scripts/deploy-windows.sh
-bash scripts/deploy-windows.sh /mnt/d/DinoMutantBot-release /mnt/d/DinoMutantBot/python
+bash scripts/windows/deploy-windows.sh
+bash scripts/windows/deploy-windows.sh /mnt/d/DinoMutantBot-release /mnt/d/DinoMutantBot/python
 ```
 
 ### 4. 環境檢查

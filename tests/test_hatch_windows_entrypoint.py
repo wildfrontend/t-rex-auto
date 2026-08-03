@@ -6,8 +6,8 @@ REPO = Path(__file__).resolve().parent.parent
 
 
 def test_hatch_entrypoint_is_separate_and_fixed_to_hatch() -> None:
-    command = (REPO / "scripts/start-hatch-bot.cmd").read_text(encoding="utf-8")
-    runner = (REPO / "scripts/run-hatch-windows.ps1").read_text(encoding="utf-8")
+    command = (REPO / "scripts/windows/start-hatch-bot.cmd").read_text(encoding="utf-8")
+    runner = (REPO / "scripts/windows/run-hatch-windows.ps1").read_text(encoding="utf-8")
 
     assert "run-hatch-windows.ps1" in command
     assert '[string]$Feature = "hatch"' in runner
@@ -18,37 +18,37 @@ def test_hatch_entrypoint_is_separate_and_fixed_to_hatch() -> None:
 
 
 def test_windows_deploy_exposes_exactly_three_user_entrypoints() -> None:
-    deploy = (REPO / "scripts/deploy-windows.sh").read_text(encoding="utf-8")
+    deploy = (REPO / "scripts/windows/deploy-windows.sh").read_text(encoding="utf-8")
 
-    assert 'scripts/run-hatch-windows.ps1"' in deploy
-    assert 'scripts/run-dashboard-windows.ps1"' in deploy
-    assert 'scripts/watch-dashboard-windows.ps1"' in deploy
-    assert 'scripts/start-hunt.cmd"' in deploy
-    assert 'scripts/start-dashboard.cmd"' in deploy
-    assert 'scripts/start-hatch-hunt.cmd"' in deploy
+    assert 'scripts/windows/run-hatch-windows.ps1"' in deploy
+    assert 'scripts/windows/run-dashboard-windows.ps1"' in deploy
+    assert 'scripts/windows/watch-dashboard-windows.ps1"' in deploy
+    assert 'scripts/windows/start-hunt.cmd"' in deploy
+    assert 'scripts/windows/start-dashboard.cmd"' in deploy
+    assert 'scripts/windows/start-hatch-hunt.cmd"' in deploy
     assert 'legacy_launchers="${runtime_app}/scripts/legacy-launchers"' in deploy
     assert "start-bot.cmd" in deploy
 
 
 def test_hatch_runner_allows_dashboard_standalone_stages() -> None:
-    runner = (REPO / "scripts/run-hatch-windows.ps1").read_text(encoding="utf-8")
+    runner = (REPO / "scripts/windows/run-hatch-windows.ps1").read_text(encoding="utf-8")
 
     for stage in ("hatch", "attack", "hp", "top", "mass", "collect", "cave"):
         assert f'"hatch-stage-{stage}"' in runner
 
 
 def test_hunt_entrypoint_name_matches_its_feature() -> None:
-    command = (REPO / "scripts/start-hunt.cmd").read_text(encoding="utf-8")
+    command = (REPO / "scripts/windows/start-hunt.cmd").read_text(encoding="utf-8")
 
     assert "launcher-windows.ps1" in command
     assert "Dino Mutant Bot - Hunt" in command
-    assert not (REPO / "scripts/start-bot.cmd").exists()
+    assert not (REPO / "scripts/windows/start-bot.cmd").exists()
 
 
 def test_dashboard_entrypoint_uses_loopback_web_service() -> None:
-    command = (REPO / "scripts/start-dashboard.cmd").read_text(encoding="utf-8")
-    runner = (REPO / "scripts/run-dashboard-windows.ps1").read_text(encoding="utf-8")
-    watcher = (REPO / "scripts/watch-dashboard-windows.ps1").read_text(
+    command = (REPO / "scripts/windows/start-dashboard.cmd").read_text(encoding="utf-8")
+    runner = (REPO / "scripts/windows/run-dashboard-windows.ps1").read_text(encoding="utf-8")
+    watcher = (REPO / "scripts/windows/watch-dashboard-windows.ps1").read_text(
         encoding="utf-8"
     )
 
@@ -63,7 +63,7 @@ def test_dashboard_entrypoint_uses_loopback_web_service() -> None:
 
 
 def test_filter_test_entrypoint_is_isolated_and_cycle_limited() -> None:
-    command = (REPO / "scripts/start-hatch-filter-test.cmd").read_text(encoding="utf-8")
+    command = (REPO / "scripts/windows/start-hatch-filter-test.cmd").read_text(encoding="utf-8")
 
     assert '-Feature "hatch-filter-test"' in command
     assert '-StatusPort "8767"' in command
@@ -72,7 +72,7 @@ def test_filter_test_entrypoint_is_isolated_and_cycle_limited() -> None:
 
 
 def test_sort_test_entrypoint_is_isolated_and_read_only() -> None:
-    command = (REPO / "scripts/start-hatch-sort-test.cmd").read_text(encoding="utf-8")
+    command = (REPO / "scripts/windows/start-hatch-sort-test.cmd").read_text(encoding="utf-8")
 
     assert '-Feature "hatch-sort-test"' in command
     assert '-StatusPort "8768"' in command
@@ -81,7 +81,7 @@ def test_sort_test_entrypoint_is_isolated_and_read_only() -> None:
 
 
 def test_parent_test_entrypoint_is_isolated_and_one_tap_limited() -> None:
-    command = (REPO / "scripts/start-hatch-parent-test.cmd").read_text(
+    command = (REPO / "scripts/windows/start-hatch-parent-test.cmd").read_text(
         encoding="utf-8"
     )
 
@@ -93,7 +93,7 @@ def test_parent_test_entrypoint_is_isolated_and_one_tap_limited() -> None:
 
 
 def test_attack_entrypoint_is_isolated_and_strictly_upgrades() -> None:
-    command = (REPO / "scripts/start-hatch-attack-test.cmd").read_text(
+    command = (REPO / "scripts/windows/start-hatch-attack-test.cmd").read_text(
         encoding="utf-8"
     )
 
@@ -105,7 +105,7 @@ def test_attack_entrypoint_is_isolated_and_strictly_upgrades() -> None:
 
 
 def test_hp_entrypoint_is_isolated_and_strictly_upgrades() -> None:
-    command = (REPO / "scripts/start-hatch-hp-test.cmd").read_text(encoding="utf-8")
+    command = (REPO / "scripts/windows/start-hatch-hp-test.cmd").read_text(encoding="utf-8")
 
     assert '-Feature "hatch-hp-test"' in command
     assert '-StatusPort "8771"' in command
@@ -115,8 +115,8 @@ def test_hp_entrypoint_is_isolated_and_strictly_upgrades() -> None:
 
 
 def test_full_hatch_entrypoint_is_separate_unbounded_and_not_hunt() -> None:
-    command = (REPO / "scripts/start-hatch-full.cmd").read_text(encoding="utf-8")
-    runner = (REPO / "scripts/run-hatch-windows.ps1").read_text(encoding="utf-8")
+    command = (REPO / "scripts/windows/start-hatch-full.cmd").read_text(encoding="utf-8")
+    runner = (REPO / "scripts/windows/run-hatch-windows.ps1").read_text(encoding="utf-8")
 
     assert '-Feature "hatch-full"' in command
     assert '-StatusPort "%hatch_status_port%"' in command
@@ -128,8 +128,8 @@ def test_full_hatch_entrypoint_is_separate_unbounded_and_not_hunt() -> None:
 
 
 def test_hatch_hunt_entrypoint_is_combined_unbounded_and_separate() -> None:
-    command = (REPO / "scripts/start-hatch-hunt.cmd").read_text(encoding="utf-8")
-    runner = (REPO / "scripts/run-hatch-windows.ps1").read_text(encoding="utf-8")
+    command = (REPO / "scripts/windows/start-hatch-hunt.cmd").read_text(encoding="utf-8")
+    runner = (REPO / "scripts/windows/run-hatch-windows.ps1").read_text(encoding="utf-8")
 
     assert '-Feature "hatch-hunt"' in command
     assert '-StatusPort "%combined_status_port%"' in command
