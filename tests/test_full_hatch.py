@@ -940,6 +940,32 @@ def test_failed_egg_pile_tap_enters_recovery_before_any_retry() -> None:
     assert target is not None and target.type == RECOVERY_BACK
 
 
+def test_failed_home_recovery_action_retries_without_completing_workflow() -> None:
+    planner = make_full_planner()
+    planner._management_pending = True
+    planner._screening_completed = {"attack", "hp", "top", "mass"}
+    planner._begin_home_recovery("cave recenter failed")
+    shifted_home = [
+        detection(hatch.HOME_ANCHOR, 59, 561),
+        detection("forest_recenter_button", 841, 1296),
+    ]
+    dimmed = frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+
+    target = planner.choose(dimmed, shifted_home)
+    assert target is not None and target.type == RECOVERY_FOREST
+    planner.on_action_failure(target.type)
+
+    assert not planner.is_complete()
+    assert planner.choose(dimmed, shifted_home) is None
+    assert planner._recovery_rounds == 1
+    assert planner._management_pending
+    assert planner._screening_completed == {"attack", "hp", "top", "mass"}
+
+    retry = planner.choose(dimmed, shifted_home)
+    assert retry is not None and retry.type == RECOVERY_FOREST
+    assert not planner.is_complete()
+
+
 def test_last_claim_can_finish_on_unready_egg_detail_and_close_safely() -> None:
     planner = make_full_planner()
     planner.on_action_failure(hatch.CLAIM_BUTTON)

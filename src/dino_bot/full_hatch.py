@@ -1605,7 +1605,11 @@ class FullHatchPlanner:
             return
         if self._stage == "recover_home":
             self._recovery_child.on_action_failure(target_type)
-            self._complete = True
+            # Do not mark the full workflow complete here.  The recovery
+            # child records this failed round, and choose() owns the bounded
+            # retry policy for continuous runs.  Completing immediately made
+            # one missed Forest/map transition stop an otherwise healthy
+            # hatch+hunt session before either recovery retry could run.
             return
         if self._stage == "hatch":
             self._hatch_child.on_action_failure(target_type)
