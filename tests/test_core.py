@@ -131,6 +131,12 @@ def test_cli_safe_speed_profile_uses_conservative_delays() -> None:
     assert result.post_action_delays["dinosaur"] == 1500
     assert result.post_action_delays["hunt_button"] == 5000
     assert result.post_action_delays["hunt_confirm_button"] == 3000
+    assert result.timing_profile == "safe"
+    assert result.post_action_delays["hatch_cave_swipe"] == 6000
+    assert result.post_action_delays["hatch_cave_recenter"] == 7000
+    assert result.hatch.capacity_read_retries == 4
+    assert result.hatch.cave_recenter_checks == 5
+    assert result.hatch.recovery_timeout_seconds == 30.0
 
 
 def test_cli_leaves_speed_unset_for_config_default() -> None:

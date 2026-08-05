@@ -909,6 +909,8 @@ class CaveCullPlanner:
         bottom_exclusion_px: int = 180,
         selection_size: int = DEFAULT_CULL_BATCH_SIZE,
         allow_cull: bool = True,
+        capacity_read_retries: int = 2,
+        cave_recenter_checks: int = 3,
         logger: logging.Logger | None = None,
     ) -> None:
         self.reader = reader
@@ -918,6 +920,8 @@ class CaveCullPlanner:
         self.bottom_exclusion_px = max(0, bottom_exclusion_px)
         self.selection_size = max(1, selection_size)
         self.allow_cull = bool(allow_cull)
+        self.capacity_read_retries = max(1, capacity_read_retries)
+        self.cave_recenter_checks = max(1, cave_recenter_checks)
         self.logger = logger or logging.getLogger("dino_bot")
         self.navigator = CaveNavigator(reference_width=reference_width)
         self._stage = "navigate"
@@ -1087,10 +1091,11 @@ class CaveCullPlanner:
             )
             if count is None:
                 self._capacity_failures += 1
-                if self._capacity_failures <= 2:
+                if self._capacity_failures <= self.capacity_read_retries:
                     self.logger.warning(
-                        "Hatch cave | capacity unreadable | retry=%d/2",
+                        "Hatch cave | capacity unreadable | retry=%d/%d",
                         self._capacity_failures,
+                        self.capacity_read_retries,
                     )
                     return None
                 self._capacity_readable = False
@@ -1186,7 +1191,7 @@ class CaveCullPlanner:
             else:
                 self._home_frames = 0
                 self._recenter_checks += 1
-                if self._recenter_checks >= 3:
+                if self._recenter_checks >= self.cave_recenter_checks:
                     self.logger.error(
                         "Hatch cave | safe return swipes did not prove centered home"
                     )
@@ -1244,6 +1249,8 @@ class FullHatchPlanner:
         cave_safe_margin: int = 80,
         cave_bottom_exclusion_px: int = 180,
         recovery_timeout_seconds: float = 15.0,
+        capacity_read_retries: int = 2,
+        cave_recenter_checks: int = 3,
         stage_scoped_scan: bool = True,
         standalone_stage: str | None = None,
         logger: logging.Logger | None = None,
@@ -1259,6 +1266,8 @@ class FullHatchPlanner:
         self.cave_safe_margin = max(0, cave_safe_margin)
         self.cave_bottom_exclusion_px = max(0, cave_bottom_exclusion_px)
         self.recovery_timeout_seconds = max(1.0, recovery_timeout_seconds)
+        self.capacity_read_retries = max(1, capacity_read_retries)
+        self.cave_recenter_checks = max(1, cave_recenter_checks)
         self.stage_scoped_scan = bool(stage_scoped_scan)
         if standalone_stage is not None and standalone_stage not in STANDALONE_STAGES:
             raise ValueError(f"unsupported standalone hatch stage: {standalone_stage}")
@@ -2001,6 +2010,8 @@ class FullHatchPlanner:
                     reference_width=self.reference_width,
                     safe_margin=self.cave_safe_margin,
                     bottom_exclusion_px=self.cave_bottom_exclusion_px,
+                    capacity_read_retries=self.capacity_read_retries,
+                    cave_recenter_checks=self.cave_recenter_checks,
                     logger=self.logger,
                 )
                 return self._choose_current(frame, detections)
@@ -2077,6 +2088,8 @@ class FullHatchPlanner:
             reference_width=self.reference_width,
             safe_margin=self.cave_safe_margin,
             bottom_exclusion_px=self.cave_bottom_exclusion_px,
+            capacity_read_retries=self.capacity_read_retries,
+            cave_recenter_checks=self.cave_recenter_checks,
             # Preflight may read capacity, but it must never delete dinosaurs
             # before the four screening stages have completed.
             allow_cull=False,
@@ -2125,6 +2138,8 @@ class FullHatchPlanner:
                 reference_width=self.reference_width,
                 safe_margin=self.cave_safe_margin,
                 bottom_exclusion_px=self.cave_bottom_exclusion_px,
+                capacity_read_retries=self.capacity_read_retries,
+                cave_recenter_checks=self.cave_recenter_checks,
                 logger=self.logger,
             )
             return

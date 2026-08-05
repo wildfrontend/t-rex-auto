@@ -166,6 +166,14 @@ class HatchConfig:
     cull_threshold: int = 320
     # 洞穴容量估算(上次實讀+累積孵化)達到此值就觸發篩選+淘汰。
     cave_screen_trigger: int = 300
+    # Slow machines may need several complete detect cycles before the HUD is
+    # rendered sharply enough for the N/350 reader.
+    capacity_read_retries: int = 2
+    # Give the cave map more complete detect cycles to prove that it returned
+    # home before entering bounded recovery.
+    cave_recenter_checks: int = 3
+    # Time without an actionable target before full hatch begins home recovery.
+    recovery_timeout_seconds: float = 15.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -250,6 +258,8 @@ class AppConfig:
     # roughly two hours and compresses to 4.4%.
     log_backup_count: int = 12
     transition_poll_interval: int = 250
+    # Set by the CLI speed preset; config-file loads leave it unset.
+    timing_profile: str | None = None
     speed_profiles: dict[str, dict[str, int]] = field(
         default_factory=_default_speed_profiles
     )
@@ -595,6 +605,11 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
             home_backoff_seconds=float(hatch_data.get("home_backoff_seconds", 30)),
             cull_threshold=int(hatch_data.get("cull_threshold", 320)),
             cave_screen_trigger=int(hatch_data.get("cave_screen_trigger", 300)),
+            capacity_read_retries=int(hatch_data.get("capacity_read_retries", 2)),
+            cave_recenter_checks=int(hatch_data.get("cave_recenter_checks", 3)),
+            recovery_timeout_seconds=float(
+                hatch_data.get("recovery_timeout_seconds", 15)
+            ),
         ),
         training=TrainingConfig(
             fps=float(training_data.get("fps", 2)),
@@ -695,6 +710,12 @@ def _validate(config: AppConfig) -> None:
         raise ConfigError("hatch.batch_hatch_count must be greater than zero")
     if config.hatch.cave_screen_trigger <= 0:
         raise ConfigError("hatch.cave_screen_trigger must be greater than zero")
+    if config.hatch.capacity_read_retries <= 0:
+        raise ConfigError("hatch.capacity_read_retries must be greater than zero")
+    if config.hatch.cave_recenter_checks <= 0:
+        raise ConfigError("hatch.cave_recenter_checks must be greater than zero")
+    if config.hatch.recovery_timeout_seconds <= 0:
+        raise ConfigError("hatch.recovery_timeout_seconds must be greater than zero")
     if config.hatch.home_failure_limit <= 0:
         raise ConfigError("hatch.home_failure_limit must be greater than zero")
     if config.hatch.home_backoff_seconds < 0:

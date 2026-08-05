@@ -316,6 +316,46 @@ def test_capacity_probe_records_required_cull_without_opening_cave(monkeypatch) 
     assert planner.cull_required
 
 
+def test_capacity_probe_can_allow_extra_retries_for_slow_detection(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "dino_bot.full_hatch.read_dino_count",
+        lambda *args, **kwargs: None,
+    )
+    planner = CaveCullPlanner(
+        DigitReader(GLYPHS),
+        threshold=300,
+        allow_cull=False,
+        capacity_read_retries=4,
+    )
+    for _ in range(2):
+        swipe = planner.choose(frame(), [])
+        assert swipe is not None and swipe.type == CAVE_SWIPE
+        planner.on_action_success(swipe.type)
+
+    cave = [detection("hatch_cave", 209, 1150)]
+    for _ in range(4):
+        assert planner.choose(frame(), cave) is None
+    assert planner._capacity_failures == 4
+
+    target = planner.choose(frame(), cave)
+    assert target is not None and target.type == CAVE_RECENTER
+
+
+def test_cave_recenter_can_allow_extra_checks_for_slow_detection() -> None:
+    planner = CaveCullPlanner(
+        DigitReader(GLYPHS),
+        threshold=300,
+        cave_recenter_checks=5,
+    )
+    planner._stage = "verify_recenter"
+
+    for _ in range(4):
+        assert planner.choose(frame(), []) is None
+        assert planner._stage == "verify_recenter"
+    assert planner.choose(frame(), []) is None
+    assert planner._stage == "recenter_failed"
+
+
 def make_full_planner() -> FullHatchPlanner:
     return FullHatchPlanner(
         DigitReader(GLYPHS),

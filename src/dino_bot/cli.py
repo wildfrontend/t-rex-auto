@@ -242,12 +242,43 @@ def apply_run_timing(
             if delay is not None
         }
     )
+    # The hatch launchers use the safe profile. On slower machines the
+    # detector can take several seconds per frame, so the normal hatch
+    # transition windows and bounded preflight checks otherwise expire while
+    # the UI is still settling. Keep this scoped to the conservative profile:
+    # fast remains suitable for machines that can sustain the normal cycle.
+    hatch = config.hatch
+    if speed == "safe":
+        slow_hatch_delays = {
+            "hatch_cave_swipe": 6000,
+            "hatch_cave_recenter": 7000,
+            "hatch_recovery_forest_recenter": 7000,
+            "hatch_recovery_recenter": 7000,
+            "hatch_recovery_map_exit": 7000,
+            "hatch_recovery_back": 7000,
+            "map_exit_nest_button": 6000,
+            "forest_recenter_button": 6000,
+            "map_center_egg": 7000,
+        }
+        for target_type, delay in slow_hatch_delays.items():
+            post_action_delays[target_type] = max(
+                post_action_delays.get(target_type, 0),
+                delay,
+            )
+        hatch = replace(
+            hatch,
+            capacity_read_retries=max(hatch.capacity_read_retries, 4),
+            cave_recenter_checks=max(hatch.cave_recenter_checks, 5),
+            recovery_timeout_seconds=max(hatch.recovery_timeout_seconds, 30.0),
+        )
     return replace(
         config,
         click_delay=click_delay,
         idle_delay=idle_delay,
         transition_poll_interval=poll_interval,
         post_action_delays=post_action_delays,
+        timing_profile=speed,
+        hatch=hatch,
     )
 
 
