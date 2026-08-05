@@ -383,13 +383,22 @@ CAVE_DETECTION_TYPES: frozenset[str] = frozenset(
     }
 )
 
+# Recovery runs before the workflow knows which foreground is open.  It still
+# does not need every action inside every foreground: it only needs enough
+# anchors to cancel/close known overlays, leave an active hunt map, and prove
+# that the centred home screen is visible.  Keeping the phase-specific action
+# sets here made every recovery frame pay for all hatch, nest, and cave
+# controls, which is especially expensive on slower devices.
 RECOVERY_DETECTION_TYPES: frozenset[str] = frozenset(
     {
-        *HATCH_DETECTION_TYPES,
-        *NEST_DETECTION_TYPES,
-        *CAVE_DETECTION_TYPES,
+        *STARTUP_DETECTION_TYPES,
+        *HOME_FOREGROUND_TYPES,
+        hatch_feature.HOME_ANCHOR,
         hatch_feature.CLOSE_BUTTON,
+        CAVE,
         CAVE_CLOSE_BUTTON,
+        CONFIRM_YES,
+        CONFIRM_NO,
         HUNT_MAP_EXIT,
         FOREST_RECENTER,
     }

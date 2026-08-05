@@ -451,6 +451,30 @@ def make_full_planner() -> FullHatchPlanner:
 def test_full_hatch_scopes_detection_by_workflow_phase() -> None:
     planner = make_full_planner()
 
+    planner._stage = "recover_home"
+    recovery_types = planner.planning_detection_types()
+    assert recovery_types is not None
+    assert {
+        hatch.HOME_ANCHOR,
+        hatch.CLAIM_BUTTON,
+        hatch.CLOSE_BUTTON,
+        CAVE_CLOSE_BUTTON,
+        "map_exit_nest_button",
+        "forest_recenter_button",
+        CONFIRM_NO,
+    } <= recovery_types
+    assert "dinosaur" not in recovery_types
+    assert "own_hunt_path" not in recovery_types
+    assert not recovery_types & {
+        nest_filter.TAG_ATTACK,
+        nest_filter.TAG_HP,
+        nest_filter.TAG_TOP,
+        nest_filter.TAG_MASS,
+        nest_filter.FILTER_HEADER,
+        hatch.EGG_PILE,
+    }
+
+    planner._stage = "hatch"
     hatch_types = planner.planning_detection_types()
     assert hatch.HATCH_BUTTON in hatch_types
     assert hatch.HOME_ANCHOR in hatch_types
