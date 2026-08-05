@@ -21,6 +21,8 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable, Sequence
+from pathlib import Path
+from typing import Protocol
 
 import cv2
 import numpy as np
@@ -39,7 +41,7 @@ from .cave_navigation import (
     SWIPE,
     CaveNavigator,
 )
-from .cull import read_dino_count, should_cull
+from .cull import CapacityRead, probe_dino_count, should_cull
 from .digits import DigitReader
 from .hatch_inventory import HatchBoostInventoryStore
 from .models import Detection, Frame, Target
@@ -896,6 +898,23 @@ class AutoPlaceRoundPlanner:
         return None
 
 
+class CapacitySnapshot(Protocol):
+    """Writes the frame behind an unreadable capacity HUD.
+
+    Structural, so the planner stays independent of where evidence lands and
+    tests can assert on a list instead of a temp directory.
+    """
+
+    def capture(
+        self,
+        frame: Frame,
+        read: CapacityRead,
+        *,
+        stage: str,
+        attempts: int,
+    ) -> Path | None: ...
+
+
 class CaveCullPlanner:
     """Navigate, make the threshold decision, and run one bounded cull."""
 
@@ -911,6 +930,7 @@ class CaveCullPlanner:
         allow_cull: bool = True,
         capacity_read_retries: int = 2,
         cave_recenter_checks: int = 3,
+        capacity_snapshots: CapacitySnapshot | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
         self.reader = reader
@@ -922,6 +942,7 @@ class CaveCullPlanner:
         self.allow_cull = bool(allow_cull)
         self.capacity_read_retries = max(1, capacity_read_retries)
         self.cave_recenter_checks = max(1, cave_recenter_checks)
+        self.capacity_snapshots = capacity_snapshots
         self.logger = logger or logging.getLogger("dino_bot")
         self.navigator = CaveNavigator(reference_width=reference_width)
         self._stage = "navigate"
@@ -941,6 +962,23 @@ class CaveCullPlanner:
 
     def is_complete(self) -> bool:
         return self._complete
+
+    def _read_capacity(self, frame: Frame) -> CapacityRead:
+        return probe_dino_count(
+            frame.image,
+            self.reader,
+            reference_width=self.reference_width,
+        )
+
+    def _snapshot_capacity(self, frame: Frame, read: CapacityRead) -> None:
+        if self.capacity_snapshots is None:
+            return
+        self.capacity_snapshots.capture(
+            frame,
+            read,
+            stage=self.last_stage(),
+            attempts=self._capacity_failures,
+        )
 
     @property
     def capacity_readable(self) -> bool:
@@ -1023,11 +1061,7 @@ class CaveCullPlanner:
                 # the structurally validated N/350 HUD remains readable. A
                 # below-threshold value is enough to safely skip entering the
                 # cave and return home.
-                count = read_dino_count(
-                    frame.image,
-                    self.reader,
-                    reference_width=self.reference_width,
-                )
+                count = self._read_capacity(frame).count
                 if count is not None:
                     cull = should_cull(count, self.threshold)
                     self._cull_required = cull
@@ -1048,11 +1082,8 @@ class CaveCullPlanner:
                         return self.choose(frame, detections)
                 return None
             if step.kind == STUCK:
-                count = read_dino_count(
-                    frame.image,
-                    self.reader,
-                    reference_width=self.reference_width,
-                )
+                read = self._read_capacity(frame)
+                count = read.count
                 if count is not None:
                     cull = should_cull(count, self.threshold)
                     self._cull_required = cull
@@ -1078,17 +1109,18 @@ class CaveCullPlanner:
                             self.threshold,
                         )
                 else:
+                    # Navigation is only *presumed* failed: the cave template
+                    # missed and the HUD did not stand in for it. Which of the
+                    # two actually broke is not in the event stream.
+                    self._snapshot_capacity(frame, read)
                     self.logger.warning(
                         "Hatch cave | navigation failed; recentering safely"
                     )
                 self._stage = "recenter"
                 return self.choose(frame, detections)
             assert step.kind == DONE and cave is not None
-            count = read_dino_count(
-                frame.image,
-                self.reader,
-                reference_width=self.reference_width,
-            )
+            read = self._read_capacity(frame)
+            count = read.count
             if count is None:
                 self._capacity_failures += 1
                 if self._capacity_failures <= self.capacity_read_retries:
@@ -1099,6 +1131,10 @@ class CaveCullPlanner:
                     )
                     return None
                 self._capacity_readable = False
+                # Every retry saw the same still frame, so the log line below
+                # is the same whether the HUD is absent, covered, or merely
+                # too small for the glyph templates. Save the pixels.
+                self._snapshot_capacity(frame, read)
                 self.logger.error("Hatch cave | capacity unreadable; skipping cull")
                 self._stage = "recenter"
                 return self.choose(frame, detections)
@@ -1251,6 +1287,7 @@ class FullHatchPlanner:
         recovery_timeout_seconds: float = 15.0,
         capacity_read_retries: int = 2,
         cave_recenter_checks: int = 3,
+        capacity_snapshots: CapacitySnapshot | None = None,
         stage_scoped_scan: bool = True,
         standalone_stage: str | None = None,
         logger: logging.Logger | None = None,
@@ -1268,6 +1305,7 @@ class FullHatchPlanner:
         self.recovery_timeout_seconds = max(1.0, recovery_timeout_seconds)
         self.capacity_read_retries = max(1, capacity_read_retries)
         self.cave_recenter_checks = max(1, cave_recenter_checks)
+        self.capacity_snapshots = capacity_snapshots
         self.stage_scoped_scan = bool(stage_scoped_scan)
         if standalone_stage is not None and standalone_stage not in STANDALONE_STAGES:
             raise ValueError(f"unsupported standalone hatch stage: {standalone_stage}")
@@ -2012,6 +2050,7 @@ class FullHatchPlanner:
                     bottom_exclusion_px=self.cave_bottom_exclusion_px,
                     capacity_read_retries=self.capacity_read_retries,
                     cave_recenter_checks=self.cave_recenter_checks,
+                    capacity_snapshots=self.capacity_snapshots,
                     logger=self.logger,
                 )
                 return self._choose_current(frame, detections)
@@ -2090,6 +2129,7 @@ class FullHatchPlanner:
             bottom_exclusion_px=self.cave_bottom_exclusion_px,
             capacity_read_retries=self.capacity_read_retries,
             cave_recenter_checks=self.cave_recenter_checks,
+            capacity_snapshots=self.capacity_snapshots,
             # Preflight may read capacity, but it must never delete dinosaurs
             # before the four screening stages have completed.
             allow_cull=False,
@@ -2140,6 +2180,7 @@ class FullHatchPlanner:
                 bottom_exclusion_px=self.cave_bottom_exclusion_px,
                 capacity_read_retries=self.capacity_read_retries,
                 cave_recenter_checks=self.cave_recenter_checks,
+                capacity_snapshots=self.capacity_snapshots,
                 logger=self.logger,
             )
             return

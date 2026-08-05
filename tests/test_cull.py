@@ -7,7 +7,12 @@ import numpy as np
 import pytest
 
 from dino_bot.config import ConfigError, load_config
-from dino_bot.cull import CAPACITY_REGION, read_dino_count, should_cull
+from dino_bot.cull import (
+    CAPACITY_REGION,
+    probe_dino_count,
+    read_dino_count,
+    should_cull,
+)
 from dino_bot.digits import DigitReader
 
 REPO = Path(__file__).resolve().parent.parent
@@ -63,6 +68,64 @@ def test_rejects_wrong_denominator(reader: DigitReader) -> None:
 def test_rejects_blank_frame(reader: DigitReader) -> None:
     frame = np.full((1600, 900, 3), 255, dtype=np.uint8)
     assert read_dino_count(frame, reader) is None
+
+
+class StubReader:
+    """Stands in for glyph matching so each reject branch can be reached."""
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+    def read(self, image: np.ndarray) -> str:
+        return self.text
+
+
+@pytest.mark.parametrize(
+    ("text", "reason"),
+    [
+        # All four fail the planner identically. An absent HUD is a navigation
+        # problem, a wrong denominator is a crop problem, and a '?' is a glyph
+        # problem - opposite fixes, so the bundle has to tell them apart.
+        ("282/350", "ok"),
+        ("28?/350", "unparsed"),
+        ("276", "unparsed"),
+        ("282/100", "unexpected_capacity"),
+    ],
+)
+def test_probe_names_the_reject_branch(text: str, reason: str) -> None:
+    frame = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    read = probe_dino_count(frame, StubReader(text))
+    assert read.reason == reason
+    assert read.ok is (reason == "ok")
+    assert read.text == text
+
+
+def test_probe_rejects_a_count_above_its_own_capacity() -> None:
+    frame = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    read = probe_dino_count(frame, StubReader("999/350"))
+    assert read.reason == "count_out_of_range"
+    assert read.fraction == (999, 350)
+
+
+def test_probe_reports_an_absent_hud_on_a_real_blank_frame(reader: DigitReader) -> None:
+    blank = probe_dino_count(np.full((1600, 900, 3), 255, dtype=np.uint8), reader)
+    assert blank.reason == "unparsed"
+    assert blank.count is None and blank.fraction is None
+
+
+def test_probe_keeps_the_glyphs_and_crop_it_worked_from(reader: DigitReader) -> None:
+    read = probe_dino_count(frame_with_hud(), reader)
+    assert read.ok and read.count == 282
+    assert read.text == "282/350"
+    assert read.region == tuple(int(value) for value in CAPACITY_REGION)
+
+
+def test_probe_rejects_a_frame_too_small_to_hold_the_hud(reader: DigitReader) -> None:
+    # A 200px-tall frame cannot contain a crop that ends at y=258; without the
+    # bounds check this silently reads an empty array as an ordinary miss.
+    read = probe_dino_count(np.full((200, 900, 3), 255, dtype=np.uint8), reader)
+    assert read.reason == "region_outside_frame"
+    assert read.count is None
 
 
 def test_should_cull_boundary() -> None:

@@ -40,7 +40,7 @@ from .parent_open import ParentOpenTestPlanner
 from .planning import HuntPlanner
 from .recovery import AdbAppRestarter, BlackScreenRecovery, HuntProgressWatchdog
 from .select_sort import SelectSortTestPlanner
-from .stalls import StallSnapshotWriter
+from .stalls import CapacitySnapshotWriter, StallSnapshotWriter
 from .verification import TargetChangedVerifier
 
 
@@ -377,6 +377,18 @@ def _create_hatch_engine(
         hatch_inventory = HatchBoostInventoryStore(
             config.root / "data" / "stats.sqlite3"
         )
+        # Shares the stall switches: to a user these are one feature - the
+        # screenshots the bot keeps when it cannot explain itself.
+        capacity_snapshots = (
+            CapacitySnapshotWriter(
+                config.stalls_dir,
+                logger,
+                limit=config.stalls.snapshot_limit,
+                min_interval_seconds=config.stalls.snapshot_min_interval_seconds,
+            )
+            if config.stalls.snapshots_enabled
+            else None
+        )
         full_planner = FullHatchPlanner(
             DigitReader(hatch.manifest.parent / "digits"),
             egg_pile_point=(hatch.egg_pile[0], hatch.egg_pile[1]),
@@ -397,6 +409,7 @@ def _create_hatch_engine(
             recovery_timeout_seconds=hatch.recovery_timeout_seconds,
             capacity_read_retries=hatch.capacity_read_retries,
             cave_recenter_checks=hatch.cave_recenter_checks,
+            capacity_snapshots=capacity_snapshots,
             stage_scoped_scan=config.planner.stage_scoped_scan,
             standalone_stage=standalone_stage,
             logger=logger,

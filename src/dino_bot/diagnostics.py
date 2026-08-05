@@ -94,6 +94,17 @@ _CODEX_GUIDE = """# 猛龍計畫診斷包
    不為零時，這是規劃器當下看到的畫面。同名 `.json` 記著那一幀偵測到什麼。
    這類卡死的成因是畫面上沒有任何認得的控制項，事件流只能報「有比對到什麼」，
    本質上描述不了它——沒有這張圖就不要猜是哪個畫面。
+9. `logs/stalls/capacity-*.png`（同樣請向使用者索取）：日誌出現
+   `capacity unreadable; skipping cull` 或 `navigation failed` 時的畫面。
+   同名 `-hud.png` 是放大六倍的 N/350 讀取區，`.json` 的 `reason` 已分好類：
+   - `unparsed`：那個位置沒有能組成 `N/M` 的字元。看 `glyphs` 欄位——空字串代表
+     HUD 根本不在（多半是導航沒到位），有字但含 `?` 代表字被遮住或太小。
+   - `unexpected_capacity`：讀出了分數但分母不是 350，裁切位置偏了。
+   - `region_outside_frame`：畫面尺寸放不下校準的裁切框。
+   先看 `reason` 再決定方向：只有 `glyphs` 為空且畫面確實不在洞穴時，加大
+   `hatch.capacity_read_retries` 才有意義；其餘三種再多重試也是同樣結果。
+   判斷前先比對事件流中相鄰幾個循環的 `detect`——若各次偵測數值完全相同，
+   代表畫面靜止，那就不是等待不夠的問題。
 
 回答時請分成五部分：
 

@@ -166,10 +166,20 @@ class DigitReader:
     def read_fraction(self, image: Image) -> tuple[int, int] | None:
         """Read an ``N/M`` readout such as the 282/350 capacity counter."""
 
-        text = self.read(image)
-        if "?" in text or text.count("/") != 1:
-            return None
-        left, right = text.split("/")
-        if not left.isdigit() or not right.isdigit():
-            return None
-        return int(left), int(right)
+        return parse_fraction(self.read(image))
+
+
+def parse_fraction(text: str) -> tuple[int, int] | None:
+    """Parse an ``N/M`` readout, or None when the glyphs do not spell one.
+
+    Kept separate from ``DigitReader.read_fraction`` so a caller that needs to
+    report *why* a read failed can hold on to the raw glyph text and still
+    apply the identical accept/reject rule.
+    """
+
+    if "?" in text or text.count("/") != 1:
+        return None
+    left, right = text.split("/")
+    if not left.isdigit() or not right.isdigit():
+        return None
+    return int(left), int(right)

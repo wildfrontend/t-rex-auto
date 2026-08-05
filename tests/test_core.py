@@ -19,6 +19,7 @@ from dino_bot.actions import AdbActionDriver, AdbClient, RecordingActionDriver
 from dino_bot.assets import create_template
 from dino_bot.cli import apply_run_timing, build_parser
 from dino_bot.config import AppConfig, ConfigError, load_config
+from dino_bot.cull import CapacityRead
 from dino_bot.detection import (
     DetectorAssetError,
     HuntCapacityDetector,
@@ -38,7 +39,11 @@ from dino_bot.models import (
 from dino_bot.modes import DebugMode, RuntimeMode, TrainingMode
 from dino_bot.planning import HuntPlanner, TargetPlanner
 from dino_bot.recovery import AdbAppRestarter, BlackScreenRecovery
-from dino_bot.stalls import StallSnapshotWriter
+from dino_bot.stalls import (
+    HUD_ZOOM,
+    CapacitySnapshotWriter,
+    StallSnapshotWriter,
+)
 from dino_bot.verification import TargetChangedVerifier
 
 
@@ -2098,6 +2103,92 @@ def test_stall_snapshot_writer_keeps_the_newest_frames_only(tmp_path: Path) -> N
     # What the detector *did* match is half the evidence: it separates "nothing
     # was on screen" from "the map was there and the buttons were not".
     assert sidecar["detections"] == {"dinosaur": 2}
+
+
+def test_capacity_snapshot_saves_the_hud_crop_and_the_glyphs(tmp_path: Path) -> None:
+    writer = CapacitySnapshotWriter(
+        tmp_path / "stalls",
+        logging.getLogger("test_capacity_writer"),
+        clock=lambda: 0.0,
+        now=lambda: datetime(2026, 8, 5, 2, 7, 32),
+    )
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    read = CapacityRead(
+        count=None,
+        text="28?/35O",
+        fraction=None,
+        region=(10, 239, 110, 258),
+        reason="unparsed",
+    )
+
+    path = writer.capture(frame, read, stage="cave_navigate", attempts=3)
+
+    assert path is not None and path.name == "capacity-20260805-020732.png"
+    # The 19px-tall crop is what the glyph matcher saw; unenlarged it is not
+    # something a person can judge, which is the whole point of saving it.
+    hud = cv2.imread(str(path.with_name("capacity-20260805-020732-hud.png")))
+    assert hud is not None
+    assert hud.shape[:2] == ((258 - 239) * HUD_ZOOM, (110 - 10) * HUD_ZOOM)
+
+    sidecar = json.loads(path.with_suffix(".json").read_text(encoding="utf-8"))
+    assert sidecar["reason"] == "unparsed"
+    assert sidecar["glyphs"] == "28?/35O"
+    assert sidecar["region"] == [10, 239, 110, 258]
+    assert sidecar["stage"] == "cave_navigate"
+    assert sidecar["attempts"] == 3
+    assert sidecar["frame"] == {"width": 900, "height": 1600}
+
+
+def test_capacity_snapshot_prunes_whole_episodes_not_half_of_them(
+    tmp_path: Path,
+) -> None:
+    now = [0.0]
+    writer = CapacitySnapshotWriter(
+        tmp_path / "stalls",
+        logging.getLogger("test_capacity_prune"),
+        limit=2,
+        min_interval_seconds=60.0,
+        clock=lambda: now[0],
+        now=lambda: datetime(2026, 8, 5, 2, int(now[0] // 60), 0),
+    )
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    read = CapacityRead(None, "", None, (10, 239, 110, 258), "unparsed")
+
+    for minute in (0, 1, 2):
+        now[0] = minute * 60.0
+        assert writer.capture(frame, read, stage="cave_done", attempts=3) is not None
+
+    stalls = tmp_path / "stalls"
+    # The -hud companion shares the stem: counted as an episode it would halve
+    # the retained set, and missed by the prune it would outlive its frame.
+    assert sorted(path.name for path in stalls.glob("capacity-*.png")) == [
+        "capacity-20260805-020100-hud.png",
+        "capacity-20260805-020100.png",
+        "capacity-20260805-020200-hud.png",
+        "capacity-20260805-020200.png",
+    ]
+    assert not (stalls / "capacity-20260805-020000.json").exists()
+
+
+def test_capacity_snapshot_survives_a_frame_with_no_room_for_the_crop(
+    tmp_path: Path,
+) -> None:
+    writer = CapacitySnapshotWriter(
+        tmp_path / "stalls",
+        logging.getLogger("test_capacity_empty_crop"),
+        now=lambda: datetime(2026, 8, 5, 2, 7, 32),
+    )
+    read = CapacityRead(None, "", None, (10, 239, 110, 258), "region_outside_frame")
+
+    path = writer.capture(
+        Frame(np.zeros((200, 900, 3), dtype=np.uint8)),
+        read,
+        stage="cave_navigate",
+        attempts=1,
+    )
+
+    assert path is not None
+    assert not path.with_name(f"{path.stem}-hud.png").exists()
 
 
 def test_stall_snapshot_failure_never_stops_the_run(tmp_path: Path) -> None:

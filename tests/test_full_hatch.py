@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 
 from dino_bot import hatch, nest_filter
-from dino_bot.cull import CAPACITY_REGION
+from dino_bot.cull import CAPACITY_REGION, CapacityRead
 from dino_bot.digits import DigitReader
 from dino_bot.full_hatch import (
     AUTOPLACE_BUTTON,
@@ -81,6 +81,30 @@ def capacity_frame() -> Frame:
     x0, y0 = int(CAPACITY_REGION[0]), int(CAPACITY_REGION[1])
     image[y0 : y0 + crop.shape[0], x0 : x0 + crop.shape[1]] = crop
     return frame(image)
+
+
+def _patch_capacity(monkeypatch, count: int | None) -> None:
+    """Force the HUD read, bypassing the glyph matcher and its fixture crop."""
+
+    monkeypatch.setattr(
+        "dino_bot.full_hatch.probe_dino_count",
+        lambda *args, **kwargs: CapacityRead(
+            count=count,
+            text="" if count is None else f"{count}/350",
+            fraction=None if count is None else (count, 350),
+            region=tuple(int(value) for value in CAPACITY_REGION),
+            reason="unparsed" if count is None else "ok",
+        ),
+    )
+
+
+class RecordingCapacitySnapshots:
+    def __init__(self) -> None:
+        self.captures: list[tuple[CapacityRead, str, int]] = []
+
+    def capture(self, frame, read, *, stage, attempts):
+        self.captures.append((read, stage, attempts))
+        return Path("capacity-00000000-000000.png")
 
 
 def test_top_autoplace_round_requires_screen_anchors_and_known_prompt(caplog) -> None:
@@ -254,7 +278,7 @@ def test_cave_above_threshold_runs_weakest_continuous_battle(
     monkeypatch, caplog
 ) -> None:
     caplog.set_level("INFO")
-    monkeypatch.setattr("dino_bot.full_hatch.read_dino_count", lambda *args, **kwargs: 301)
+    _patch_capacity(monkeypatch, 301)
     planner = CaveCullPlanner(DigitReader(GLYPHS), threshold=300)
     for _ in range(2):
         swipe = planner.choose(frame(), [])
@@ -297,7 +321,7 @@ def test_cave_above_threshold_runs_weakest_continuous_battle(
 
 
 def test_capacity_probe_records_required_cull_without_opening_cave(monkeypatch) -> None:
-    monkeypatch.setattr("dino_bot.full_hatch.read_dino_count", lambda *args, **kwargs: 301)
+    _patch_capacity(monkeypatch, 301)
     planner = CaveCullPlanner(
         DigitReader(GLYPHS),
         threshold=300,
@@ -317,10 +341,7 @@ def test_capacity_probe_records_required_cull_without_opening_cave(monkeypatch) 
 
 
 def test_capacity_probe_can_allow_extra_retries_for_slow_detection(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "dino_bot.full_hatch.read_dino_count",
-        lambda *args, **kwargs: None,
-    )
+    _patch_capacity(monkeypatch, None)
     planner = CaveCullPlanner(
         DigitReader(GLYPHS),
         threshold=300,
@@ -339,6 +360,69 @@ def test_capacity_probe_can_allow_extra_retries_for_slow_detection(monkeypatch) 
 
     target = planner.choose(frame(), cave)
     assert target is not None and target.type == CAVE_RECENTER
+
+
+def test_unreadable_capacity_saves_the_frame_only_once_it_gives_up(monkeypatch) -> None:
+    _patch_capacity(monkeypatch, None)
+    snapshots = RecordingCapacitySnapshots()
+    planner = CaveCullPlanner(
+        DigitReader(GLYPHS),
+        threshold=300,
+        capacity_read_retries=2,
+        capacity_snapshots=snapshots,
+    )
+    for _ in range(2):
+        swipe = planner.choose(frame(), [])
+        planner.on_action_success(swipe.type)
+
+    cave = [detection("hatch_cave", 209, 1150)]
+    # The retries all see the same still frame; saving each one would evict the
+    # retained set with copies of a single episode.
+    for _ in range(2):
+        assert planner.choose(frame(), cave) is None
+    assert snapshots.captures == []
+
+    planner.choose(frame(), cave)
+    assert len(snapshots.captures) == 1
+    read, stage, attempts = snapshots.captures[0]
+    assert read.reason == "unparsed"
+    assert stage == "cave_navigate"
+    assert attempts == 3
+
+
+def test_presumed_navigation_failure_saves_the_frame(monkeypatch) -> None:
+    _patch_capacity(monkeypatch, None)
+    snapshots = RecordingCapacitySnapshots()
+    planner = CaveCullPlanner(
+        DigitReader(GLYPHS),
+        threshold=300,
+        capacity_snapshots=snapshots,
+    )
+    # Exhaust the calibrated swipes without the cave ever matching: the cave
+    # template and the HUD have now both missed, and only pixels can say why.
+    for _ in range(len(planner.navigator.swipe_vectors)):
+        swipe = planner.choose(frame(), [])
+        assert swipe is not None and swipe.type == CAVE_SWIPE
+        planner.on_action_success(swipe.type)
+    # The rescans still hope the HUD stands in for the missing template, so
+    # they are not yet a failure worth a frame.
+    for _ in range(planner.navigator.max_rescans):
+        assert planner.choose(frame(), []) is None
+    assert snapshots.captures == []
+
+    planner.choose(frame(), [])
+    assert len(snapshots.captures) == 1
+    assert snapshots.captures[0][0].reason == "unparsed"
+
+
+def test_capacity_snapshots_are_optional() -> None:
+    planner = CaveCullPlanner(DigitReader(GLYPHS), threshold=300)
+    for _ in range(2):
+        swipe = planner.choose(frame(), [])
+        planner.on_action_success(swipe.type)
+    # A blank frame has no HUD; the read fails and must not raise without a
+    # writer attached.
+    assert planner.choose(frame(), [detection("hatch_cave", 209, 1150)]) is None
 
 
 def test_cave_recenter_can_allow_extra_checks_for_slow_detection() -> None:
@@ -447,7 +531,7 @@ def test_full_hatch_preflights_capacity_before_first_egg_pile_tap() -> None:
 
 
 def test_full_capacity_preflight_screens_before_required_cull(monkeypatch) -> None:
-    monkeypatch.setattr("dino_bot.full_hatch.read_dino_count", lambda *args, **kwargs: 321)
+    _patch_capacity(monkeypatch, 321)
     planner = FullHatchPlanner(
         DigitReader(GLYPHS),
         egg_pile_point=(450, 1330),
