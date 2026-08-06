@@ -1391,6 +1391,32 @@ def test_verifier_accepts_expected_next_ui() -> None:
     assert "hunt_button" in result.reason
 
 
+def test_verifier_accepts_expected_frame_structure_without_template_detection() -> None:
+    detection = make_detection(type="hatch_claim_button")
+    target = Target(
+        detection.type,
+        detection.x,
+        detection.y,
+        detection.confidence,
+        detection,
+    )
+    result = TargetChangedVerifier(
+        success_transitions={"hatch_claim_button": ("hatch_incubator_title",)},
+        success_frame_predicates={
+            "hatch_claim_button": lambda frame: int(frame.image[0, 0, 0]) == 42
+        },
+    ).verify(
+        make_frame(10),
+        make_frame(42),
+        target,
+        [detection],
+        [],
+    )
+
+    assert result.success
+    assert "frame structure" in result.reason
+
+
 def test_verifier_requires_forest_target_to_disappear_before_dinosaur_success() -> None:
     forest = make_detection(type="forest_recenter_button")
     target = Target(forest.type, forest.x, forest.y, forest.confidence, forest)

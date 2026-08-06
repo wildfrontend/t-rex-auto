@@ -92,6 +92,7 @@ SELECT_TAG_HEADER = "hatch_cull_tag_header"
 SELECT_WEAKEST_BUTTON = "hatch_select_weakest_button"
 SELECT_CHOOSE_BUTTON = "hatch_select_choose_button"
 DEFAULT_CULL_BATCH_SIZE = 40
+DEFAULT_CAPACITY_CONSISTENT_READS = 2
 
 RECOVERY_NO = "hatch_recovery_no"
 RECOVERY_MASK_CLOSE = "hatch_recovery_mask_close"
@@ -366,6 +367,60 @@ NEST_DETECTION_TYPES: frozenset[str] = frozenset(
     }
 )
 
+# My Nest used to scan every management template on every frame (55 types in
+# the live log).  These stage sets retain every screen proof and interruption
+# each branch can consume while excluding controls from unreachable sibling
+# workflows.
+NEST_BASE_DETECTION_TYPES: frozenset[str] = frozenset(
+    {
+        *STARTUP_DETECTION_TYPES,
+        hatch_feature.HOME_ANCHOR,
+        NEST_TITLE,
+    }
+)
+NEST_REPLACEMENT_DETECTION_TYPES: frozenset[str] = frozenset(
+    {
+        *NEST_BASE_DETECTION_TYPES,
+        SELECT_TITLE,
+        *nest_filter_feature.DEFAULT_TARGET_ACTIONS,
+        *nest_filter_feature.HEADER_LABELS,
+        *select_sort_feature.DEFAULT_TARGET_ACTIONS,
+        select_sort_feature.SORT_HDR_ATTACK,
+        *replacement_feature.DEFAULT_TARGET_ACTIONS,
+        CONFIRM_NO,
+        CONFIRM_YES,
+        NESTED_PARENT_WARNING,
+        SELECT_CONFIRM_PROMPT,
+    }
+)
+NEST_AUTOPLACE_DETECTION_TYPES: frozenset[str] = frozenset(
+    {
+        *NEST_BASE_DETECTION_TYPES,
+        *nest_filter_feature.DEFAULT_TARGET_ACTIONS,
+        *nest_filter_feature.HEADER_LABELS,
+        NEST_GEAR,
+        AUTOPLACE_TITLE,
+        AUTOPLACE_PROMPT,
+        AUTOPLACE_NOTICE,
+        AUTOPLACE_BUTTON,
+        PLACE_HDR_BEST,
+        PLACE_HDR_LEVEL,
+        PLACE_SORT_BEST,
+        PLACE_SORT_LEVEL,
+        CONFIRM_NO,
+        CONFIRM_YES,
+    }
+)
+NEST_COLLECT_DETECTION_TYPES: frozenset[str] = frozenset(
+    {
+        *NEST_BASE_DETECTION_TYPES,
+        *nest_filter_feature.DEFAULT_TARGET_ACTIONS,
+        *nest_filter_feature.HEADER_LABELS,
+        COLLECT_EGGS_BUTTON,
+        INCUBATOR_FULL_TOAST,
+    }
+)
+
 CAVE_DETECTION_TYPES: frozenset[str] = frozenset(
     {
         *STARTUP_DETECTION_TYPES,
@@ -559,6 +614,12 @@ def _unready_egg_detail_close(frame: Frame) -> tuple[int, int] | None:
         return None
     cx, cy = max(close_candidates, key=lambda center: center[0])
     return round(cx), round(cy)
+
+
+def is_unready_egg_detail(frame: Frame) -> bool:
+    """Whether the post-claim frame is the structurally proven unready detail."""
+
+    return _unready_egg_detail_close(frame) is not None
 
 
 class HatchHomeRecoveryPlanner:
@@ -946,6 +1007,7 @@ class CaveCullPlanner:
         selection_size: int = DEFAULT_CULL_BATCH_SIZE,
         allow_cull: bool = True,
         capacity_read_retries: int = 2,
+        capacity_consistent_reads: int = DEFAULT_CAPACITY_CONSISTENT_READS,
         cave_recenter_checks: int = 3,
         capacity_snapshots: CapacitySnapshot | None = None,
         logger: logging.Logger | None = None,
@@ -958,6 +1020,7 @@ class CaveCullPlanner:
         self.selection_size = max(1, selection_size)
         self.allow_cull = bool(allow_cull)
         self.capacity_read_retries = max(1, capacity_read_retries)
+        self.capacity_consistent_reads = max(1, capacity_consistent_reads)
         self.cave_recenter_checks = max(1, cave_recenter_checks)
         self.capacity_snapshots = capacity_snapshots
         self.logger = logger or logging.getLogger("dino_bot")
@@ -972,6 +1035,8 @@ class CaveCullPlanner:
         self._capacity_before: int | None = None
         self._capacity_readable: bool | None = None
         self._cull_required = False
+        self._capacity_candidate: int | None = None
+        self._capacity_confirmations = 0
         self._selected_count = 0
 
     def last_stage(self) -> str:
@@ -1080,9 +1145,9 @@ class CaveCullPlanner:
                 # cave and return home.
                 count = self._read_capacity(frame).count
                 if count is not None:
-                    cull = should_cull(count, self.threshold)
-                    self._capacity_before = count
-                    self._cull_required = cull
+                    if not self._confirm_capacity(count):
+                        return None
+                    cull = self._cull_required
                     self.logger.info(
                         "Hatch cave | capacity=%d/350 | threshold=%d | cull=%s"
                         " | cave_visible=False",
@@ -1098,14 +1163,16 @@ class CaveCullPlanner:
                         self._capacity_readable = True
                         self._stage = "recenter"
                         return self.choose(frame, detections)
+                else:
+                    self._reset_capacity_confirmation()
                 return None
             if step.kind == STUCK:
                 read = self._read_capacity(frame)
                 count = read.count
                 if count is not None:
-                    cull = should_cull(count, self.threshold)
-                    self._capacity_before = count
-                    self._cull_required = cull
+                    if not self._confirm_capacity(count):
+                        return None
+                    cull = self._cull_required
                     self._capacity_readable = not cull or not self.allow_cull
                     if cull:
                         if self.allow_cull:
@@ -1128,6 +1195,7 @@ class CaveCullPlanner:
                             self.threshold,
                         )
                 else:
+                    self._reset_capacity_confirmation()
                     # Navigation is only *presumed* failed: the cave template
                     # missed and the HUD did not stand in for it. Which of the
                     # two actually broke is not in the event stream.
@@ -1141,6 +1209,7 @@ class CaveCullPlanner:
             read = self._read_capacity(frame)
             count = read.count
             if count is None:
+                self._reset_capacity_confirmation()
                 self._capacity_failures += 1
                 if self._capacity_failures <= self.capacity_read_retries:
                     self.logger.warning(
@@ -1157,10 +1226,9 @@ class CaveCullPlanner:
                 self.logger.error("Hatch cave | capacity unreadable; skipping cull")
                 self._stage = "recenter"
                 return self.choose(frame, detections)
+            if not self._confirm_capacity(count):
+                return None
             self._capacity_readable = True
-            # 無論是否需要淘汰都先記錄讀數,容量估算靠它播種。
-            self._capacity_before = count
-            self._cull_required = should_cull(count, self.threshold)
             self.logger.info(
                 "Hatch cave | capacity=%d/350 | threshold=%d | cull=%s",
                 count,
@@ -1253,6 +1321,37 @@ class CaveCullPlanner:
                     self._stage = "recenter_failed"
             return None
         return None
+
+    def _confirm_capacity(self, count: int) -> bool:
+        """Require consecutive identical N/350 reads before using the value."""
+
+        if self._capacity_candidate != count:
+            if self._capacity_candidate is not None:
+                self.logger.warning(
+                    "Hatch cave | capacity confirmation changed | previous=%d/350"
+                    " | current=%d/350",
+                    self._capacity_candidate,
+                    count,
+                )
+            self._capacity_candidate = count
+            self._capacity_confirmations = 1
+        else:
+            self._capacity_confirmations += 1
+        if self._capacity_confirmations < self.capacity_consistent_reads:
+            self.logger.info(
+                "Hatch cave | capacity confirmation | value=%d/350 | sample=%d/%d",
+                count,
+                self._capacity_confirmations,
+                self.capacity_consistent_reads,
+            )
+            return False
+        self._capacity_before = count
+        self._cull_required = should_cull(count, self.threshold)
+        return True
+
+    def _reset_capacity_confirmation(self) -> None:
+        self._capacity_candidate = None
+        self._capacity_confirmations = 0
 
     def _safe_cave(
         self,
@@ -1419,18 +1518,19 @@ class FullHatchPlanner:
             return None
         if self._stage == "hatch":
             return HATCH_DETECTION_TYPES
+        if self._stage == "open_nest":
+            return NEST_BASE_DETECTION_TYPES
+        if self._stage in {"attack", "hp"}:
+            return NEST_REPLACEMENT_DETECTION_TYPES
+        if self._stage in {"top", "mass"}:
+            return NEST_AUTOPLACE_DETECTION_TYPES
         if self._stage in {
-            "open_nest",
-            "attack",
-            "hp",
-            "top",
-            "mass",
             "collect",
             "collect_button",
             "close_nest",
             "verify_nest_closed",
         }:
-            return NEST_DETECTION_TYPES
+            return NEST_COLLECT_DETECTION_TYPES
         if self._stage == "cave":
             return CAVE_DETECTION_TYPES
         if self._stage == "capacity_preflight":

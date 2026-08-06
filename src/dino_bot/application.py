@@ -494,6 +494,15 @@ def _create_hatch_engine(
         pixel_change_threshold=config.verify.pixel_change_threshold,
         failure_types=(config.verify.failure_types if hunt_during_cooldown else ()),
         success_transitions=success_transitions,
+        success_frame_predicates=(
+            {
+                hatch_feature.CLAIM_BUTTON: (
+                    full_hatch_feature.is_unready_egg_detail
+                )
+            }
+            if full
+            else None
+        ),
         black_mean_threshold=config.recovery.black_mean_threshold,
         success_requires_target_absence=(
             (

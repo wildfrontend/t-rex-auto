@@ -48,6 +48,7 @@ from dino_bot.full_hatch import (
     HatchHomeRecoveryPlanner,
     is_centered_home_screen,
     is_home_screen,
+    is_unready_egg_detail,
 )
 from dino_bot.hatch_inventory import HatchBoostInventoryStore
 from dino_bot.models import BoundingBox, Detection, Frame
@@ -208,6 +209,9 @@ def test_cave_below_threshold_recenters_without_entering() -> None:
     assert second is not None and second.type == CAVE_SWIPE
     planner.on_action_success(second.type)
 
+    assert planner.choose(
+        capacity_frame(), [detection("hatch_cave", 209, 1150)]
+    ) is None
     target = planner.choose(capacity_frame(), [detection("hatch_cave", 209, 1150)])
     assert target is not None and target.type == CAVE_RECENTER
     assert (target.x, target.y) == (600, 800)
@@ -238,6 +242,7 @@ def test_cave_below_threshold_can_use_hud_when_cave_is_clipped() -> None:
         assert swipe is not None and swipe.type == CAVE_SWIPE
         planner.on_action_success(swipe.type)
 
+    assert planner.choose(capacity_frame(), []) is None
     target = planner.choose(capacity_frame(), [])
 
     assert target is not None and target.type == CAVE_RECENTER
@@ -286,6 +291,7 @@ def test_cave_above_threshold_runs_weakest_continuous_battle(
         assert swipe is not None and swipe.type == CAVE_SWIPE
         planner.on_action_success(swipe.type)
 
+    assert planner.choose(frame(), [detection("hatch_cave", 209, 1150)]) is None
     target = planner.choose(frame(), [detection("hatch_cave", 209, 1150)])
     assert target is not None and target.type == "hatch_cave"
     planner.on_action_success(target.type)
@@ -333,12 +339,45 @@ def test_capacity_probe_records_required_cull_without_opening_cave(monkeypatch) 
         assert swipe is not None and swipe.type == CAVE_SWIPE
         planner.on_action_success(swipe.type)
 
+    assert planner.choose(frame(), [detection("hatch_cave", 209, 1150)]) is None
     target = planner.choose(frame(), [detection("hatch_cave", 209, 1150)])
 
     assert target is not None and target.type == CAVE_RECENTER
     assert target.type != "hatch_cave"
     assert planner.capacity_readable
     assert planner.cull_required
+
+
+def test_capacity_requires_two_matching_reads_after_a_mismatch(
+    monkeypatch, caplog
+) -> None:
+    caplog.set_level("INFO")
+    readings = iter((324, 325, 325))
+    monkeypatch.setattr(
+        "dino_bot.full_hatch.read_dino_count",
+        lambda *args, **kwargs: next(readings),
+    )
+    planner = CaveCullPlanner(
+        DigitReader(GLYPHS),
+        threshold=320,
+        allow_cull=False,
+    )
+    for _ in range(2):
+        swipe = planner.choose(frame(), [])
+        assert swipe is not None and swipe.type == CAVE_SWIPE
+        planner.on_action_success(swipe.type)
+    cave = [detection("hatch_cave", 209, 1150)]
+
+    assert planner.choose(frame(), cave) is None
+    assert planner.choose(frame(), cave) is None
+    assert planner.last_capacity is None
+    target = planner.choose(frame(), cave)
+
+    assert target is not None and target.type == CAVE_RECENTER
+    assert planner.last_capacity == 325
+    assert any(
+        "capacity confirmation changed" in record.message for record in caplog.records
+    )
 
 
 def test_capacity_probe_can_allow_extra_retries_for_slow_detection(monkeypatch) -> None:
@@ -486,8 +525,34 @@ def test_full_hatch_scopes_detection_by_workflow_phase() -> None:
     planner.on_action_success(hatch.CLOSE_BUTTON)
     nest_types = planner.planning_detection_types()
     assert NEST_TITLE in nest_types
-    assert SELECT_TITLE in nest_types
-    assert set(nest_filter.HEADER_LABELS) <= nest_types
+    assert SELECT_TITLE not in nest_types
+    assert not set(nest_filter.HEADER_LABELS) & nest_types
+    assert len(nest_types) < 15
+
+    planner._start_replacement("attack")
+    replacement_types = planner.planning_detection_types()
+    assert SELECT_TITLE in replacement_types
+    assert set(nest_filter.HEADER_LABELS) <= replacement_types
+    assert len(replacement_types) < 55
+
+    planner._stage = "top"
+    autoplace_types = planner.planning_detection_types()
+    assert {
+        NEST_GEAR,
+        AUTOPLACE_TITLE,
+        AUTOPLACE_BUTTON,
+        PLACE_SORT_BEST,
+        PLACE_SORT_LEVEL,
+    } <= autoplace_types
+    assert "hatch_parent_left" not in autoplace_types
+    assert len(autoplace_types) < 55
+
+    planner._stage = "collect"
+    collect_types = planner.planning_detection_types()
+    assert COLLECT_EGGS_BUTTON in collect_types
+    assert set(nest_filter.HEADER_LABELS) <= collect_types
+    assert NEST_GEAR not in collect_types
+    assert len(collect_types) < 55
     assert "dinosaur" not in nest_types
     assert "own_hunt_path" not in nest_types
 
@@ -542,6 +607,7 @@ def test_full_hatch_preflights_capacity_before_first_egg_pile_tap() -> None:
     planner.on_action_success(target.type)
 
     cave = [detection("hatch_cave", 209, 1150)]
+    assert planner.choose(capacity_frame(), cave) is None
     target = planner.choose(capacity_frame(), cave)
     assert target is not None and target.type == CAVE_RECENTER
     planner.on_action_success(target.type)
@@ -571,6 +637,7 @@ def test_full_capacity_preflight_screens_before_required_cull(monkeypatch) -> No
         planner.on_action_success(target.type)
 
     cave = [detection("hatch_cave", 209, 1150)]
+    assert planner.choose(frame(), cave) is None
     for _ in range(2):
         target = planner.choose(frame(), cave)
         assert target is not None and target.type == CAVE_RECENTER
@@ -606,6 +673,7 @@ def test_capacity_preflight_keeps_cull_reading_when_recenter_needs_recovery(
 
     # Capacity remains readable even when the cave template is clipped. The
     # result must be committed before the return-to-home proof can fail.
+    assert planner.choose(frame(), []) is None
     target = planner.choose(frame(), [])
     assert target is not None and target.type == CAVE_RECENTER
     assert planner._capacity_child.last_capacity == 324
@@ -1158,6 +1226,7 @@ def test_last_claim_can_finish_on_unready_egg_detail_and_close_safely() -> None:
     image = np.full((1600, 900, 3), 255, dtype=np.uint8)
     image[1136:1238, 339:560] = (40, 180, 255)
     image[1146:1213, 652:723] = (115, 125, 255)
+    assert is_unready_egg_detail(frame(image))
 
     target = planner.choose(frame(image), [])
 

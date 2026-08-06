@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
 from math import hypot
 
 import cv2
@@ -18,6 +18,7 @@ class TargetChangedVerifier:
         pixel_change_threshold: float = 0.08,
         failure_types: Sequence[str] = (),
         success_transitions: dict[str, Sequence[str]] | None = None,
+        success_frame_predicates: Mapping[str, Callable[[Frame], bool]] | None = None,
         black_mean_threshold: float = 2.0,
         success_requires_target_absence: Sequence[str] = (),
     ):
@@ -28,6 +29,7 @@ class TargetChangedVerifier:
             target_type: frozenset(successors)
             for target_type, successors in (success_transitions or {}).items()
         }
+        self.success_frame_predicates = dict(success_frame_predicates or {})
         self.black_mean_threshold = black_mean_threshold
         self.success_requires_target_absence = frozenset(
             success_requires_target_absence
@@ -70,6 +72,13 @@ class TargetChangedVerifier:
             return VerificationResult(
                 success=False,
                 reason=f"failure indicator detected: {', '.join(failures)}",
+                confidence=1.0,
+            )
+        frame_predicate = self.success_frame_predicates.get(target.type)
+        if frame_predicate is not None and frame_predicate(after):
+            return VerificationResult(
+                success=True,
+                reason="expected next UI matched frame structure",
                 confidence=1.0,
             )
         expected_successors = self.success_transitions.get(target.type, frozenset())
