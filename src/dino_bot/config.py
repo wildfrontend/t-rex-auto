@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from .models import ExclusionZone
+from .nests import StatUpgradeGuard, default_stat_upgrade_guards
 
 
 class ConfigError(ValueError):
@@ -159,6 +160,11 @@ class HatchConfig:
     rescan_interval_seconds: float = 600.0
     # Keep a growth batch together before running nest management/hunting.
     batch_hatch_count: int = 12
+    # Fixed game stat increments are used as a final OCR/action guard. Update
+    # these ranges here when a later game version expands them.
+    stat_upgrade_guards: dict[str, StatUpgradeGuard] = field(
+        default_factory=default_stat_upgrade_guards
+    )
     require_home_anchor: bool = True
     home_failure_limit: int = 3
     home_backoff_seconds: float = 30.0
@@ -321,6 +327,43 @@ def _number_tuple(
         return tuple(float(value) for value in raw)
     except (TypeError, ValueError) as exc:
         raise ConfigError(f"{label} must contain numbers") from exc
+
+
+def _stat_upgrade_guards(data: dict[str, Any]) -> dict[str, StatUpgradeGuard]:
+    raw = data.get("stat_upgrade_guards")
+    guards = default_stat_upgrade_guards()
+    if raw is None:
+        return guards
+    if not isinstance(raw, dict):
+        raise ConfigError("hatch.stat_upgrade_guards must be a JSON object")
+
+    unknown_stats = set(raw) - set(guards)
+    if unknown_stats:
+        raise ConfigError(
+            "hatch.stat_upgrade_guards contains unknown stats: "
+            + ", ".join(sorted(str(item) for item in unknown_stats))
+        )
+    allowed_keys = frozenset({"min_delta", "max_delta", "min_value", "max_value"})
+    for stat, entry in raw.items():
+        if not isinstance(entry, dict):
+            raise ConfigError(f"hatch.stat_upgrade_guards.{stat} must be a JSON object")
+        unknown_keys = set(entry) - allowed_keys
+        if unknown_keys:
+            raise ConfigError(
+                f"hatch.stat_upgrade_guards.{stat} contains unknown keys: "
+                + ", ".join(sorted(str(item) for item in unknown_keys))
+            )
+        default = guards[stat]
+        values: dict[str, int | None] = {}
+        for key in allowed_keys:
+            value = entry.get(key, getattr(default, key))
+            if value is not None and (isinstance(value, bool) or not isinstance(value, int)):
+                raise ConfigError(
+                    f"hatch.stat_upgrade_guards.{stat}.{key} must be an integer or null"
+                )
+            values[key] = value
+        guards[stat] = StatUpgradeGuard(**values)
+    return guards
 
 
 def _exclusion_zones(data: dict[str, Any]) -> tuple[ExclusionZone, ...]:
@@ -600,6 +643,7 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
                 hatch_data.get("rescan_interval_seconds", 600)
             ),
             batch_hatch_count=int(hatch_data.get("batch_hatch_count", 12)),
+            stat_upgrade_guards=_stat_upgrade_guards(hatch_data),
             require_home_anchor=bool(hatch_data.get("require_home_anchor", True)),
             home_failure_limit=int(hatch_data.get("home_failure_limit", 3)),
             home_backoff_seconds=float(hatch_data.get("home_backoff_seconds", 30)),
@@ -708,6 +752,32 @@ def _validate(config: AppConfig) -> None:
         raise ConfigError("hatch.rescan_interval_seconds cannot be negative")
     if config.hatch.batch_hatch_count <= 0:
         raise ConfigError("hatch.batch_hatch_count must be greater than zero")
+    expected_stats = {"hp", "attack", "speed"}
+    if set(config.hatch.stat_upgrade_guards) != expected_stats:
+        raise ConfigError(
+            "hatch.stat_upgrade_guards must define exactly hp, attack, and speed"
+        )
+    for stat, guard in config.hatch.stat_upgrade_guards.items():
+        for name in ("min_delta", "max_delta", "min_value", "max_value"):
+            value = getattr(guard, name)
+            if value is not None and value < 0:
+                raise ConfigError(f"hatch.stat_upgrade_guards.{stat}.{name} cannot be negative")
+        if (
+            guard.min_delta is not None
+            and guard.max_delta is not None
+            and guard.min_delta > guard.max_delta
+        ):
+            raise ConfigError(
+                f"hatch.stat_upgrade_guards.{stat}.min_delta cannot exceed max_delta"
+            )
+        if (
+            guard.min_value is not None
+            and guard.max_value is not None
+            and guard.min_value > guard.max_value
+        ):
+            raise ConfigError(
+                f"hatch.stat_upgrade_guards.{stat}.min_value cannot exceed max_value"
+            )
     if config.hatch.cave_screen_trigger <= 0:
         raise ConfigError("hatch.cave_screen_trigger must be greater than zero")
     if config.hatch.capacity_read_retries <= 0:

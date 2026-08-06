@@ -8,11 +8,19 @@ without ever returning a screen tap.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from .digits import DigitReader
 from .models import Image
-from .nests import ATTACK_RULE, Stats, pick_replacement
+from .nests import (
+    ATTACK_RULE,
+    DEFAULT_STAT_UPGRADE_GUARDS,
+    StatUpgradeGuard,
+    Stats,
+    pick_replacement,
+    stat_value_is_valid,
+)
 
 Region = tuple[float, float, float, float]
 StatRegions = tuple[Region, Region, Region]
@@ -54,6 +62,7 @@ def read_stats(
     regions: StatRegions,
     *,
     reference_width: float = 900.0,
+    stat_guards: Mapping[str, StatUpgradeGuard] = DEFAULT_STAT_UPGRADE_GUARDS,
 ) -> Stats | None:
     """Read HP/attack/speed regions, failing closed if any one is unclear."""
 
@@ -67,11 +76,20 @@ def read_stats(
         if value is None:
             return None
         values.append(value)
-    return Stats(hp=values[0], attack=values[1], speed=values[2])
+    stats = Stats(hp=values[0], attack=values[1], speed=values[2])
+    return stats if stat_value_is_valid(stats, stat_guards) else None
 
 
-def read_attack_parents(image: Image, reader: DigitReader) -> tuple[Stats, Stats] | None:
-    parents = tuple(read_stats(image, reader, regions) for regions in ATTACK_PARENT_REGIONS)
+def read_attack_parents(
+    image: Image,
+    reader: DigitReader,
+    *,
+    stat_guards: Mapping[str, StatUpgradeGuard] = DEFAULT_STAT_UPGRADE_GUARDS,
+) -> tuple[Stats, Stats] | None:
+    parents = tuple(
+        read_stats(image, reader, regions, stat_guards=stat_guards)
+        for regions in ATTACK_PARENT_REGIONS
+    )
     if any(parent is None for parent in parents):
         return None
     return parents  # type: ignore[return-value]
@@ -82,6 +100,7 @@ def read_candidate_rows(
     reader: DigitReader,
     *,
     max_rows: int = DEFAULT_VISIBLE_ROWS,
+    stat_guards: Mapping[str, StatUpgradeGuard] = DEFAULT_STAT_UPGRADE_GUARDS,
 ) -> list[Stats]:
     """Read consecutive visible rows; stop at the first blank/unclear row."""
 
@@ -91,7 +110,12 @@ def read_candidate_rows(
             (x0, y0 + index * SELECT_ROW_PITCH, x1, y1 + index * SELECT_ROW_PITCH)
             for x0, y0, x1, y1 in SELECT_FIRST_ROW_REGIONS
         )
-        stats = read_stats(image, reader, shifted)  # type: ignore[arg-type]
+        stats = read_stats(
+            image,
+            reader,
+            shifted,  # type: ignore[arg-type]
+            stat_guards=stat_guards,
+        )
         if stats is None:
             break
         rows.append(stats)
@@ -104,18 +128,24 @@ def rehearse_attack_replacement(
     reader: DigitReader,
     *,
     parent_side: int = 0,
+    stat_guards: Mapping[str, StatUpgradeGuard] = DEFAULT_STAT_UPGRADE_GUARDS,
 ) -> ReplacementSuggestion | None:
     """Return the T10 recommendation, never an actionable screen coordinate."""
 
     if parent_side not in (0, 1):
         raise ValueError("parent_side must be 0 (left) or 1 (right)")
-    parents = read_attack_parents(parent_image, reader)
-    rows = read_candidate_rows(candidate_image, reader)
+    parents = read_attack_parents(parent_image, reader, stat_guards=stat_guards)
+    rows = read_candidate_rows(candidate_image, reader, stat_guards=stat_guards)
     if parents is None or not rows:
         return None
     parent = parents[parent_side]
     return ReplacementSuggestion(
         parent=parent,
         rows=tuple(rows),
-        replacement_index=pick_replacement(parent, rows, ATTACK_RULE),
+        replacement_index=pick_replacement(
+            parent,
+            rows,
+            ATTACK_RULE,
+            guards=stat_guards,
+        ),
     )

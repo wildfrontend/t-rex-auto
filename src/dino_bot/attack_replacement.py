@@ -10,7 +10,7 @@ through the outside mask and the current parent is preserved.
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 from . import nest_filter as nest_filter_feature
 from . import select_sort as select_sort_feature
@@ -20,7 +20,9 @@ from .nest_filter import NestTagFilterTestPlanner
 from .nest_readout import SELECT_ROW_PITCH, read_attack_parents, read_candidate_rows
 from .nests import (
     ATTACK_RULE,
+    DEFAULT_STAT_UPGRADE_GUARDS,
     ReplacementRule,
+    StatUpgradeGuard,
     Stats,
     descending_prefix,
     pick_replacement,
@@ -88,6 +90,7 @@ class AttackReplacementTestPlanner:
         select_sort_option: str = select_sort_feature.SORT_ATTACK,
         select_sort_header: str = select_sort_feature.SORT_HDR_ATTACK,
         select_sort_menu_point: tuple[float, float] = (649.0, 550.0),
+        stat_guards: Mapping[str, StatUpgradeGuard] = DEFAULT_STAT_UPGRADE_GUARDS,
         logger: logging.Logger | None = None,
     ) -> None:
         if reference_width <= 0:
@@ -104,6 +107,7 @@ class AttackReplacementTestPlanner:
         self.select_sort_option = select_sort_option
         self.select_sort_header = select_sort_header
         self.select_sort_menu_point = select_sort_menu_point
+        self.stat_guards = dict(stat_guards)
         self.logger = logger or logging.getLogger("dino_bot")
         self._stage = "filter_attack"
         self._side = 0
@@ -139,6 +143,7 @@ class AttackReplacementTestPlanner:
                 sort_menu_point=self.select_sort_menu_point,
                 primary_attr=self.rule.primary,
                 sort_label=self.rule.sort_option,
+                stat_guards=self.stat_guards,
                 logger=self.logger,
             )
             return
@@ -203,7 +208,11 @@ class AttackReplacementTestPlanner:
             self._stage = "target_filter_required"
             return None
 
-        parents = read_attack_parents(frame.image, self.reader)
+        parents = read_attack_parents(
+            frame.image,
+            self.reader,
+            stat_guards=self.stat_guards,
+        )
         if parents is None:
             self._stage = "parent_stats_unreadable"
             self.logger.warning(
@@ -245,7 +254,11 @@ class AttackReplacementTestPlanner:
             return target
         if not self._select_planner.is_complete():
             if self._select_planner.last_stage() == "direction_unreadable":
-                plateau_rows = read_candidate_rows(frame.image, self.reader)
+                plateau_rows = read_candidate_rows(
+                    frame.image,
+                    self.reader,
+                    stat_guards=self.stat_guards,
+                )
                 if self._equal_parent_plateau(plateau_rows):
                     self.logger.info(
                         "Hatch %s | side=%s | equal %s plateau=%s"
@@ -258,7 +271,11 @@ class AttackReplacementTestPlanner:
                     return self._close_list(frame)
             return None
 
-        raw_rows = read_candidate_rows(frame.image, self.reader)
+        raw_rows = read_candidate_rows(
+            frame.image,
+            self.reader,
+            stat_guards=self.stat_guards,
+        )
         if not raw_rows:
             self._stage = "candidate_stats_unreadable"
             self.logger.warning(
@@ -277,7 +294,12 @@ class AttackReplacementTestPlanner:
                 [primary_of(row, self.rule) for row in raw_rows],
                 [primary_of(row, self.rule) for row in rows],
             )
-        replacement_index = pick_replacement(self._current_parent, rows, self.rule)
+        replacement_index = pick_replacement(
+            self._current_parent,
+            rows,
+            self.rule,
+            guards=self.stat_guards,
+        )
         if replacement_index is None:
             self.logger.info(
                 "Hatch %s | side=%s | candidates=%s | decision=keep parent",

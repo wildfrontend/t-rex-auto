@@ -204,6 +204,11 @@ def test_hatch_config_defaults_load(tmp_path) -> None:
     assert config.hatch.egg_pile == (450.0, 1330.0)
     assert config.hatch.max_scrolls == 0
     assert config.hatch.manifest == tmp_path / "assets/hatch/manifest.json"
+    assert config.hatch.stat_upgrade_guards["hp"].min_delta == 10
+    assert config.hatch.stat_upgrade_guards["hp"].max_delta == 30
+    assert config.hatch.stat_upgrade_guards["attack"].max_delta == 3
+    assert config.hatch.stat_upgrade_guards["speed"].min_value == 1
+    assert config.hatch.stat_upgrade_guards["speed"].max_value == 150
 
 
 def test_hatch_config_overrides(tmp_path) -> None:
@@ -219,3 +224,16 @@ def test_hatch_config_overrides(tmp_path) -> None:
     assert config.hatch.rescan_interval_seconds == 300
     assert config.hatch.batch_hatch_count == 14
     assert config.hatch.max_scrolls == 6
+
+
+def test_hatch_config_allows_future_stat_ranges(tmp_path) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        '{"hatch": {"stat_upgrade_guards": {"hp": {"max_delta": 40},'
+        '"attack": {"max_delta": 4}, "speed": {"max_value": 180}}}}',
+        encoding="utf-8",
+    )
+    config = load_config(config_path)
+    assert config.hatch.stat_upgrade_guards["hp"].max_delta == 40
+    assert config.hatch.stat_upgrade_guards["attack"].max_delta == 4
+    assert config.hatch.stat_upgrade_guards["speed"].max_value == 180

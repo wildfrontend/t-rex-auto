@@ -14,6 +14,7 @@ Cooldowns and star markers never disqualify a candidate.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 
@@ -24,6 +25,69 @@ class Stats:
     hp: int
     attack: int
     speed: int
+
+
+@dataclass(frozen=True, slots=True)
+class StatUpgradeGuard:
+    """Bounds used to reject impossible OCR readings and upgrades.
+
+    ``min_delta``/``max_delta`` apply only when the stat is the round's
+    primary stat. ``min_value``/``max_value`` apply to every readout.
+    """
+
+    min_delta: int | None = None
+    max_delta: int | None = None
+    min_value: int | None = None
+    max_value: int | None = None
+
+
+def default_stat_upgrade_guards() -> dict[str, StatUpgradeGuard]:
+    """Return the conservative stat rules used by the game today."""
+
+    return {
+        "hp": StatUpgradeGuard(min_delta=10, max_delta=30),
+        "attack": StatUpgradeGuard(min_delta=1, max_delta=3),
+        "speed": StatUpgradeGuard(min_value=1, max_value=150),
+    }
+
+
+DEFAULT_STAT_UPGRADE_GUARDS = default_stat_upgrade_guards()
+
+
+def stat_value_is_valid(
+    stats: Stats,
+    guards: Mapping[str, StatUpgradeGuard] = DEFAULT_STAT_UPGRADE_GUARDS,
+) -> bool:
+    """Whether every configured absolute stat bound accepts this readout."""
+
+    for name, guard in guards.items():
+        value = getattr(stats, name, None)
+        if value is None:
+            return False
+        if guard.min_value is not None and value < guard.min_value:
+            return False
+        if guard.max_value is not None and value > guard.max_value:
+            return False
+    return True
+
+
+def upgrade_is_valid(
+    parent: Stats,
+    candidate: Stats,
+    rule: "ReplacementRule",
+    guards: Mapping[str, StatUpgradeGuard] = DEFAULT_STAT_UPGRADE_GUARDS,
+) -> bool:
+    """Whether a candidate's primary-stat increase fits the configured guard."""
+
+    guard = guards.get(rule.primary)
+    if guard is None:
+        return True
+    delta = primary_of(candidate, rule) - primary_of(parent, rule)
+    if guard.min_delta is not None and delta < guard.min_delta:
+        return False
+    if guard.max_delta is not None and delta > guard.max_delta:
+        return False
+    return True
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,7 +161,13 @@ def descending_prefix(rows: list[Stats], rule: ReplacementRule) -> list[Stats]:
     return result
 
 
-def pick_replacement(parent: Stats, rows: list[Stats], rule: ReplacementRule) -> int | None:
+def pick_replacement(
+    parent: Stats,
+    rows: list[Stats],
+    rule: ReplacementRule,
+    *,
+    guards: Mapping[str, StatUpgradeGuard] = DEFAULT_STAT_UPGRADE_GUARDS,
+) -> int | None:
     """Pick which list row should replace ``parent``, or None to keep it.
 
     ``rows`` are the visible list rows top-down, already sorted descending by
@@ -108,11 +178,18 @@ def pick_replacement(parent: Stats, rows: list[Stats], rule: ReplacementRule) ->
 
     if not rows:
         return None
-    top = primary_of(rows[0], rule)
-    if top <= primary_of(parent, rule):
+    parent_primary = primary_of(parent, rule)
+    valid_indices = [
+        index
+        for index, row in enumerate(rows)
+        if primary_of(row, rule) > parent_primary
+        and upgrade_is_valid(parent, row, rule, guards)
+    ]
+    if not valid_indices:
         return None
-    best_index = 0
-    for index in range(1, len(rows)):
+    best_index = valid_indices[0]
+    top = primary_of(rows[best_index], rule)
+    for index in valid_indices[1:]:
         if primary_of(rows[index], rule) != top:
             break
         if secondary_load(rows[index], rule) < secondary_load(rows[best_index], rule):

@@ -161,7 +161,7 @@ def test_stronger_tied_candidate_selects_lowest_secondary_then_confirms() -> Non
     parent_frame = nest_frame(reader, Stats(30, 276, 1), Stats(30, 276, 1))
     candidates = select_frame(
         reader,
-        [Stats(200, 283, 10), Stats(30, 283, 1), Stats(30, 282, 1)],
+        [Stats(200, 279, 10), Stats(30, 279, 1), Stats(30, 278, 1)],
     )
     planner = AttackReplacementTestPlanner(reader)  # type: ignore[arg-type]
     finish_main_filter(planner)
@@ -188,7 +188,7 @@ def test_stronger_tied_candidate_selects_lowest_secondary_then_confirms() -> Non
 def test_confirmation_yes_is_never_guessed_without_known_prompt() -> None:
     reader = EncodedReader()
     parent_frame = nest_frame(reader, Stats(30, 276, 1), Stats(30, 276, 1))
-    candidates = select_frame(reader, [Stats(30, 283, 1), Stats(30, 282, 1)])
+    candidates = select_frame(reader, [Stats(30, 279, 1), Stats(30, 278, 1)])
     planner = AttackReplacementTestPlanner(reader)  # type: ignore[arg-type]
     finish_main_filter(planner)
     parent = planner.choose(parent_frame, nest_detections())
@@ -283,7 +283,7 @@ def test_hp_workflow_selects_highest_hp_with_lowest_secondary_load() -> None:
     parents = nest_frame(reader, Stats(2230, 2, 1), Stats(2230, 2, 1))
     candidates = select_frame(
         reader,
-        [Stats(2300, 10, 10), Stats(2300, 2, 1), Stats(2250, 1, 1)],
+        [Stats(2260, 10, 10), Stats(2260, 2, 1), Stats(2250, 1, 1)],
     )
     planner = hp_planner(reader)
     planner.on_action_success(nest_filter.TAG_HP)
@@ -316,7 +316,7 @@ def test_hp_equal_plateau_keeps_parent_without_searching() -> None:
 def test_select_sort_setup_actions_are_reused_but_rows_are_rule_gated() -> None:
     reader = EncodedReader()
     parent_frame = nest_frame(reader, Stats(30, 276, 1), Stats(30, 276, 1))
-    candidates = select_frame(reader, [Stats(30, 283, 1), Stats(30, 282, 1)])
+    candidates = select_frame(reader, [Stats(30, 279, 1), Stats(30, 278, 1)])
     planner = AttackReplacementTestPlanner(reader)  # type: ignore[arg-type]
     finish_main_filter(planner)
     parent = planner.choose(parent_frame, nest_detections())

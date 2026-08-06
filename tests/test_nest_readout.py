@@ -45,6 +45,18 @@ def test_reads_both_parent_sides_and_candidate_rows() -> None:
     assert read_candidate_rows(frame, reader) == [Stats(30, 282, 1), Stats(2230, 276, 150)]
 
 
+def test_rejects_speed_reading_outside_game_range() -> None:
+    for speed in (0, 151):
+        frame = np.full((1600, 900, 3), 255, dtype=np.uint8)
+        reader = EncodedReader(
+            {10: 30, 20: 282, 30: speed, 40: 2230, 50: 276, 60: 1}
+        )
+        fill_regions(frame, ATTACK_PARENT_REGIONS[0], (10, 20, 30))
+        fill_regions(frame, ATTACK_PARENT_REGIONS[1], (40, 50, 60))
+
+        assert read_attack_parents(frame, reader) is None
+
+
 def test_left_parent_hp_crop_keeps_the_complete_leading_digit() -> None:
     # Regression for the live 2320 -> 7320 misread: the old x0=252 cut the
     # first digit down to four pixels, while the glyph starts around x=249.

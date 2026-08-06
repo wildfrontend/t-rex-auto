@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Protocol
 
@@ -45,7 +45,15 @@ from .cull import CapacityRead, probe_dino_count, should_cull
 from .digits import DigitReader
 from .hatch_inventory import HatchBoostInventoryStore
 from .models import Detection, Frame, Target
-from .nests import ATTACK_RULE, HP_RULE, MASS_RULE, TOP_RULE, AutoPlaceRule
+from .nests import (
+    ATTACK_RULE,
+    DEFAULT_STAT_UPGRADE_GUARDS,
+    HP_RULE,
+    MASS_RULE,
+    TOP_RULE,
+    AutoPlaceRule,
+    StatUpgradeGuard,
+)
 from .overlays import (
     AUTOPLACE_NOTICE,
     CONFIRM_NO,
@@ -1285,6 +1293,7 @@ class FullHatchPlanner:
         max_scrolls: int = 0,
         rescan_interval_seconds: float = 600.0,
         batch_hatch_count: int = 12,
+        stat_upgrade_guards: Mapping[str, StatUpgradeGuard] = DEFAULT_STAT_UPGRADE_GUARDS,
         boost_inventory: HatchBoostInventoryStore | None = None,
         require_home_anchor: bool = True,
         home_failure_limit: int = 3,
@@ -1306,6 +1315,7 @@ class FullHatchPlanner:
         self.reference_width = reference_width
         self.logger = logger or logging.getLogger("dino_bot")
         self.cull_threshold = cull_threshold
+        self.stat_upgrade_guards = dict(stat_upgrade_guards)
         self.cave_screen_trigger = max(1, cave_screen_trigger)
         self.batch_hatch_count = max(1, batch_hatch_count)
         self.boost_inventory = boost_inventory
@@ -2320,6 +2330,7 @@ class FullHatchPlanner:
                 self.reader,
                 reference_width=self.reference_width,
                 rule=ATTACK_RULE,
+                stat_guards=self.stat_upgrade_guards,
                 logger=self.logger,
             )
             return
@@ -2333,6 +2344,7 @@ class FullHatchPlanner:
             select_sort_option=select_sort_feature.SORT_HP,
             select_sort_header=select_sort_feature.SORT_HP,
             select_sort_menu_point=(650.0, 501.0),
+            stat_guards=self.stat_upgrade_guards,
             logger=self.logger,
         )
 

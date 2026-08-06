@@ -235,6 +235,20 @@
   },
   "hatch": {
     "batch_hatch_count": 48,
+    "stat_upgrade_guards": {
+      "hp": {
+        "min_delta": 10,
+        "max_delta": 30
+      },
+      "attack": {
+        "min_delta": 1,
+        "max_delta": 3
+      },
+      "speed": {
+        "min_value": 1,
+        "max_value": 150
+      }
+    },
     "cave_screen_trigger": 300
   }
 }

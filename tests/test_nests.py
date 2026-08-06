@@ -61,21 +61,39 @@ def test_higher_primary_wins_despite_high_secondaries() -> None:
 
 def test_tie_at_top_prefers_lowest_secondary_load() -> None:
     parent = Stats(30, 276, 1)
-    rows = [Stats(2160, 280, 5), Stats(30, 280, 2), Stats(50, 279, 1)]
+    rows = [Stats(2160, 279, 5), Stats(30, 279, 2), Stats(50, 278, 1)]
     assert pick_replacement(parent, rows, ATTACK_RULE) == 1
 
 
 def test_tie_scan_stops_at_first_lower_primary() -> None:
     # 279 之後的列不再檢查——即使 secondary 更低也不能贏過較高攻擊。
     parent = Stats(30, 276, 1)
-    rows = [Stats(100, 280, 50), Stats(10, 279, 1)]
+    rows = [Stats(100, 279, 50), Stats(10, 278, 1)]
     assert pick_replacement(parent, rows, ATTACK_RULE) == 0
 
 
 def test_hp_rule_swaps_on_hp() -> None:
     parent = Stats(2230, 2, 1)
-    rows = [Stats(2300, 500, 50), Stats(2300, 2, 1), Stats(2250, 1, 1)]
+    rows = [Stats(2250, 500, 50), Stats(2250, 2, 1), Stats(2240, 1, 1)]
     assert pick_replacement(parent, rows, HP_RULE) == 1
+
+
+def test_stat_upgrade_guard_rejects_attack_jump_above_three() -> None:
+    parent = Stats(30, 276, 1)
+    rows = [Stats(30, 280, 1)]
+    assert pick_replacement(parent, rows, ATTACK_RULE) is None
+
+
+def test_stat_upgrade_guard_skips_invalid_top_row_for_valid_lower_row() -> None:
+    parent = Stats(30, 276, 1)
+    rows = [Stats(30, 280, 1), Stats(30, 279, 1)]
+    assert pick_replacement(parent, rows, ATTACK_RULE) == 1
+
+
+def test_stat_upgrade_guard_accepts_hp_boundaries() -> None:
+    parent = Stats(2230, 2, 1)
+    rows = [Stats(2260, 2, 1), Stats(2240, 2, 1)]
+    assert pick_replacement(parent, rows, HP_RULE) == 0
 
 
 def test_descending_prefix_rejects_late_ocr_value_that_rises() -> None:

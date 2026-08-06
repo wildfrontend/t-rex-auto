@@ -9,11 +9,12 @@ the sort-direction arrow once, but it never returns a dinosaur-row target.
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 from .digits import DigitReader
 from .models import Detection, Frame, Target
 from .nest_readout import read_candidate_rows
+from .nests import DEFAULT_STAT_UPGRADE_GUARDS, StatUpgradeGuard
 
 SELECT_TITLE = "hatch_select_title"
 TAG_HEADER = "hatch_select_tag_header"
@@ -72,6 +73,7 @@ class SelectSortTestPlanner:
         sort_menu_point: tuple[float, float] = (649.0, 550.0),
         primary_attr: str = "attack",
         sort_label: str = "attack",
+        stat_guards: Mapping[str, StatUpgradeGuard] = DEFAULT_STAT_UPGRADE_GUARDS,
         logger: logging.Logger | None = None,
     ) -> None:
         if reference_width <= 0:
@@ -86,6 +88,7 @@ class SelectSortTestPlanner:
         self.sort_menu_point = sort_menu_point
         self.primary_attr = primary_attr
         self.sort_label = sort_label
+        self.stat_guards = dict(stat_guards)
         self.logger = logger or logging.getLogger("dino_bot")
         self._stage = "start"
         self._tag_ready = False
@@ -170,7 +173,12 @@ class SelectSortTestPlanner:
         # Read the whole visible panel. Attack-heavy accounts can have a long
         # equal-value plateau at the top, so five rows may contain no usable
         # direction signal even though a lower value is visible farther down.
-        rows = read_candidate_rows(frame.image, self.reader, max_rows=9)
+        rows = read_candidate_rows(
+            frame.image,
+            self.reader,
+            max_rows=9,
+            stat_guards=self.stat_guards,
+        )
         values = [int(getattr(row, self.primary_attr)) for row in rows]
         direction = self._descending_direction(values)
         if direction is None:
