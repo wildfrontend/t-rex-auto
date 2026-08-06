@@ -10,6 +10,8 @@ from dino_bot.digits import (
     GLYPH_SIZE,
     DigitReader,
     DigitReadError,
+    _count_enclosed_holes,
+    _prefer_matching_topology,
     _prefer_narrow_one,
     segment_glyphs,
 )
@@ -100,6 +102,30 @@ def test_wide_or_unconvincing_7_match_stays_seven() -> None:
         {"1": 0.590, "7": 0.700},
         (0, 6, 4, 10),
     ) == ("7", 0.700)
+
+
+def test_counts_only_fully_enclosed_glyph_holes() -> None:
+    closed = np.zeros(GLYPH_SIZE[::-1], dtype=np.uint8)
+    cv2.rectangle(closed, (4, 4), (19, 27), 255, thickness=3)
+    opened = closed.copy()
+    opened[:9, 10:14] = 0
+
+    assert _count_enclosed_holes(closed) == 1
+    assert _count_enclosed_holes(opened) == 0
+
+
+def test_close_5_6_8_match_prefers_matching_topology() -> None:
+    scores = {"5": 0.763, "6": 0.738, "8": 0.742}
+    holes = {"5": 0, "6": 1, "8": 2}
+
+    assert _prefer_matching_topology("5", 0.763, scores, holes, 1) == (
+        "6",
+        0.738,
+    )
+    assert _prefer_matching_topology("5", 0.900, scores, holes, 1) == (
+        "5",
+        0.900,
+    )
 
 
 # -- regression against shipped glyphs (offline T6) ---------------------------

@@ -32,6 +32,11 @@ MIN_GLYPH_AREA = 12
 MIN_MATCH_SCORE = 0.60
 NARROW_ONE_MAX_ASPECT = 0.45
 NARROW_ONE_MAX_SCORE_GAP = 0.05
+# Anti-aliasing varies slightly between Select Dino rows.  A live ``6`` can
+# consequently score a few points closer to the single shipped ``5`` or ``8``
+# template.  Their enclosed-hole counts are stable, so prefer the matching
+# topology only while the pixel scores are still close enough to be ambiguous.
+TOPOLOGY_MAX_SCORE_GAP = 0.08
 
 
 class DigitReadError(ValueError):
@@ -42,6 +47,51 @@ class DigitReadError(ValueError):
 class Glyph:
     char: str
     raster: np.ndarray
+    enclosed_holes: int
+
+
+def _count_enclosed_holes(raster: np.ndarray) -> int:
+    """Count background regions fully enclosed by a white glyph raster."""
+
+    background = (raster == 0).astype(np.uint8)
+    count, labels = cv2.connectedComponents(background, connectivity=4)
+    holes = 0
+    for label in range(1, count):
+        if (
+            np.any(labels[0, :] == label)
+            or np.any(labels[-1, :] == label)
+            or np.any(labels[:, 0] == label)
+            or np.any(labels[:, -1] == label)
+        ):
+            continue
+        holes += 1
+    return holes
+
+
+def _prefer_matching_topology(
+    best_char: str,
+    best_score: float,
+    scores: dict[str, float],
+    glyph_holes: dict[str, int],
+    source_holes: int,
+) -> tuple[str, float]:
+    """Resolve a close pixel match using the glyph's enclosed-hole count."""
+
+    matching = [
+        (score, char)
+        for char, score in scores.items()
+        if glyph_holes.get(char) == source_holes
+    ]
+    if not matching:
+        return best_char, best_score
+    topology_score, topology_char = max(matching)
+    if (
+        topology_char != best_char
+        and topology_score >= MIN_MATCH_SCORE
+        and best_score - topology_score <= TOPOLOGY_MAX_SCORE_GAP
+    ):
+        return topology_char, topology_score
+    return best_char, best_score
 
 
 def _prefer_narrow_one(
@@ -130,7 +180,7 @@ class DigitReader:
                 raise DigitReadError(f"Glyph file name must map to one character: {path}")
             raster = cv2.resize(raster, GLYPH_SIZE, interpolation=cv2.INTER_AREA)
             _, raster = cv2.threshold(raster, 127, 255, cv2.THRESH_BINARY)
-            self.glyphs.append(Glyph(char, raster))
+            self.glyphs.append(Glyph(char, raster, _count_enclosed_holes(raster)))
         if not self.glyphs:
             raise DigitReadError(f"No glyph templates found in {glyph_dir}")
 
@@ -141,11 +191,20 @@ class DigitReader:
         for bbox, raster in segment_glyphs(image):
             best_char, best_score = "?", 0.0
             scores: dict[str, float] = {}
+            glyph_holes: dict[str, int] = {}
             for glyph in self.glyphs:
                 score = float(np.mean(raster == glyph.raster))
                 scores[glyph.char] = max(scores.get(glyph.char, 0.0), score)
+                glyph_holes[glyph.char] = glyph.enclosed_holes
                 if score > best_score:
                     best_char, best_score = glyph.char, score
+            best_char, best_score = _prefer_matching_topology(
+                best_char,
+                best_score,
+                scores,
+                glyph_holes,
+                _count_enclosed_holes(raster),
+            )
             best_char, best_score = _prefer_narrow_one(
                 best_char,
                 best_score,

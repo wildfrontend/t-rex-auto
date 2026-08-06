@@ -1081,6 +1081,7 @@ class CaveCullPlanner:
                 count = self._read_capacity(frame).count
                 if count is not None:
                     cull = should_cull(count, self.threshold)
+                    self._capacity_before = count
                     self._cull_required = cull
                     self.logger.info(
                         "Hatch cave | capacity=%d/350 | threshold=%d | cull=%s"
@@ -1103,6 +1104,7 @@ class CaveCullPlanner:
                 count = read.count
                 if count is not None:
                     cull = should_cull(count, self.threshold)
+                    self._capacity_before = count
                     self._cull_required = cull
                     self._capacity_readable = not cull or not self.allow_cull
                     if cull:
@@ -1936,6 +1938,7 @@ class FullHatchPlanner:
             return target
         if self._stage == "capacity_preflight":
             target = self._capacity_child.choose(frame, detections)
+            self._remember_capacity_preflight_result()
             if target is None and self._capacity_child.is_complete():
                 if not self._capacity_child.capacity_readable:
                     self.logger.error(
@@ -1944,18 +1947,7 @@ class FullHatchPlanner:
                     )
                     self._complete = True
                     return None
-                reading = self._capacity_child.last_capacity
-                if reading is not None:
-                    self._cave_population = reading
-                    self._hatched_since_cave_read = 0
                 if self._capacity_child.cull_required:
-                    self.logger.warning(
-                        "Hatch capacity | cleanup blocked until screening completes"
-                        " | required=%s",
-                        self._format_screening_stages(SCREENING_STAGES),
-                    )
-                    self._management_pending = True
-                    self._screening_completed.clear()
                     self._stage = "open_nest"
                     self._child = object()
                     self._collect_only_after_empty = False
@@ -2155,6 +2147,27 @@ class FullHatchPlanner:
             logger=self.logger,
         )
         self._no_target_since = None
+
+    def _remember_capacity_preflight_result(self) -> None:
+        """Persist a valid capacity read before cave recentering can recover."""
+
+        child = self._capacity_child
+        reading = child.last_capacity
+        if not child.capacity_readable or reading is None:
+            return
+        self._cave_population = reading
+        self._hatched_since_cave_read = 0
+        if child.cull_required:
+            if not self._management_pending:
+                self.logger.warning(
+                    "Hatch capacity | cleanup blocked until screening completes"
+                    " | required=%s",
+                    self._format_screening_stages(SCREENING_STAGES),
+                )
+                self._management_pending = True
+                self._screening_completed.clear()
+            return
+        self._capacity_checked = True
 
     def _new_hatch(self) -> hatch_feature.HatchPlanner:
         return hatch_feature.HatchPlanner(**self._hatch_kwargs)

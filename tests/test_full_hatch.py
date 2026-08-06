@@ -242,6 +242,7 @@ def test_cave_below_threshold_can_use_hud_when_cave_is_clipped() -> None:
 
     assert target is not None and target.type == CAVE_RECENTER
     assert planner.capacity_readable
+    assert planner.last_capacity == 282
 
 
 def test_cave_inside_hunt_bottom_exclusion_is_never_opened() -> None:
@@ -582,6 +583,43 @@ def test_full_capacity_preflight_screens_before_required_cull(monkeypatch) -> No
     assert target is not None and target.type == OPEN_NEST
     assert planner._management_pending
     assert not planner._capacity_checked
+
+
+def test_capacity_preflight_keeps_cull_reading_when_recenter_needs_recovery(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "dino_bot.full_hatch.read_dino_count", lambda *args, **kwargs: 324
+    )
+    planner = FullHatchPlanner(
+        DigitReader(GLYPHS),
+        egg_pile_point=(450, 1330),
+        max_scrolls=0,
+        cull_threshold=320,
+    )
+    home = [detection(hatch.HOME_ANCHOR, 59, 561)]
+
+    for _ in range(2):
+        target = planner.choose(frame(), home)
+        assert target is not None and target.type == CAVE_SWIPE
+        planner.on_action_success(target.type)
+
+    # Capacity remains readable even when the cave template is clipped. The
+    # result must be committed before the return-to-home proof can fail.
+    target = planner.choose(frame(), [])
+    assert target is not None and target.type == CAVE_RECENTER
+    assert planner._capacity_child.last_capacity == 324
+    assert planner._cave_population == 324
+    assert planner._management_pending
+    assert not planner._capacity_checked
+
+    planner._begin_home_recovery("capacity preflight recenter failed")
+    assert planner.choose(frame(), home) is None
+    target = planner.choose(frame(), home)
+
+    assert target is not None and target.type == OPEN_NEST
+    assert target.type != CAVE_SWIPE
+    assert planner._stage == "open_nest"
 
 
 def test_cleanup_gate_reopens_nest_when_one_screening_stage_is_missing() -> None:
