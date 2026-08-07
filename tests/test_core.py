@@ -1391,6 +1391,41 @@ def test_verifier_accepts_expected_next_ui() -> None:
     assert "hunt_button" in result.reason
 
 
+def test_verifier_reports_pixel_change_when_expected_next_ui_is_missing() -> None:
+    """An inert coordinate must be distinguishable from a wrong-screen tap.
+
+    Both fail the same way - the expected successor never appears - so the
+    engine's escalate-to-back guard can only tell them apart by
+    ``pixel_change``, and it skips the check entirely while that stays None.
+    """
+
+    detection = make_detection(type="hatch_egg_pile")
+    target = Target(
+        detection.type,
+        detection.x,
+        detection.y,
+        detection.confidence,
+        detection,
+    )
+    verifier = TargetChangedVerifier(
+        success_transitions={"hatch_egg_pile": ("hatch_incubator_title",)}
+    )
+
+    inert = verifier.verify(
+        make_frame(10), make_frame(10), target, [detection], [detection]
+    )
+    assert not inert.success
+    assert "expected next UI not detected" in inert.reason
+    assert inert.pixel_change == pytest.approx(0.0)
+
+    wrong_screen = verifier.verify(
+        make_frame(0), make_frame(255), target, [detection], [detection]
+    )
+    assert not wrong_screen.success
+    assert wrong_screen.pixel_change is not None
+    assert wrong_screen.pixel_change > 0.5
+
+
 def test_verifier_accepts_expected_frame_structure_without_template_detection() -> None:
     detection = make_detection(type="hatch_claim_button")
     target = Target(

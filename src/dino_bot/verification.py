@@ -108,6 +108,14 @@ class TargetChangedVerifier:
                 reason=f"next UI detected: {', '.join(visible_successors)}",
                 confidence=1.0,
             )
+        # Measure the region before the successor branch returns. A missing
+        # successor says the expected screen did not arrive; it cannot say
+        # whether the tap did anything at all. Only `pixel_change` separates
+        # "opened the wrong screen" from "the coordinate is inert", and the
+        # engine's escalate-to-back guard is skipped entirely while this stays
+        # None - which is how one dead egg-pile coordinate looped for 19
+        # minutes without ever pressing back.
+        change = self._target_region_change(before, after, target)
         if expected_successors:
             return VerificationResult(
                 success=False,
@@ -116,8 +124,8 @@ class TargetChangedVerifier:
                     f"{', '.join(sorted(expected_successors))}"
                 ),
                 confidence=0.9,
+                pixel_change=change,
             )
-        change = self._target_region_change(before, after, target)
         if not nearby_target:
             return VerificationResult(
                 success=True,
