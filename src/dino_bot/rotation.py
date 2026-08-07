@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import gzip
 import shutil
+from contextlib import suppress
 from pathlib import Path
 
 
@@ -52,18 +53,14 @@ def roll_generations(
     """
 
     keep = max(1, backup_count)
-    try:
+    with suppress(OSError):
         generation_path(directory, stem, suffix, keep).unlink(missing_ok=True)
-    except OSError:
-        pass
     for index in range(keep - 1, 1, -1):
         source = generation_path(directory, stem, suffix, index)
         if not source.exists():
             continue
-        try:
+        with suppress(OSError):
             source.replace(generation_path(directory, stem, suffix, index + 1))
-        except OSError:
-            pass
     first = generation_path(directory, stem, suffix, 1)
     if keep >= 2 and first.exists():
         second = generation_path(directory, stem, suffix, 2)
@@ -74,10 +71,8 @@ def roll_generations(
         except OSError:
             # A half-written archive is worse than a missing one: the reader
             # cannot tell truncation from corruption.
-            try:
+            with suppress(OSError):
                 second.unlink(missing_ok=True)
-            except OSError:
-                pass
     try:
         first.unlink(missing_ok=True)
         generation_path(directory, stem, suffix, 0).replace(first)

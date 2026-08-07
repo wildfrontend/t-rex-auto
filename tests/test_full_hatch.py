@@ -84,18 +84,22 @@ def capacity_frame() -> Frame:
     return frame(image)
 
 
+def _capacity_read(count: int | None) -> CapacityRead:
+    return CapacityRead(
+        count=count,
+        text="" if count is None else f"{count}/350",
+        fraction=None if count is None else (count, 350),
+        region=tuple(int(value) for value in CAPACITY_REGION),
+        reason="unparsed" if count is None else "ok",
+    )
+
+
 def _patch_capacity(monkeypatch, count: int | None) -> None:
     """Force the HUD read, bypassing the glyph matcher and its fixture crop."""
 
     monkeypatch.setattr(
         "dino_bot.full_hatch.probe_dino_count",
-        lambda *args, **kwargs: CapacityRead(
-            count=count,
-            text="" if count is None else f"{count}/350",
-            fraction=None if count is None else (count, 350),
-            region=tuple(int(value) for value in CAPACITY_REGION),
-            reason="unparsed" if count is None else "ok",
-        ),
+        lambda *args, **kwargs: _capacity_read(count),
     )
 
 
@@ -354,8 +358,8 @@ def test_capacity_requires_two_matching_reads_after_a_mismatch(
     caplog.set_level("INFO")
     readings = iter((324, 325, 325))
     monkeypatch.setattr(
-        "dino_bot.full_hatch.read_dino_count",
-        lambda *args, **kwargs: next(readings),
+        "dino_bot.full_hatch.probe_dino_count",
+        lambda *args, **kwargs: _capacity_read(next(readings)),
     )
     planner = CaveCullPlanner(
         DigitReader(GLYPHS),
@@ -655,9 +659,7 @@ def test_full_capacity_preflight_screens_before_required_cull(monkeypatch) -> No
 def test_capacity_preflight_keeps_cull_reading_when_recenter_needs_recovery(
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr(
-        "dino_bot.full_hatch.read_dino_count", lambda *args, **kwargs: 324
-    )
+    _patch_capacity(monkeypatch, 324)
     planner = FullHatchPlanner(
         DigitReader(GLYPHS),
         egg_pile_point=(450, 1330),

@@ -74,7 +74,7 @@ def stat_value_is_valid(
 def upgrade_is_valid(
     parent: Stats,
     candidate: Stats,
-    rule: "ReplacementRule",
+    rule: ReplacementRule,
     guards: Mapping[str, StatUpgradeGuard] = DEFAULT_STAT_UPGRADE_GUARDS,
 ) -> bool:
     """Whether a candidate's primary-stat increase fits the configured guard."""
@@ -85,9 +85,7 @@ def upgrade_is_valid(
     delta = primary_of(candidate, rule) - primary_of(parent, rule)
     if guard.min_delta is not None and delta < guard.min_delta:
         return False
-    if guard.max_delta is not None and delta > guard.max_delta:
-        return False
-    return True
+    return guard.max_delta is None or delta <= guard.max_delta
 
 
 @dataclass(frozen=True, slots=True)

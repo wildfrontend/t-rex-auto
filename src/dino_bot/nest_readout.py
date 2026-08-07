@@ -16,8 +16,8 @@ from .models import Image
 from .nests import (
     ATTACK_RULE,
     DEFAULT_STAT_UPGRADE_GUARDS,
-    StatUpgradeGuard,
     Stats,
+    StatUpgradeGuard,
     pick_replacement,
     stat_value_is_valid,
 )
