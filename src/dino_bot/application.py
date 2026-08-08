@@ -42,6 +42,7 @@ from .recovery import AdbAppRestarter, BlackScreenRecovery, HuntProgressWatchdog
 from .select_sort import SelectSortTestPlanner
 from .stalls import (
     CapacitySnapshotWriter,
+    EggPileSnapshotWriter,
     ParentStatsSnapshotWriter,
     StallSnapshotWriter,
 )
@@ -387,6 +388,16 @@ def _create_hatch_engine(
         if config.stalls.snapshots_enabled
         else None
     )
+    egg_pile_snapshots = (
+        EggPileSnapshotWriter(
+            config.stalls_dir,
+            logger,
+            limit=config.stalls.snapshot_limit,
+            min_interval_seconds=config.stalls.snapshot_min_interval_seconds,
+        )
+        if config.stalls.snapshots_enabled
+        else None
+    )
     if full:
         hatch_inventory = HatchBoostInventoryStore(
             config.root / "data" / "stats.sqlite3"
@@ -426,6 +437,7 @@ def _create_hatch_engine(
             cave_recenter_checks=hatch.cave_recenter_checks,
             capacity_snapshots=capacity_snapshots,
             parent_stats_snapshots=parent_stats_snapshots,
+            egg_pile_snapshots=egg_pile_snapshots,
             stage_scoped_scan=config.planner.stage_scoped_scan,
             standalone_stage=standalone_stage,
             logger=logger,

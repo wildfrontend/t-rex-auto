@@ -56,6 +56,10 @@ class HatchHuntPlanner:
     def is_complete(self) -> bool:
         # 內層孵蛋流程宣告結束(含恢復重試耗盡)時,讓引擎乾淨停止,
         # 而不是留下一個只掃描不動作的殭屍程序。
+        # Egg-pile calibration is a recoverable hatch failure in combined
+        # mode: keep the hunt side alive while the hatch side is fused off.
+        if self._hatch_is_blocked():
+            return False
         is_complete = getattr(self.hatch, "is_complete", None)
         return bool(is_complete()) if callable(is_complete) else False
 
@@ -82,6 +86,15 @@ class HatchHuntPlanner:
             self.hunt.reset_workflow()
             self._mode = "hatch"
             self._centered_frames = 0
+
+        if self._hatch_is_blocked():
+            if self._mode != "hunt":
+                self._mode = "hunt"
+                self._centered_frames = 0
+                self.logger.error(
+                    "Hatch+Hunt | hatch calibration blocked; switching to hunt"
+                )
+            return self._choose_owned(self.hunt, frame, detections)
 
         if self._mode == "hatch":
             target = self._choose_owned(self.hatch, frame, detections)
@@ -180,6 +193,17 @@ class HatchHuntPlanner:
         if callable(method):
             method(target_type)
 
+    def on_action_failure_context(
+        self,
+        target: Target,
+        frame: Frame | None,
+        detections: Sequence[Detection],
+        attempts: int,
+    ) -> None:
+        method = getattr(self._action_owner, "on_action_failure_context", None)
+        if callable(method):
+            method(target, frame, detections, attempts)
+
     def on_retry_exhausted(self, target: Target) -> None:
         method = getattr(self._action_owner, "on_retry_exhausted", None)
         if callable(method):
@@ -238,6 +262,10 @@ class HatchHuntPlanner:
 
     def anchor_measured(self) -> bool:
         return self.hunt.anchor_measured() if self._mode != "hatch" else False
+
+    def _hatch_is_blocked(self) -> bool:
+        method = getattr(self.hatch, "is_hatch_blocked", None)
+        return bool(method()) if callable(method) else False
 
     def _choose_handoff(
         self,

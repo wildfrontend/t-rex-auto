@@ -63,7 +63,7 @@ from .overlays import (
     SELECT_CONFIRM_PROMPT,
 )
 from .parent_open import NEST_TITLE, SELECT_TITLE
-from .stalls import ParentStatsSnapshot
+from .stalls import EggPileSnapshot, ParentStatsSnapshot
 
 # Full-workflow synthetic actions and newly cropped screen anchors.
 OPEN_NEST = "hatch_full_open_nest"
@@ -1409,6 +1409,7 @@ class FullHatchPlanner:
         cave_recenter_checks: int = 3,
         capacity_snapshots: CapacitySnapshot | None = None,
         parent_stats_snapshots: ParentStatsSnapshot | None = None,
+        egg_pile_snapshots: EggPileSnapshot | None = None,
         stage_scoped_scan: bool = True,
         standalone_stage: str | None = None,
         logger: logging.Logger | None = None,
@@ -1429,6 +1430,7 @@ class FullHatchPlanner:
         self.cave_recenter_checks = max(1, cave_recenter_checks)
         self.capacity_snapshots = capacity_snapshots
         self.parent_stats_snapshots = parent_stats_snapshots
+        self.egg_pile_snapshots = egg_pile_snapshots
         self.stage_scoped_scan = bool(stage_scoped_scan)
         if standalone_stage is not None and standalone_stage not in STANDALONE_STAGES:
             raise ValueError(f"unsupported standalone hatch stage: {standalone_stage}")
@@ -1483,6 +1485,8 @@ class FullHatchPlanner:
         self._pending_claim_verification = False
         self._standalone_started = False
         self._standalone_returning = False
+        self._egg_pile_failures = 0
+        self._egg_pile_blocked = False
         self.completed_management_cycles = 0
         self._start_hatch_cycle()
         if self.standalone_stage is not None:
@@ -1501,7 +1505,14 @@ class FullHatchPlanner:
         return f"full_{self._stage}:{detail or '-'}"
 
     def is_complete(self) -> bool:
-        return self._complete
+        # A standalone/full-only run has no hunt owner to fall back to. Stop
+        # safely after calibration is blocked instead of spinning forever.
+        return self._complete or self._egg_pile_blocked
+
+    def is_hatch_blocked(self) -> bool:
+        """Whether egg-pile recovery exhausted its safe retry budget."""
+
+        return self._egg_pile_blocked
 
     def next_ready_delay_ms(self) -> int:
         method = getattr(self._child, "next_ready_delay_ms", None)
@@ -1570,6 +1581,8 @@ class FullHatchPlanner:
         return True
 
     def reset_workflow(self) -> None:
+        self._egg_pile_failures = 0
+        self._egg_pile_blocked = False
         if self.standalone_stage is not None:
             self._stage = "recover_home"
             self._child = HatchHomeRecoveryPlanner(
@@ -1625,6 +1638,8 @@ class FullHatchPlanner:
         self._observed_cooldown_until = None
         self._navigation_failures.clear()
         self._pending_claim_verification = False
+        self._egg_pile_failures = 0
+        self._egg_pile_blocked = False
         self._start_hatch_cycle()
 
     def on_action_success(self, target_type: str) -> None:
@@ -1651,6 +1666,8 @@ class FullHatchPlanner:
         if self._stage == "hatch":
             hatch = self._hatch_child
             hatch.on_action_success(target_type)
+            if target_type == hatch_feature.EGG_PILE:
+                self._egg_pile_failures = 0
             if target_type == HATCH_BOOST_BUTTON:
                 self._boost_attempted = True
                 self._boost_confirmation_pending = True
@@ -1763,6 +1780,55 @@ class FullHatchPlanner:
         if self._stage == "cave":
             self._cave_child.on_action_success(target_type)
 
+    def on_action_failure_context(
+        self,
+        target: Target,
+        frame: Frame | None,
+        detections: Sequence[Detection],
+        attempts: int,
+    ) -> None:
+        """Capture the post-action frame before recovery changes the screen."""
+
+        if target.type != hatch_feature.EGG_PILE or frame is None:
+            return
+        self._egg_pile_failures += 1
+        measured_base = _egg_pile_base_center(frame)
+        proposed_point = _egg_pile_safe_tap(frame)
+        if self.egg_pile_snapshots is not None:
+            self.egg_pile_snapshots.capture(
+                frame,
+                detections,
+                target_x=target.x,
+                target_y=target.y,
+                measured_base=measured_base,
+                proposed_point=proposed_point,
+                stage=self.last_stage(),
+                failures=self._egg_pile_failures,
+                attempts=attempts,
+            )
+        self.logger.warning(
+            "Hatch calibration | egg pile failure=%d | target=(%d,%d)"
+            " | measured_base=%s | proposed=%s",
+            self._egg_pile_failures,
+            target.x,
+            target.y,
+            measured_base,
+            proposed_point,
+        )
+
+    def on_retry_exhausted(self, target: Target) -> None:
+        """Trip a workflow fuse instead of allowing synthetic target reuse."""
+
+        if target.type != hatch_feature.EGG_PILE:
+            return
+        self._egg_pile_blocked = True
+        self._stage = "hatch_blocked"
+        self._no_target_since = None
+        self.logger.error(
+            "Hatch calibration | egg pile retries exhausted"
+            " | blocking hatch until explicit workflow reset"
+        )
+
     def on_action_failure(self, target_type: str) -> None:
         if target_type in STARTUP_INTERRUPTS:
             # Leave the workflow stage intact. If the modal remains visible,
@@ -1843,7 +1909,7 @@ class FullHatchPlanner:
             )
 
     def choose(self, frame: Frame, detections: Sequence[Detection]) -> Target | None:
-        if self._complete:
+        if self._complete or self._egg_pile_blocked:
             return None
 
         # Login overlays sit above a still-detectable outdoor HUD. Handle them

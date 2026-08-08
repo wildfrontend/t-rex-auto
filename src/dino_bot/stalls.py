@@ -50,6 +50,24 @@ class ParentStatsSnapshot(Protocol):
     ) -> Path | None: ...
 
 
+class EggPileSnapshot(Protocol):
+    """Writes calibration evidence after a synthetic egg-pile tap fails."""
+
+    def capture(
+        self,
+        frame: Frame,
+        detections: Sequence[Detection],
+        *,
+        target_x: int,
+        target_y: int,
+        measured_base: tuple[float, float] | None,
+        proposed_point: tuple[int, int] | None,
+        stage: str,
+        failures: int,
+        attempts: int,
+    ) -> Path | None: ...
+
+
 class _SnapshotWriter:
     """Rate-limited, size-capped PNG + JSON evidence under one filename stem."""
 
@@ -181,6 +199,102 @@ class StallSnapshotWriter(_SnapshotWriter):
             "Stall | no actionable target for %.0fs | stage=%s | saved %s",
             seconds,
             stage or "unknown",
+            path.name,
+        )
+        return path
+
+
+class EggPileSnapshotWriter(_SnapshotWriter):
+    """Keep calibration evidence after an egg-pile tap fails.
+
+    The egg pile is intentionally not template-matched because its artwork
+    moves with the map.  A failed synthetic tap therefore needs the frame,
+    measured base, and proposed point together; a text log alone cannot tell
+    whether the point missed the pile or opened an unexpected foreground.
+    """
+
+    prefix = "egg-pile"
+
+    def capture(
+        self,
+        frame: Frame,
+        detections: Sequence[Detection],
+        *,
+        target_x: int,
+        target_y: int,
+        measured_base: tuple[float, float] | None,
+        proposed_point: tuple[int, int] | None,
+        stage: str,
+        failures: int,
+        attempts: int,
+    ) -> Path | None:
+        """Write one calibration frame, or ``None`` when rate limited."""
+
+        moment = self.clock()
+        if self._throttled(moment):
+            return None
+
+        annotated = frame.image.copy()
+        scale = frame.width / 900.0
+        # Red = actual tap, green = proposed recalibrated point, blue = cyan
+        # base measurement.  The original frame remains the primary evidence.
+        cv2.circle(annotated, (target_x, target_y), max(8, round(18 * scale)), (0, 0, 255), 4)
+        if proposed_point is not None:
+            cv2.circle(
+                annotated,
+                proposed_point,
+                max(8, round(18 * scale)),
+                (0, 255, 0),
+                4,
+            )
+        if measured_base is not None:
+            cv2.circle(
+                annotated,
+                tuple(round(value) for value in measured_base),
+                max(8, round(18 * scale)),
+                (255, 0, 0),
+                4,
+            )
+
+        x0 = max(0, round(180 * scale))
+        x1 = min(frame.width, round(720 * scale))
+        y0 = max(0, round(950 * scale))
+        y1 = min(frame.height, round(1590 * scale))
+        roi = annotated[y0:y1, x0:x1]
+        annotated_frame = Frame(
+            annotated,
+            captured_at=frame.captured_at,
+            source=frame.source,
+            sequence=frame.sequence,
+        )
+        path = self._write(
+            annotated_frame,
+            {
+                "reason": "egg_pile_tap_failed",
+                "stage": stage,
+                "failures": failures,
+                "attempts": attempts,
+                "target": {"x": target_x, "y": target_y},
+                "measured_base": list(measured_base) if measured_base else None,
+                "proposed_point": list(proposed_point) if proposed_point else None,
+                "detections": [item.to_dict() for item in detections],
+                "legend": {
+                    "red": "actual tap",
+                    "green": "proposed dynamic point",
+                    "blue": "measured cyan base center",
+                },
+            },
+            extra_images={"roi": roi} if roi.size else None,
+        )
+        if path is None:
+            return None
+
+        self._last_written = moment
+        self._prune()
+        self.logger.warning(
+            "Hatch calibration | egg pile tap failed | target=(%d,%d) | saved %s",
+            target_x,
+            target_y,
             path.name,
         )
         return path

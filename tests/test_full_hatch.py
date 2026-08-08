@@ -51,7 +51,7 @@ from dino_bot.full_hatch import (
     is_unready_egg_detail,
 )
 from dino_bot.hatch_inventory import HatchBoostInventoryStore
-from dino_bot.models import BoundingBox, Detection, Frame
+from dino_bot.models import BoundingBox, Detection, Frame, Target
 from dino_bot.nests import MASS_RULE, TOP_RULE
 from dino_bot.overlays import CONFIRM_NO, CONFIRM_YES, SELECT_CONFIRM_PROMPT
 from dino_bot.parent_open import NEST_TITLE, SELECT_TITLE
@@ -110,6 +110,15 @@ class RecordingCapacitySnapshots:
     def capture(self, frame, read, *, stage, attempts):
         self.captures.append((read, stage, attempts))
         return Path("capacity-00000000-000000.png")
+
+
+class RecordingEggPileSnapshots:
+    def __init__(self) -> None:
+        self.captures: list[dict[str, object]] = []
+
+    def capture(self, frame, detections, **kwargs):
+        self.captures.append(kwargs)
+        return Path("egg-pile-00000000-000000.png")
 
 
 def test_top_autoplace_round_requires_screen_anchors_and_known_prompt(caplog) -> None:
@@ -1194,6 +1203,38 @@ def test_failed_egg_pile_tap_enters_recovery_before_any_retry() -> None:
     )
 
     assert target is not None and target.type == RECOVERY_BACK
+
+
+def test_failed_egg_pile_captures_calibration_evidence_and_fuses_hatch() -> None:
+    snapshots = RecordingEggPileSnapshots()
+    planner = FullHatchPlanner(
+        DigitReader(GLYPHS),
+        egg_pile_point=(450, 1330),
+        max_scrolls=0,
+        egg_pile_snapshots=snapshots,
+    )
+    failed_target = Target(
+        hatch.EGG_PILE,
+        457,
+        1279,
+        1.0,
+        detection(hatch.EGG_PILE, 457, 1279),
+    )
+
+    planner.on_action_failure_context(
+        failed_target,
+        frame(),
+        [detection(hatch.HOME_ANCHOR, 59, 561)],
+        1,
+    )
+    assert len(snapshots.captures) == 1
+    assert snapshots.captures[0]["target_x"] == 457
+    assert snapshots.captures[0]["proposed_point"] is not None
+
+    planner.on_retry_exhausted(failed_target)
+    assert planner.is_hatch_blocked()
+    assert planner.is_complete()
+    assert planner.choose(frame(), [detection(hatch.HOME_ANCHOR, 59, 561)]) is None
 
 
 def test_failed_home_recovery_action_retries_without_completing_workflow() -> None:

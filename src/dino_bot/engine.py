@@ -617,6 +617,18 @@ class VerifyState:
             )
             return BotState.IDLE
         context.logger.warning("Verify | Failed | %s", result.reason)
+        on_action_failure_context = getattr(
+            context.planner,
+            "on_action_failure_context",
+            None,
+        )
+        if callable(on_action_failure_context):
+            on_action_failure_context(
+                context.target,
+                context.after_frame,
+                context.after_detections,
+                context.attempt,
+            )
         on_action_failure = getattr(context.planner, "on_action_failure", None)
         if callable(on_action_failure):
             on_action_failure(context.target.type)
@@ -660,7 +672,7 @@ class VerifyState:
         if callable(on_retry_exhausted):
             on_retry_exhausted(context.target)
             context.logger.warning(
-                "Planning | suppressing %s at (%d,%d) after exhausted retries",
+                "Planning | retry exhausted hook handled %s at (%d,%d)",
                 context.target.type,
                 context.target.x,
                 context.target.y,
