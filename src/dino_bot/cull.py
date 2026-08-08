@@ -96,6 +96,6 @@ def read_dino_count(
 
 
 def should_cull(count: int, threshold: int) -> bool:
-    """Plan rule: at or below the threshold skip cleaning, above it cull."""
+    """Plan rule: below the threshold skip cleaning, at/above it cull."""
 
-    return count > threshold
+    return count >= threshold

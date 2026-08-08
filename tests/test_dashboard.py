@@ -205,7 +205,7 @@ def test_dashboard_workflow_reads_the_complete_log_message(tmp_path: Path) -> No
     log.write_text(
         "20:10:22 | INFO | Planning | hatch_label at (95, 671), score=0.994\n"
         "20:10:34 | INFO | Planning | hatch_egg_pile at (506, 952), score=0.806\n"
-        "20:10:50 | INFO | Hatch cave | capacity=321/350 | threshold=320 | cull=True\n",
+        "20:10:50 | INFO | Hatch cave | capacity=350/350 | threshold=350 | cull=True\n",
         encoding="utf-8",
     )
 

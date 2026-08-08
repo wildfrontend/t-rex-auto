@@ -130,14 +130,14 @@ def test_probe_rejects_a_frame_too_small_to_hold_the_hud(reader: DigitReader) ->
 
 def test_should_cull_boundary() -> None:
     assert not should_cull(299, 300)
-    assert not should_cull(300, 300)
+    assert should_cull(300, 300)
     assert should_cull(301, 300)
 
 
 def test_cull_threshold_config(tmp_path) -> None:
     config_path = tmp_path / "config.json"
     config_path.write_text("{}", encoding="utf-8")
-    assert load_config(config_path).hatch.cull_threshold == 320
+    assert load_config(config_path).hatch.cull_threshold == 350
     config_path.write_text('{"hatch": {"cull_threshold": 325}}', encoding="utf-8")
     assert load_config(config_path).hatch.cull_threshold == 325
     config_path.write_text('{"hatch": {"cull_threshold": -1}}', encoding="utf-8")

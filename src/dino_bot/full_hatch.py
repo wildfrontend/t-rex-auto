@@ -1400,7 +1400,7 @@ class FullHatchPlanner:
         require_home_anchor: bool = True,
         home_failure_limit: int = 3,
         home_backoff_seconds: float = 30.0,
-        cull_threshold: int = 320,
+        cull_threshold: int = 350,
         cave_screen_trigger: int = 300,
         cave_safe_margin: int = 80,
         cave_bottom_exclusion_px: int = 180,

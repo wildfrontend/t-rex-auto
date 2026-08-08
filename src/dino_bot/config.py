@@ -169,7 +169,7 @@ class HatchConfig:
     home_failure_limit: int = 3
     home_backoff_seconds: float = 30.0
     # Phase C: cull only when the cave-view N/350 readout exceeds this.
-    cull_threshold: int = 320
+    cull_threshold: int = 350
     # 洞穴容量估算(上次實讀+累積孵化)達到此值就觸發篩選+淘汰。
     cave_screen_trigger: int = 300
     # Slow machines may need several complete detect cycles before the HUD is
@@ -647,7 +647,7 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
             require_home_anchor=bool(hatch_data.get("require_home_anchor", True)),
             home_failure_limit=int(hatch_data.get("home_failure_limit", 3)),
             home_backoff_seconds=float(hatch_data.get("home_backoff_seconds", 30)),
-            cull_threshold=int(hatch_data.get("cull_threshold", 320)),
+            cull_threshold=int(hatch_data.get("cull_threshold", 350)),
             cave_screen_trigger=int(hatch_data.get("cave_screen_trigger", 300)),
             capacity_read_retries=int(hatch_data.get("capacity_read_retries", 2)),
             cave_recenter_checks=int(hatch_data.get("cave_recenter_checks", 3)),

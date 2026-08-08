@@ -235,6 +235,7 @@
   },
   "hatch": {
     "batch_hatch_count": 48,
+    "cull_threshold": 350,
     "stat_upgrade_guards": {
       "hp": {
         "min_delta": 10,
