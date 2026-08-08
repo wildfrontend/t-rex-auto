@@ -34,6 +34,15 @@ class EncodedReader:
         return self._values.get(int(image[0, 0, 0]))
 
 
+class SnapshotCollector:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, int]] = []
+
+    def capture(self, frame, reader, regions, *, stage, side, attempts):
+        self.calls.append((stage, side, attempts))
+        return None
+
+
 def detection(target_type: str, x: int, y: int) -> Detection:
     return Detection.from_bbox(target_type, BoundingBox(x - 5, y - 5, 10, 10), 0.99)
 
@@ -126,6 +135,24 @@ def test_starts_by_converging_main_nest_filter_to_attack() -> None:
     # 表頭已是「攻擊」:標籤收斂直接跳過,馬上進入親代讀取。
     left = planner.choose(frame, nest_detections())
     assert left is not None and left.type == attack_replacement.PARENT_LEFT
+
+
+def test_unreadable_parent_stats_collects_rate_limited_evidence() -> None:
+    reader = EncodedReader()
+    evidence = SnapshotCollector()
+    planner = AttackReplacementTestPlanner(
+        reader,  # type: ignore[arg-type]
+        parent_stats_snapshots=evidence,  # type: ignore[arg-type]
+    )
+
+    assert (
+        planner.choose(
+            Frame(np.zeros((1600, 900, 3), dtype=np.uint8)),
+            nest_detections(),
+        )
+        is None
+    )
+    assert evidence.calls == [("parent_stats_unreadable", "left", 1)]
 
 
 def test_equal_attack_keeps_both_parents_and_closes_each_list() -> None:

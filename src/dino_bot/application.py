@@ -40,7 +40,11 @@ from .parent_open import ParentOpenTestPlanner
 from .planning import HuntPlanner
 from .recovery import AdbAppRestarter, BlackScreenRecovery, HuntProgressWatchdog
 from .select_sort import SelectSortTestPlanner
-from .stalls import CapacitySnapshotWriter, StallSnapshotWriter
+from .stalls import (
+    CapacitySnapshotWriter,
+    ParentStatsSnapshotWriter,
+    StallSnapshotWriter,
+)
 from .verification import TargetChangedVerifier
 
 
@@ -373,6 +377,16 @@ def _create_hatch_engine(
             open_cv_detector,
             reference_size=open_cv_detector.reference_size,
         )
+    parent_stats_snapshots = (
+        ParentStatsSnapshotWriter(
+            config.stalls_dir,
+            logger,
+            limit=config.stalls.snapshot_limit,
+            min_interval_seconds=config.stalls.snapshot_min_interval_seconds,
+        )
+        if config.stalls.snapshots_enabled
+        else None
+    )
     if full:
         hatch_inventory = HatchBoostInventoryStore(
             config.root / "data" / "stats.sqlite3"
@@ -411,6 +425,7 @@ def _create_hatch_engine(
             capacity_read_retries=hatch.capacity_read_retries,
             cave_recenter_checks=hatch.cave_recenter_checks,
             capacity_snapshots=capacity_snapshots,
+            parent_stats_snapshots=parent_stats_snapshots,
             stage_scoped_scan=config.planner.stage_scoped_scan,
             standalone_stage=standalone_stage,
             logger=logger,
@@ -436,6 +451,7 @@ def _create_hatch_engine(
             select_sort_option=select_sort_feature.SORT_HP,
             select_sort_header=select_sort_feature.SORT_HP,
             select_sort_menu_point=(650.0, 501.0),
+            parent_stats_snapshots=parent_stats_snapshots,
             logger=logger,
         )
     elif attack_test:
@@ -443,12 +459,14 @@ def _create_hatch_engine(
             DigitReader(hatch.manifest.parent / "digits"),
             reference_width=hatch.reference_width,
             stat_guards=hatch.stat_upgrade_guards,
+            parent_stats_snapshots=parent_stats_snapshots,
             logger=logger,
         )
     elif parent_test:
         planner = ParentOpenTestPlanner(
             DigitReader(hatch.manifest.parent / "digits"),
             reference_width=hatch.reference_width,
+            parent_stats_snapshots=parent_stats_snapshots,
             logger=logger,
         )
     elif sort_test:

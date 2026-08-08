@@ -17,7 +17,12 @@ from . import select_sort as select_sort_feature
 from .digits import DigitReader
 from .models import Detection, Frame, Target
 from .nest_filter import NestTagFilterTestPlanner
-from .nest_readout import SELECT_ROW_PITCH, read_attack_parents, read_candidate_rows
+from .nest_readout import (
+    ATTACK_PARENT_REGIONS,
+    SELECT_ROW_PITCH,
+    read_attack_parents,
+    read_candidate_rows,
+)
 from .nests import (
     ATTACK_RULE,
     DEFAULT_STAT_UPGRADE_GUARDS,
@@ -31,6 +36,7 @@ from .nests import (
 from .overlays import CONFIRM_YES, NESTED_PARENT_WARNING, SELECT_CONFIRM_PROMPT
 from .parent_open import NEST_TITLE, OPEN_TAG_OPTIONS, SELECT_TITLE
 from .select_sort import SelectSortTestPlanner
+from .stalls import ParentStatsSnapshot
 
 PARENT_LEFT = "hatch_parent_left"
 PARENT_RIGHT = "hatch_parent_right"
@@ -91,6 +97,7 @@ class AttackReplacementTestPlanner:
         select_sort_header: str = select_sort_feature.SORT_HDR_ATTACK,
         select_sort_menu_point: tuple[float, float] = (649.0, 550.0),
         stat_guards: Mapping[str, StatUpgradeGuard] = DEFAULT_STAT_UPGRADE_GUARDS,
+        parent_stats_snapshots: ParentStatsSnapshot | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
         if reference_width <= 0:
@@ -108,10 +115,12 @@ class AttackReplacementTestPlanner:
         self.select_sort_header = select_sort_header
         self.select_sort_menu_point = select_sort_menu_point
         self.stat_guards = dict(stat_guards)
+        self.parent_stats_snapshots = parent_stats_snapshots
         self.logger = logger or logging.getLogger("dino_bot")
         self._stage = "filter_attack"
         self._side = 0
         self._current_parent: Stats | None = None
+        self._parent_read_failures = 0
         self._filter_planner = NestTagFilterTestPlanner(
             reference_width=reference_width,
             target_label=rule.tag,
@@ -214,12 +223,23 @@ class AttackReplacementTestPlanner:
             stat_guards=self.stat_guards,
         )
         if parents is None:
+            self._parent_read_failures += 1
             self._stage = "parent_stats_unreadable"
+            if self.parent_stats_snapshots is not None:
+                self.parent_stats_snapshots.capture(
+                    frame,
+                    self.reader,
+                    ATTACK_PARENT_REGIONS,
+                    stage=self._stage,
+                    side=self._side_name,
+                    attempts=self._parent_read_failures,
+                )
             self.logger.warning(
                 "Hatch %s | parent stats unreadable; refusing tap",
                 self.rule.tag,
             )
             return None
+        self._parent_read_failures = 0
         self._current_parent = parents[self._side]
         self.logger.info(
             "Hatch %s | side=%s | parent=%s | pair=%s,%s",

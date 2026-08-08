@@ -63,6 +63,7 @@ from .overlays import (
     SELECT_CONFIRM_PROMPT,
 )
 from .parent_open import NEST_TITLE, SELECT_TITLE
+from .stalls import ParentStatsSnapshot
 
 # Full-workflow synthetic actions and newly cropped screen anchors.
 OPEN_NEST = "hatch_full_open_nest"
@@ -1407,6 +1408,7 @@ class FullHatchPlanner:
         capacity_read_retries: int = 2,
         cave_recenter_checks: int = 3,
         capacity_snapshots: CapacitySnapshot | None = None,
+        parent_stats_snapshots: ParentStatsSnapshot | None = None,
         stage_scoped_scan: bool = True,
         standalone_stage: str | None = None,
         logger: logging.Logger | None = None,
@@ -1426,6 +1428,7 @@ class FullHatchPlanner:
         self.capacity_read_retries = max(1, capacity_read_retries)
         self.cave_recenter_checks = max(1, cave_recenter_checks)
         self.capacity_snapshots = capacity_snapshots
+        self.parent_stats_snapshots = parent_stats_snapshots
         self.stage_scoped_scan = bool(stage_scoped_scan)
         if standalone_stage is not None and standalone_stage not in STANDALONE_STAGES:
             raise ValueError(f"unsupported standalone hatch stage: {standalone_stage}")
@@ -2444,6 +2447,7 @@ class FullHatchPlanner:
                 reference_width=self.reference_width,
                 rule=ATTACK_RULE,
                 stat_guards=self.stat_upgrade_guards,
+                parent_stats_snapshots=self.parent_stats_snapshots,
                 logger=self.logger,
             )
             return
@@ -2458,6 +2462,7 @@ class FullHatchPlanner:
             select_sort_header=select_sort_feature.SORT_HP,
             select_sort_menu_point=(650.0, 501.0),
             stat_guards=self.stat_upgrade_guards,
+            parent_stats_snapshots=self.parent_stats_snapshots,
             logger=self.logger,
         )
 

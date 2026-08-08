@@ -13,7 +13,8 @@ from collections.abc import Sequence
 
 from .digits import DigitReader
 from .models import Detection, Frame, Target
-from .nest_readout import read_attack_parents
+from .nest_readout import ATTACK_PARENT_REGIONS, read_attack_parents
+from .stalls import ParentStatsSnapshot
 
 NEST_TITLE = "hatch_nest_title"
 SELECT_TITLE = "hatch_select_title"
@@ -48,6 +49,7 @@ class ParentOpenTestPlanner:
         reference_width: float = 900.0,
         left_parent_point: tuple[float, float] = (264.0, 407.0),
         attack_header_point: tuple[float, float] = (217.0, 166.0),
+        parent_stats_snapshots: ParentStatsSnapshot | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
         if reference_width <= 0:
@@ -56,10 +58,12 @@ class ParentOpenTestPlanner:
         self.reference_width = reference_width
         self.left_parent_point = left_parent_point
         self.attack_header_point = attack_header_point
+        self.parent_stats_snapshots = parent_stats_snapshots
         self.logger = logger or logging.getLogger("dino_bot")
         self._stage = "start"
         self._issued = False
         self._complete = False
+        self._parent_read_failures = 0
 
     def last_stage(self) -> str:
         return self._stage
@@ -102,9 +106,20 @@ class ParentOpenTestPlanner:
 
         parents = read_attack_parents(frame.image, self.reader)
         if parents is None:
+            self._parent_read_failures += 1
             self._stage = "parent_stats_unreadable"
+            if self.parent_stats_snapshots is not None:
+                self.parent_stats_snapshots.capture(
+                    frame,
+                    self.reader,
+                    ATTACK_PARENT_REGIONS,
+                    stage=self._stage,
+                    side="left",
+                    attempts=self._parent_read_failures,
+                )
             self.logger.warning("Hatch parent test | parent stats unreadable; refusing tap")
             return None
+        self._parent_read_failures = 0
 
         left, right = parents
         self.logger.info(

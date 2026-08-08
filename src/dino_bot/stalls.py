@@ -21,12 +21,33 @@ import time
 from collections.abc import Callable, Sequence
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 import cv2
 
 from .cull import CapacityRead
-from .models import Detection, Frame, utc_now
+from .models import Detection, Frame, Image, utc_now
+
+
+class DigitEvidenceReader(Protocol):
+    """Small part of ``DigitReader`` needed for failure evidence."""
+
+    def read(self, image: Image) -> str: ...
+
+
+class ParentStatsSnapshot(Protocol):
+    """Writes evidence when a parent stat read is not trustworthy."""
+
+    def capture(
+        self,
+        frame: Frame,
+        reader: DigitEvidenceReader,
+        regions: Sequence[Sequence[tuple[float, float, float, float]]],
+        *,
+        stage: str,
+        side: str,
+        attempts: int,
+    ) -> Path | None: ...
 
 
 class _SnapshotWriter:
@@ -228,6 +249,121 @@ class CapacitySnapshotWriter(_SnapshotWriter):
             "Hatch cave | capacity unreadable | reason=%s | glyphs=%r | saved %s",
             read.reason,
             read.text,
+            path.name,
+        )
+        return path
+
+
+PARENT_STAT_NAMES = ("hp", "attack", "speed")
+PARENT_STATS_ZOOM = 8
+
+
+class ParentStatsSnapshotWriter(_SnapshotWriter):
+    """Keep the frame and every parent-stat crop behind a failed read.
+
+    The parent reader deliberately fails closed, but historically discarded
+    the only useful debugging information: which crop was empty or produced
+    an uncertain glyph.  This writer stores both the original frame and
+    enlarged raw/binarized crops so new evidence can be used to tune the
+    regions and digit templates offline.
+    """
+
+    prefix = "parent-stats"
+
+    @staticmethod
+    def _crop(frame: Frame, region: tuple[float, float, float, float]) -> Image:
+        scale = frame.width / 900.0
+        x0, y0, x1, y1 = (round(value * scale) for value in region)
+        x0 = max(0, min(frame.width, x0))
+        x1 = max(x0, min(frame.width, x1))
+        y0 = max(0, min(frame.height, y0))
+        y1 = max(y0, min(frame.height, y1))
+        return frame.image[y0:y1, x0:x1]
+
+    @staticmethod
+    def _zoom(image: Image) -> Image:
+        if image.size == 0:
+            return image
+        return cv2.resize(
+            image,
+            None,
+            fx=PARENT_STATS_ZOOM,
+            fy=PARENT_STATS_ZOOM,
+            interpolation=cv2.INTER_NEAREST,
+        )
+
+    @staticmethod
+    def _binary(image: Image) -> Image:
+        if image.size == 0:
+            return image
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == 3 else image
+        _, binary = cv2.threshold(gray, 110, 255, cv2.THRESH_BINARY_INV)
+        return ParentStatsSnapshotWriter._zoom(binary)
+
+    def capture(
+        self,
+        frame: Frame,
+        reader: DigitEvidenceReader,
+        regions: Sequence[Sequence[tuple[float, float, float, float]]],
+        *,
+        stage: str,
+        side: str,
+        attempts: int,
+    ) -> Path | None:
+        """Write one failure sample, or ``None`` when rate limited."""
+
+        moment = self.clock()
+        if self._throttled(moment):
+            return None
+
+        readings: list[dict[str, Any]] = []
+        companions: dict[str, Image] = {}
+        for parent_index, parent_regions in enumerate(regions):
+            parent_name = "left" if parent_index == 0 else "right"
+            for stat_name, region in zip(
+                PARENT_STAT_NAMES,
+                parent_regions,
+                strict=False,
+            ):
+                crop = self._crop(frame, region)
+                text = reader.read(crop) if crop.size else ""
+                key = f"{parent_name}-{stat_name}"
+                companions[key] = self._zoom(crop)
+                companions[f"{key}-binary"] = self._binary(crop)
+                readings.append(
+                    {
+                        "parent": parent_name,
+                        "stat": stat_name,
+                        "region_reference": list(region),
+                        "raw_glyphs": text,
+                        "value": int(text) if text.isdigit() else None,
+                        "readable": bool(text) and text.isdigit(),
+                    }
+                )
+
+        path = self._write(
+            frame,
+            {
+                "reason": "parent_stats_unreadable",
+                "stage": stage,
+                "failed_side": side,
+                "attempts": attempts,
+                "reference_width": 900,
+                "readings": readings,
+            },
+            extra_images=companions,
+        )
+        if path is None:
+            return None
+
+        self._last_written = moment
+        self._prune()
+        self.logger.warning(
+            "Hatch stats | parent stats unreadable | stage=%s | side=%s"
+            " | attempts=%d | saved %s",
+            stage,
+            side,
+            attempts,
             path.name,
         )
         return path
