@@ -53,6 +53,14 @@ class BotState(StrEnum):
     STOPPED = "stopped"
 
 
+_GAME_RESTART_AFTER_SUCCESS: dict[str, tuple[str, str]] = {
+    "duplicate_login_close_button": (
+        "duplicate login dialog closed",
+        "duplicate_login",
+    ),
+}
+
+
 @dataclass(slots=True)
 class BotContext:
     capture_provider: CaptureProvider
@@ -577,14 +585,15 @@ class VerifyState:
             context.inert_target = None
             context.escalate_to_back = False
         if result.success:
+            target_type = context.target.type
             on_action_success = getattr(context.planner, "on_action_success", None)
             if callable(on_action_success):
-                on_action_success(context.target.type)
+                on_action_success(target_type)
             # A confirmed hunt is the only thing the stall watchdog accepts as
             # progress; everything else on screen can stay unchanged for a
             # quarter of an hour while the bot produces nothing. It also ends
             # the startup phase for detectors that only apply during launch.
-            if context.target.type == getattr(
+            if target_type == getattr(
                 context.planner, "completion_type", None
             ):
                 for component in (
@@ -595,13 +604,33 @@ class VerifyState:
                     if callable(on_hunt_completed):
                         on_hunt_completed()
             context.logger.info("Verify | Success | %s", result.reason)
-            if context.target.type in context.cycle_complete_targets:
+            if target_type in context.cycle_complete_targets:
                 context.cycle_count += 1
                 context.logger.info(
                     "Workflow | completed cycle %d/%s",
                     context.cycle_count,
                     context.max_cycles or "unlimited",
                 )
+            restart_reason = _GAME_RESTART_AFTER_SUCCESS.get(target_type)
+            if restart_reason is not None:
+                recovery = context.runtime_recovery
+                if recovery is None:
+                    context.logger.error(
+                        "Recovery | cannot restart after %s; recovery is disabled",
+                        target_type,
+                    )
+                elif recovery.request_restart(
+                    restart_reason[0],
+                    reason_key=restart_reason[1],
+                    bypass_cooldown=True,
+                ):
+                    _reset_after_runtime_recovery(context)
+                    return BotState.IDLE
+                else:
+                    context.logger.error(
+                        "Recovery | restart failed after verified %s",
+                        target_type,
+                    )
             context.attempt = 0
             context.attempt_target_type = None
             context.frame = after

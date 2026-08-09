@@ -1991,6 +1991,65 @@ def test_engine_rejects_manual_game_restart_without_recovery() -> None:
     assert not BotEngine(context).request_game_restart()
 
 
+def test_engine_restarts_game_after_closing_duplicate_login_dialog() -> None:
+    class DuplicateLoginRecovery:
+        def __init__(self) -> None:
+            self.requests: list[tuple[str, str, bool]] = []
+
+        def observe(self, frame: Frame) -> bool:
+            return False
+
+        def request_restart(
+            self,
+            reason: str,
+            *,
+            reason_key: str,
+            bypass_cooldown: bool = False,
+        ) -> bool:
+            self.requests.append((reason, reason_key, bypass_cooldown))
+            return True
+
+    target_type = "duplicate_login_close_button"
+    detection = make_detection(type=target_type)
+    target = Target(
+        target_type,
+        detection.x,
+        detection.y,
+        detection.confidence,
+        detection,
+    )
+    driver = RecordingActionDriver()
+    recovery = DuplicateLoginRecovery()
+    context = BotContext(
+        capture_provider=SequenceCapture([make_frame(255, 2)]),
+        detector=PixelDetector(),
+        planner=TargetPlanner((target_type,)),
+        action_driver=driver,
+        verifier=TargetChangedVerifier(),
+        observer=RuntimeMode(),
+        logger=logging.getLogger("test_duplicate_login_restart"),
+        click_delay_ms=0,
+        runtime_recovery=recovery,
+        state=BotState.ACTION,
+        frame=make_frame(10, 1),
+        detections=[detection],
+        target=target,
+        action=ActionCommand.tap(target.x, target.y),
+    )
+    engine = BotEngine(context)
+
+    assert engine.step() == BotState.VERIFY
+    assert len(driver.actions) == 1
+    assert recovery.requests == []
+
+    assert engine.step() == BotState.IDLE
+    assert recovery.requests == [
+        ("duplicate login dialog closed", "duplicate_login", True)
+    ]
+    assert context.target is None
+    assert context.action is None
+
+
 def test_engine_clears_transient_state_after_black_screen_recovery() -> None:
     class ImmediateRecovery:
         def observe(self, frame: Frame) -> bool:
