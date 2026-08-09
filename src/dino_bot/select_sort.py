@@ -13,8 +13,8 @@ from collections.abc import Mapping, Sequence
 
 from .digits import DigitReader
 from .models import Detection, Frame, Target
-from .nest_readout import read_candidate_rows
-from .nests import DEFAULT_STAT_UPGRADE_GUARDS, StatUpgradeGuard
+from .nest_readout import ConsecutiveReadConsensus, read_candidate_rows
+from .nests import DEFAULT_STAT_UPGRADE_GUARDS, Stats, StatUpgradeGuard
 
 SELECT_TITLE = "hatch_select_title"
 TAG_HEADER = "hatch_select_tag_header"
@@ -74,6 +74,7 @@ class SelectSortTestPlanner:
         primary_attr: str = "attack",
         sort_label: str = "attack",
         stat_guards: Mapping[str, StatUpgradeGuard] = DEFAULT_STAT_UPGRADE_GUARDS,
+        minimum_consistent_stat_reads: int = 1,
         logger: logging.Logger | None = None,
     ) -> None:
         if reference_width <= 0:
@@ -89,6 +90,10 @@ class SelectSortTestPlanner:
         self.primary_attr = primary_attr
         self.sort_label = sort_label
         self.stat_guards = dict(stat_guards)
+        self._row_consensus = ConsecutiveReadConsensus[tuple[Stats, ...]](
+            minimum_consistent_stat_reads
+        )
+        self._confirmed_rows: tuple[Stats, ...] = ()
         self.logger = logger or logging.getLogger("dino_bot")
         self._stage = "start"
         self._tag_ready = False
@@ -102,6 +107,9 @@ class SelectSortTestPlanner:
     def is_complete(self) -> bool:
         return self._complete
 
+    def confirmed_rows(self) -> tuple[Stats, ...]:
+        return self._confirmed_rows
+
     def on_action_success(self, target_type: str) -> None:
         if target_type == TAG_ALL:
             self._tag_ready = True
@@ -109,6 +117,8 @@ class SelectSortTestPlanner:
             self._sort_ready = True
         elif target_type == SORT_DIRECTION:
             self._direction_taps += 1
+            self._row_consensus.reset()
+            self._confirmed_rows = ()
 
     def on_action_failure(self, target_type: str) -> None:
         return None
@@ -179,7 +189,25 @@ class SelectSortTestPlanner:
             max_rows=9,
             stat_guards=self.stat_guards,
         )
-        values = [int(getattr(row, self.primary_attr)) for row in rows]
+        confirmed_rows = self._row_consensus.observe(tuple(rows) if rows else None)
+        if confirmed_rows is None:
+            if rows:
+                self._stage = "stats_confirming"
+                self.logger.debug(
+                    "Hatch OCR | candidate confirmation %d/%d | rows=%s",
+                    self._row_consensus.count,
+                    self._row_consensus.minimum_reads,
+                    [int(getattr(row, self.primary_attr)) for row in rows],
+                )
+            else:
+                self._stage = "direction_unreadable"
+                self.logger.warning(
+                    "Hatch filter | cannot read %s rows",
+                    self.sort_label,
+                )
+            return None
+        self._confirmed_rows = confirmed_rows
+        values = [int(getattr(row, self.primary_attr)) for row in confirmed_rows]
         direction = self._descending_direction(values)
         if direction is None:
             self._stage = "direction_unreadable"

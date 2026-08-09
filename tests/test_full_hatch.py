@@ -798,25 +798,25 @@ def test_full_flow_collects_all_nest_eggs_before_empty_rescan_wait() -> None:
     assert target is not None and target.type == CAVE_SWIPE
 
 
-def test_full_hatch_accumulates_ten_claims_before_management() -> None:
+def test_full_hatch_accumulates_eight_hatches_before_management() -> None:
     planner = FullHatchPlanner(
         DigitReader(GLYPHS),
         egg_pile_point=(450, 1330),
-        batch_hatch_count=12,
+        batch_hatch_count=8,
     )
-    planner._hatch_child.hatched = 4
+    planner._hatch_child.hatched = 2
     planner.on_action_success(hatch.CLOSE_BUTTON)
     assert planner._stage == "open_nest"
     assert planner._collect_only_after_empty
-    assert planner._batch_hatched == 4
+    assert planner._batch_hatched == 2
 
     planner._stage = "hatch"
     planner._child = planner._new_hatch()
-    planner._hatch_child.hatched = 8
+    planner._hatch_child.hatched = 6
     planner.on_action_success(hatch.CLOSE_BUTTON)
     assert planner._stage == "open_nest"
     assert not planner._collect_only_after_empty
-    assert planner._batch_hatched == 12
+    assert planner._batch_hatched == 8
     assert planner._batch_hunt_ready
 
 
@@ -1370,7 +1370,7 @@ def test_full_flow_blind_screen_uses_bounded_back_then_requires_home_proof() -> 
     assert target is not None and target.type == CAVE_SWIPE
 
 
-def test_cave_estimate_triggers_screening_before_batch_threshold() -> None:
+def test_cave_warning_does_not_repeat_screening_before_cull_threshold() -> None:
     planner = FullHatchPlanner(
         DigitReader(GLYPHS),
         egg_pile_point=(450, 1330),
@@ -1381,7 +1381,23 @@ def test_cave_estimate_triggers_screening_before_batch_threshold() -> None:
     planner._cave_population = 290
     planner._hatch_child.hatched = 12
     planner.on_action_success(hatch.CLOSE_BUTTON)
-    # 估算 290+12=302 >= 300:即使批次 12/48 未滿也觸發篩選。
+    # 估算 302 已越過 300 預警線，但仍低於 350 淘汰線；這一小批
+    # 只收蛋，避免下一輪 1~2 顆又把四種篩選全部重跑一次。
+    assert planner._management_pending is False
+    assert planner._collect_only_after_empty is True
+
+
+def test_cave_estimate_triggers_screening_at_cull_threshold() -> None:
+    planner = FullHatchPlanner(
+        DigitReader(GLYPHS),
+        egg_pile_point=(450, 1330),
+        batch_hatch_count=48,
+    )
+    planner._child = planner._new_hatch()
+    planner._start_hatch_cycle()
+    planner._cave_population = 340
+    planner._hatch_child.hatched = 12
+    planner.on_action_success(hatch.CLOSE_BUTTON)
     assert planner._management_pending is True
     assert planner._collect_only_after_empty is False
 

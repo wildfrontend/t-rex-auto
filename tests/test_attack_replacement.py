@@ -155,6 +155,84 @@ def test_unreadable_parent_stats_collects_rate_limited_evidence() -> None:
     assert evidence.calls == [("parent_stats_unreadable", "left", 1)]
 
 
+def test_parent_stats_require_two_matching_frames_before_a_tap() -> None:
+    reader = EncodedReader()
+    frame = nest_frame(reader, Stats(2920, 3, 1), Stats(2920, 3, 1))
+    planner = AttackReplacementTestPlanner(
+        reader,  # type: ignore[arg-type]
+        minimum_consistent_stat_reads=2,
+        stat_read_retries=3,
+    )
+    finish_main_filter(planner)
+
+    assert planner.choose(frame, nest_detections()) is None
+    target = planner.choose(frame, nest_detections())
+
+    assert target is not None and target.type == attack_replacement.PARENT_LEFT
+
+
+def test_parent_stats_recalibrate_when_consecutive_frames_disagree() -> None:
+    reader = EncodedReader()
+    first = nest_frame(reader, Stats(2920, 3, 1), Stats(2920, 3, 1))
+    corrected = nest_frame(reader, Stats(2930, 3, 1), Stats(2930, 3, 1))
+    planner = AttackReplacementTestPlanner(
+        reader,  # type: ignore[arg-type]
+        minimum_consistent_stat_reads=2,
+        stat_read_retries=3,
+    )
+    finish_main_filter(planner)
+
+    assert planner.choose(first, nest_detections()) is None
+    assert planner.choose(corrected, nest_detections()) is None
+    target = planner.choose(corrected, nest_detections())
+
+    assert target is not None and target.type == attack_replacement.PARENT_LEFT
+
+
+def test_invalid_hp_exhausts_calibration_without_a_tap() -> None:
+    reader = EncodedReader()
+    evidence = SnapshotCollector()
+    invalid = nest_frame(reader, Stats(2926, 3, 1), Stats(2920, 3, 1))
+    planner = AttackReplacementTestPlanner(
+        reader,  # type: ignore[arg-type]
+        minimum_consistent_stat_reads=2,
+        stat_read_retries=3,
+        parent_stats_snapshots=evidence,  # type: ignore[arg-type]
+    )
+    finish_main_filter(planner)
+
+    assert planner.choose(invalid, nest_detections()) is None
+    assert planner.choose(invalid, nest_detections()) is None
+    assert planner.choose(invalid, nest_detections()) is None
+    assert planner.last_stage() == "parent_stats_unreadable"
+    assert evidence.calls == [
+        ("parent_stats_calibrating", "left", 1),
+        ("parent_stats_calibrating", "left", 2),
+        ("parent_stats_unreadable", "left", 3),
+    ]
+
+
+def test_candidate_stats_require_two_matching_frames_before_a_tap() -> None:
+    reader = EncodedReader()
+    parent_frame = nest_frame(reader, Stats(30, 276, 1), Stats(30, 276, 1))
+    candidates = select_frame(reader, [Stats(30, 279, 1), Stats(30, 278, 1)])
+    planner = AttackReplacementTestPlanner(
+        reader,  # type: ignore[arg-type]
+        minimum_consistent_stat_reads=2,
+        stat_read_retries=3,
+    )
+    finish_main_filter(planner)
+    assert planner.choose(parent_frame, nest_detections()) is None
+    parent = planner.choose(parent_frame, nest_detections())
+    assert parent is not None
+    planner.on_action_success(parent.type)
+
+    assert planner.choose(candidates, select_detections()) is None
+    candidate = planner.choose(candidates, select_detections())
+
+    assert candidate is not None and candidate.type == attack_replacement.CANDIDATE_ROW
+
+
 def test_equal_attack_keeps_both_parents_and_closes_each_list() -> None:
     reader = EncodedReader()
     parent_frame = nest_frame(reader, Stats(30, 282, 1), Stats(30, 282, 1))

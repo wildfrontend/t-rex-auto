@@ -424,6 +424,8 @@ def _create_hatch_engine(
             rescan_interval_seconds=hatch.rescan_interval_seconds,
             batch_hatch_count=hatch.batch_hatch_count,
             stat_upgrade_guards=hatch.stat_upgrade_guards,
+            minimum_consistent_stat_reads=hatch.stat_consistent_reads,
+            stat_read_retries=hatch.stat_read_retries,
             boost_inventory=hatch_inventory,
             require_home_anchor=hatch.require_home_anchor,
             home_failure_limit=hatch.home_failure_limit,
@@ -458,6 +460,8 @@ def _create_hatch_engine(
             reference_width=hatch.reference_width,
             rule=HP_RULE,
             stat_guards=hatch.stat_upgrade_guards,
+            minimum_consistent_stat_reads=hatch.stat_consistent_reads,
+            stat_read_retries=hatch.stat_read_retries,
             nest_filter_option=nest_filter_feature.TAG_HP,
             nest_filter_header=nest_filter_feature.TAG_HDR_HP,
             select_sort_option=select_sort_feature.SORT_HP,
@@ -471,6 +475,8 @@ def _create_hatch_engine(
             DigitReader(hatch.manifest.parent / "digits"),
             reference_width=hatch.reference_width,
             stat_guards=hatch.stat_upgrade_guards,
+            minimum_consistent_stat_reads=hatch.stat_consistent_reads,
+            stat_read_retries=hatch.stat_read_retries,
             parent_stats_snapshots=parent_stats_snapshots,
             logger=logger,
         )
@@ -486,6 +492,7 @@ def _create_hatch_engine(
             DigitReader(hatch.manifest.parent / "digits"),
             reference_width=hatch.reference_width,
             stat_guards=hatch.stat_upgrade_guards,
+            minimum_consistent_stat_reads=hatch.stat_consistent_reads,
             logger=logger,
         )
     elif filter_test:

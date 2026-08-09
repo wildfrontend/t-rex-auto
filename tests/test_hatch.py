@@ -4,9 +4,10 @@ import json
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from dino_bot import hatch
-from dino_bot.config import load_config
+from dino_bot.config import ConfigError, load_config
 from dino_bot.hatch import (
     HatchPlanner,
     parse_hatch_timer_text,
@@ -200,15 +201,18 @@ def test_hatch_config_defaults_load(tmp_path) -> None:
     config_path.write_text("{}", encoding="utf-8")
     config = load_config(config_path)
     assert config.hatch.rescan_interval_seconds == 600
-    assert config.hatch.batch_hatch_count == 12
+    assert config.hatch.batch_hatch_count == 8
     assert config.hatch.egg_pile == (450.0, 1330.0)
     assert config.hatch.max_scrolls == 0
     assert config.hatch.manifest == tmp_path / "assets/hatch/manifest.json"
     assert config.hatch.stat_upgrade_guards["hp"].min_delta == 10
     assert config.hatch.stat_upgrade_guards["hp"].max_delta == 30
+    assert config.hatch.stat_upgrade_guards["hp"].multiple_of == 10
     assert config.hatch.stat_upgrade_guards["attack"].max_delta == 3
     assert config.hatch.stat_upgrade_guards["speed"].min_value == 1
     assert config.hatch.stat_upgrade_guards["speed"].max_value == 150
+    assert config.hatch.stat_consistent_reads == 2
+    assert config.hatch.stat_read_retries == 3
 
 
 def test_hatch_config_overrides(tmp_path) -> None:
@@ -237,3 +241,25 @@ def test_hatch_config_allows_future_stat_ranges(tmp_path) -> None:
     assert config.hatch.stat_upgrade_guards["hp"].max_delta == 40
     assert config.hatch.stat_upgrade_guards["attack"].max_delta == 4
     assert config.hatch.stat_upgrade_guards["speed"].max_value == 180
+
+
+def test_hatch_config_rejects_invalid_stat_calibration_settings(tmp_path) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        '{"hatch": {"stat_consistent_reads": 3, "stat_read_retries": 2}}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="stat_read_retries"):
+        load_config(config_path)
+
+
+def test_hatch_config_rejects_zero_stat_multiple(tmp_path) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        '{"hatch": {"stat_upgrade_guards": {"hp": {"multiple_of": 0}}}}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="multiple_of"):
+        load_config(config_path)

@@ -24,11 +24,13 @@ def make_frame(attacks: tuple[int, ...] = ()) -> tuple[Frame, EncodedReader]:
             (x0, y0 + index * SELECT_ROW_PITCH, x1, y1 + index * SELECT_ROW_PITCH)
             for x0, y0, x1, y1 in SELECT_FIRST_ROW_REGIONS
         )
-        for region, value in zip(regions, (1, attack, 1), strict=True):
-            code = codes.get(value, 1)
+        for stat_index, (region, value) in enumerate(
+            zip(regions, (10, attack, 1), strict=True)
+        ):
+            code = 2 if stat_index == 0 else codes.get(value, 1)
             x0, y0, x1, y1 = map(int, region)
             image[y0:y1, x0:x1] = code
-    reader_values = {1: 1, **{code: value for value, code in codes.items()}}
+    reader_values = {1: 1, 2: 10, **{code: value for value, code in codes.items()}}
     return Frame(image), EncodedReader(reader_values)
 
 

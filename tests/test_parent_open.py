@@ -9,7 +9,7 @@ from dino_bot.parent_open import ParentOpenTestPlanner
 
 
 class EncodedReader:
-    VALUES = {1: 30, 2: 282, 3: 1, 4: 223, 5: 276}
+    VALUES = {1: 30, 2: 282, 3: 1, 4: 2230, 5: 276}
 
     def read_int(self, image: np.ndarray) -> int | None:
         if not image.size:

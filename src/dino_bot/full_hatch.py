@@ -1394,8 +1394,10 @@ class FullHatchPlanner:
         scroll_duration_ms: int = 400,
         max_scrolls: int = 0,
         rescan_interval_seconds: float = 600.0,
-        batch_hatch_count: int = 12,
+        batch_hatch_count: int = 8,
         stat_upgrade_guards: Mapping[str, StatUpgradeGuard] = DEFAULT_STAT_UPGRADE_GUARDS,
+        minimum_consistent_stat_reads: int = 1,
+        stat_read_retries: int = 1,
         boost_inventory: HatchBoostInventoryStore | None = None,
         require_home_anchor: bool = True,
         home_failure_limit: int = 3,
@@ -1420,7 +1422,17 @@ class FullHatchPlanner:
         self.logger = logger or logging.getLogger("dino_bot")
         self.cull_threshold = cull_threshold
         self.stat_upgrade_guards = dict(stat_upgrade_guards)
+        self.minimum_consistent_stat_reads = minimum_consistent_stat_reads
+        self.stat_read_retries = stat_read_retries
         self.cave_screen_trigger = max(1, cave_screen_trigger)
+        # A warning threshold below the actual cull line must not repeatedly
+        # launch the destructive screening pipeline.  Once the cave estimate
+        # has crossed that warning it stays crossed after every no-op cull,
+        # which used to rerun all four nest stages after each tiny hatch batch.
+        self._capacity_management_trigger = max(
+            self.cave_screen_trigger,
+            self.cull_threshold,
+        )
         self.batch_hatch_count = max(1, batch_hatch_count)
         self.boost_inventory = boost_inventory
         self.cave_safe_margin = max(0, cave_safe_margin)
@@ -1477,8 +1489,8 @@ class FullHatchPlanner:
         self._boost_confirmation_pending = False
         self._boost_revisit_pending = False
         self._collect_done_for_cycle = False
-        # 洞穴容量估算:上次實讀 + 之後累積孵化,逼近 cave_screen_trigger
-        # 時觸發篩選+淘汰,批次門檻只作保底。
+        # 洞穴容量估算:上次實讀 + 之後累積孵化。預警值可以低於淘汰
+        # 線，但完整篩選只在批次完成或確實達到淘汰線時執行。
         self._cave_population: int | None = None
         self._hatched_since_cave_read = 0
         self._navigation_failures: dict[tuple[str, str], int] = {}
@@ -1714,7 +1726,7 @@ class FullHatchPlanner:
                     )
                     capacity_trigger = (
                         estimate is not None
-                        and estimate >= self.cave_screen_trigger
+                        and estimate >= self._capacity_management_trigger
                     )
                     batch_complete = (
                         self._batch_hatched >= self.batch_hatch_count
@@ -2513,6 +2525,8 @@ class FullHatchPlanner:
                 reference_width=self.reference_width,
                 rule=ATTACK_RULE,
                 stat_guards=self.stat_upgrade_guards,
+                minimum_consistent_stat_reads=self.minimum_consistent_stat_reads,
+                stat_read_retries=self.stat_read_retries,
                 parent_stats_snapshots=self.parent_stats_snapshots,
                 logger=self.logger,
             )
@@ -2528,6 +2542,8 @@ class FullHatchPlanner:
             select_sort_header=select_sort_feature.SORT_HP,
             select_sort_menu_point=(650.0, 501.0),
             stat_guards=self.stat_upgrade_guards,
+            minimum_consistent_stat_reads=self.minimum_consistent_stat_reads,
+            stat_read_retries=self.stat_read_retries,
             parent_stats_snapshots=self.parent_stats_snapshots,
             logger=self.logger,
         )

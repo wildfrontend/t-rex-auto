@@ -159,18 +159,23 @@ class HatchConfig:
     # the bot re-enters to check, per the plan's rescan rule.
     rescan_interval_seconds: float = 600.0
     # Keep a growth batch together before running nest management/hunting.
-    batch_hatch_count: int = 12
+    batch_hatch_count: int = 8
     # Fixed game stat increments are used as a final OCR/action guard. Update
     # these ranges here when a later game version expands them.
     stat_upgrade_guards: dict[str, StatUpgradeGuard] = field(
         default_factory=default_stat_upgrade_guards
     )
+    # OCR values must repeat across complete frames before any parent or
+    # candidate tap is allowed. Retries include the initial observations.
+    stat_consistent_reads: int = 2
+    stat_read_retries: int = 3
     require_home_anchor: bool = True
     home_failure_limit: int = 3
     home_backoff_seconds: float = 30.0
     # Phase C: cull only when the cave-view N/350 readout exceeds this.
     cull_threshold: int = 350
-    # 洞穴容量估算(上次實讀+累積孵化)達到此值就觸發篩選+淘汰。
+    # 洞穴容量預警值。完整篩選仍會等到 batch_hatch_count 或實際
+    # cull_threshold，避免預警線以上每孵少量蛋就重跑整套流程。
     cave_screen_trigger: int = 300
     # Slow machines may need several complete detect cycles before the HUD is
     # rendered sharply enough for the N/350 reader.
@@ -343,7 +348,9 @@ def _stat_upgrade_guards(data: dict[str, Any]) -> dict[str, StatUpgradeGuard]:
             "hatch.stat_upgrade_guards contains unknown stats: "
             + ", ".join(sorted(str(item) for item in unknown_stats))
         )
-    allowed_keys = frozenset({"min_delta", "max_delta", "min_value", "max_value"})
+    allowed_keys = frozenset(
+        {"min_delta", "max_delta", "min_value", "max_value", "multiple_of"}
+    )
     for stat, entry in raw.items():
         if not isinstance(entry, dict):
             raise ConfigError(f"hatch.stat_upgrade_guards.{stat} must be a JSON object")
@@ -642,8 +649,10 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
             rescan_interval_seconds=float(
                 hatch_data.get("rescan_interval_seconds", 600)
             ),
-            batch_hatch_count=int(hatch_data.get("batch_hatch_count", 12)),
+            batch_hatch_count=int(hatch_data.get("batch_hatch_count", 8)),
             stat_upgrade_guards=_stat_upgrade_guards(hatch_data),
+            stat_consistent_reads=int(hatch_data.get("stat_consistent_reads", 2)),
+            stat_read_retries=int(hatch_data.get("stat_read_retries", 3)),
             require_home_anchor=bool(hatch_data.get("require_home_anchor", True)),
             home_failure_limit=int(hatch_data.get("home_failure_limit", 3)),
             home_backoff_seconds=float(hatch_data.get("home_backoff_seconds", 30)),
@@ -758,10 +767,20 @@ def _validate(config: AppConfig) -> None:
             "hatch.stat_upgrade_guards must define exactly hp, attack, and speed"
         )
     for stat, guard in config.hatch.stat_upgrade_guards.items():
-        for name in ("min_delta", "max_delta", "min_value", "max_value"):
+        for name in (
+            "min_delta",
+            "max_delta",
+            "min_value",
+            "max_value",
+            "multiple_of",
+        ):
             value = getattr(guard, name)
             if value is not None and value < 0:
                 raise ConfigError(f"hatch.stat_upgrade_guards.{stat}.{name} cannot be negative")
+        if guard.multiple_of == 0:
+            raise ConfigError(
+                f"hatch.stat_upgrade_guards.{stat}.multiple_of must be greater than zero"
+            )
         if (
             guard.min_delta is not None
             and guard.max_delta is not None
@@ -778,6 +797,12 @@ def _validate(config: AppConfig) -> None:
             raise ConfigError(
                 f"hatch.stat_upgrade_guards.{stat}.min_value cannot exceed max_value"
             )
+    if config.hatch.stat_consistent_reads <= 0:
+        raise ConfigError("hatch.stat_consistent_reads must be greater than zero")
+    if config.hatch.stat_read_retries < config.hatch.stat_consistent_reads:
+        raise ConfigError(
+            "hatch.stat_read_retries cannot be less than stat_consistent_reads"
+        )
     if config.hatch.cave_screen_trigger <= 0:
         raise ConfigError("hatch.cave_screen_trigger must be greater than zero")
     if config.hatch.capacity_read_retries <= 0:

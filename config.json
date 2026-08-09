@@ -234,12 +234,13 @@
     "activity": "com.unity3d.player.UnityPlayerActivity"
   },
   "hatch": {
-    "batch_hatch_count": 48,
+    "batch_hatch_count": 8,
     "cull_threshold": 350,
     "stat_upgrade_guards": {
       "hp": {
         "min_delta": 10,
-        "max_delta": 30
+        "max_delta": 30,
+        "multiple_of": 10
       },
       "attack": {
         "min_delta": 1,
@@ -250,6 +251,8 @@
         "max_value": 150
       }
     },
+    "stat_consistent_reads": 2,
+    "stat_read_retries": 3,
     "cave_screen_trigger": 300
   }
 }

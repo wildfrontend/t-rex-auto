@@ -19,9 +19,9 @@ from .models import Detection, Frame, Target
 from .nest_filter import NestTagFilterTestPlanner
 from .nest_readout import (
     ATTACK_PARENT_REGIONS,
+    ConsecutiveReadConsensus,
     SELECT_ROW_PITCH,
     read_attack_parents,
-    read_candidate_rows,
 )
 from .nests import (
     ATTACK_RULE,
@@ -97,11 +97,17 @@ class AttackReplacementTestPlanner:
         select_sort_header: str = select_sort_feature.SORT_HDR_ATTACK,
         select_sort_menu_point: tuple[float, float] = (649.0, 550.0),
         stat_guards: Mapping[str, StatUpgradeGuard] = DEFAULT_STAT_UPGRADE_GUARDS,
+        minimum_consistent_stat_reads: int = 1,
+        stat_read_retries: int = 1,
         parent_stats_snapshots: ParentStatsSnapshot | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
         if reference_width <= 0:
             raise ValueError("reference_width must be greater than zero")
+        if stat_read_retries < minimum_consistent_stat_reads:
+            raise ValueError(
+                "stat_read_retries cannot be less than minimum_consistent_stat_reads"
+            )
         self.reader = reader
         self.reference_width = reference_width
         self.parent_points = (left_parent_point, right_parent_point)
@@ -115,12 +121,17 @@ class AttackReplacementTestPlanner:
         self.select_sort_header = select_sort_header
         self.select_sort_menu_point = select_sort_menu_point
         self.stat_guards = dict(stat_guards)
+        self.minimum_consistent_stat_reads = minimum_consistent_stat_reads
+        self.stat_read_retries = stat_read_retries
         self.parent_stats_snapshots = parent_stats_snapshots
         self.logger = logger or logging.getLogger("dino_bot")
         self._stage = "filter_attack"
         self._side = 0
         self._current_parent: Stats | None = None
         self._parent_read_failures = 0
+        self._parent_consensus = ConsecutiveReadConsensus[
+            tuple[Stats, Stats]
+        ](minimum_consistent_stat_reads)
         self._filter_planner = NestTagFilterTestPlanner(
             reference_width=reference_width,
             target_label=rule.tag,
@@ -153,6 +164,7 @@ class AttackReplacementTestPlanner:
                 primary_attr=self.rule.primary,
                 sort_label=self.rule.sort_option,
                 stat_guards=self.stat_guards,
+                minimum_consistent_stat_reads=self.minimum_consistent_stat_reads,
                 logger=self.logger,
             )
             return
@@ -217,27 +229,53 @@ class AttackReplacementTestPlanner:
             self._stage = "target_filter_required"
             return None
 
-        parents = read_attack_parents(
+        observed_parents = read_attack_parents(
             frame.image,
             self.reader,
             stat_guards=self.stat_guards,
         )
+        parents = self._parent_consensus.observe(observed_parents)
         if parents is None:
             self._parent_read_failures += 1
-            self._stage = "parent_stats_unreadable"
-            if self.parent_stats_snapshots is not None:
+            exhausted = self._parent_read_failures >= self.stat_read_retries
+            evidence_stage = (
+                "parent_stats_unreadable" if exhausted else "parent_stats_calibrating"
+            )
+            if self.parent_stats_snapshots is not None and (
+                observed_parents is None or self._parent_read_failures > 1
+            ):
                 self.parent_stats_snapshots.capture(
                     frame,
                     self.reader,
                     ATTACK_PARENT_REGIONS,
-                    stage=self._stage,
+                    stage=evidence_stage,
                     side=self._side_name,
                     attempts=self._parent_read_failures,
                 )
-            self.logger.warning(
-                "Hatch %s | parent stats unreadable; refusing tap",
-                self.rule.tag,
-            )
+            if exhausted:
+                self._stage = "parent_stats_unreadable"
+                self.logger.warning(
+                    "Hatch %s | parent stats calibration exhausted %d/%d"
+                    " | refusing tap",
+                    self.rule.tag,
+                    self._parent_read_failures,
+                    self.stat_read_retries,
+                )
+            else:
+                self.logger.info(
+                    "Hatch OCR | parent calibration %d/%d"
+                    " | consistent=%d/%d | side=%s | observed=%s",
+                    self._parent_read_failures,
+                    self.stat_read_retries,
+                    self._parent_consensus.count,
+                    self.minimum_consistent_stat_reads,
+                    self._side_name,
+                    (
+                        [self._format_stats(item) for item in observed_parents]
+                        if observed_parents is not None
+                        else "invalid"
+                    ),
+                )
             return None
         self._parent_read_failures = 0
         self._current_parent = parents[self._side]
@@ -274,11 +312,7 @@ class AttackReplacementTestPlanner:
             return target
         if not self._select_planner.is_complete():
             if self._select_planner.last_stage() == "direction_unreadable":
-                plateau_rows = read_candidate_rows(
-                    frame.image,
-                    self.reader,
-                    stat_guards=self.stat_guards,
-                )
+                plateau_rows = list(self._select_planner.confirmed_rows())
                 if self._equal_parent_plateau(plateau_rows):
                     self.logger.info(
                         "Hatch %s | side=%s | equal %s plateau=%s"
@@ -291,11 +325,7 @@ class AttackReplacementTestPlanner:
                     return self._close_list(frame)
             return None
 
-        raw_rows = read_candidate_rows(
-            frame.image,
-            self.reader,
-            stat_guards=self.stat_guards,
-        )
+        raw_rows = list(self._select_planner.confirmed_rows())
         if not raw_rows:
             self._stage = "candidate_stats_unreadable"
             self.logger.warning(
@@ -395,6 +425,8 @@ class AttackReplacementTestPlanner:
         )
 
     def _advance_parent(self) -> None:
+        self._parent_consensus.reset()
+        self._parent_read_failures = 0
         if self._side == 0:
             self._side = 1
             self._current_parent = None

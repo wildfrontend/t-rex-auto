@@ -32,20 +32,22 @@ class StatUpgradeGuard:
     """Bounds used to reject impossible OCR readings and upgrades.
 
     ``min_delta``/``max_delta`` apply only when the stat is the round's
-    primary stat. ``min_value``/``max_value`` apply to every readout.
+    primary stat. ``min_value``/``max_value`` and ``multiple_of`` apply to
+    every readout.
     """
 
     min_delta: int | None = None
     max_delta: int | None = None
     min_value: int | None = None
     max_value: int | None = None
+    multiple_of: int | None = None
 
 
 def default_stat_upgrade_guards() -> dict[str, StatUpgradeGuard]:
     """Return the conservative stat rules used by the game today."""
 
     return {
-        "hp": StatUpgradeGuard(min_delta=10, max_delta=30),
+        "hp": StatUpgradeGuard(min_delta=10, max_delta=30, multiple_of=10),
         "attack": StatUpgradeGuard(min_delta=1, max_delta=3),
         "speed": StatUpgradeGuard(min_value=1, max_value=150),
     }
@@ -68,6 +70,9 @@ def stat_value_is_valid(
             return False
         if guard.max_value is not None and value > guard.max_value:
             return False
+        if guard.multiple_of is not None:
+            if guard.multiple_of <= 0 or value % guard.multiple_of != 0:
+                return False
     return True
 
 
