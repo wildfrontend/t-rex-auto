@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 import os
 from pathlib import Path
@@ -184,6 +185,17 @@ def test_dashboard_builds_noninteractive_runner_commands(tmp_path: Path) -> None
     assert "hatch-stage-cave" in cave
     assert "8765" in cave
     assert cave_after_switch[-2:] == ["-WaitForExistingSeconds", "20"]
+
+
+def test_windows_launch_keeps_live_output_in_the_bot_console() -> None:
+    source = inspect.getsource(DashboardController._launch)
+    windows_branch, non_windows_branch = source.split("        else:\n", 1)
+
+    assert 'if os.name == "nt"' in windows_branch
+    assert "stdout=" not in windows_branch
+    assert "stderr=" not in windows_branch
+    assert "stdout=stream" in non_windows_branch
+    assert "stderr=subprocess.STDOUT" in non_windows_branch
 
 
 def test_dashboard_builds_commands_for_the_selected_instance(tmp_path: Path) -> None:

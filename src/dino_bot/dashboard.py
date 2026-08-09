@@ -644,24 +644,16 @@ class DashboardController:
             creation_flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0) | getattr(
                 subprocess, "CREATE_NEW_PROCESS_GROUP", 0
             )
-            instance.logs_dir.mkdir(parents=True, exist_ok=True)
-            launch_name = f"dashboard-launch-{mode}"
-            if stage is not None:
-                launch_name += f"-{stage}"
-            launch_log = instance.logs_dir / f"{launch_name}.log"
-            with launch_log.open("ab") as stream:
-                subprocess.Popen(  # noqa: S603 - fixed local PowerShell runner and allowlist
-                    self._runner_command(
-                        mode,
-                        stage=stage,
-                        instance_id=instance.instance_id,
-                        wait_for_existing_seconds=wait_for_existing_seconds,
-                    ),
-                    cwd=self.runtime_root,
-                    creationflags=creation_flags,
-                    stdout=stream,
-                    stderr=subprocess.STDOUT,
-                )
+            subprocess.Popen(  # noqa: S603 - fixed local PowerShell runner and allowlist
+                self._runner_command(
+                    mode,
+                    stage=stage,
+                    instance_id=instance.instance_id,
+                    wait_for_existing_seconds=wait_for_existing_seconds,
+                ),
+                cwd=self.runtime_root,
+                creationflags=creation_flags,
+            )
         else:
             instance.logs_dir.mkdir(parents=True, exist_ok=True)
             launch_log = instance.logs_dir / f"dashboard-launch-{mode}.log"

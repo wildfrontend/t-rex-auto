@@ -76,7 +76,11 @@ def test_dashboard_entrypoint_uses_loopback_web_service() -> None:
     )
 
     assert "run-dashboard-windows.ps1" in command
+    assert "title Dino Mutant Bot - Dashboard" in command
     assert 'set "dashboard_port=8780"' in command
+    assert 'set "runtime_ready=0"' in command
+    assert "import encodings, numpy, cv2, mss, win32api" in command
+    assert "Windows runtime is missing or damaged" in command
     assert '"--server-only"' not in command.lower()
     assert "Remove-LegacyLoginStartup" in runner
     assert "Dino Dashboard Server.cmd" in runner

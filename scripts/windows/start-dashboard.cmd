@@ -1,6 +1,6 @@
 @echo off
 setlocal
-title 猛龍計畫 - Dashboard
+title Dino Mutant Bot - Dashboard
 
 if /I "%~1"=="uninstall" (
   set "uninstaller=%~dp0app\scripts\uninstall-windows.ps1"
@@ -30,13 +30,18 @@ if not exist "%dashboard_runner%" (
 
 set "runtime_python=%~dp0python\python.exe"
 set "runtime_installer=%~dp0app\scripts\install-windows-runtime.ps1"
-if not exist "%runtime_python%" (
+set "runtime_ready=0"
+if exist "%runtime_python%" (
+  "%runtime_python%" -I -c "import encodings, numpy, cv2, mss, win32api" >nul 2>&1
+  if not errorlevel 1 set "runtime_ready=1"
+)
+if "%runtime_ready%"=="0" (
   if not exist "%runtime_installer%" (
     echo ERROR: Windows runtime installer not found: %runtime_installer%
     pause
     exit /b 1
   )
-  echo Windows runtime is not installed. Starting guided setup...
+  echo Windows runtime is missing or damaged. Starting guided setup...
   powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass ^
     -File "%runtime_installer%" ^
     -RuntimeRoot "%~dp0."
