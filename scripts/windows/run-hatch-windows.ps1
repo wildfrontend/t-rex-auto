@@ -12,6 +12,8 @@ param(
     [string]$Speed = "safe",
     [ValidateRange(1, 65535)]
     [int]$StatusPort = 8766,
+    [ValidateRange(0, 120)]
+    [int]$WaitForExistingSeconds = 0,
     [string]$ConfigPath = ""
 )
 
@@ -38,14 +40,30 @@ if (-not (Test-Path -LiteralPath $ConfigPath)) {
 }
 
 $ConfigToken = [Regex]::Escape($ConfigPath)
-$ExistingBots = @(
-    Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
+function Get-ExistingBots {
+    @(
+        Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
         Where-Object {
             $_.CommandLine -match "main.py" -and
             $_.CommandLine -match " run " -and
             $_.CommandLine -match $ConfigToken
         }
-)
+    )
+}
+
+$ExistingBots = @(Get-ExistingBots)
+if ($ExistingBots.Count -gt 0 -and $WaitForExistingSeconds -gt 0) {
+    $ProcessIds = ($ExistingBots | ForEach-Object { $_.ProcessId }) -join ", "
+    Write-Host "Waiting up to $WaitForExistingSeconds seconds for previous Bot process(es) to exit (PID: $ProcessIds)."
+    $WaitTimer = [Diagnostics.Stopwatch]::StartNew()
+    do {
+        Start-Sleep -Milliseconds 500
+        $ExistingBots = @(Get-ExistingBots)
+    } while (
+        $ExistingBots.Count -gt 0 -and
+        $WaitTimer.Elapsed.TotalSeconds -lt $WaitForExistingSeconds
+    )
+}
 if ($ExistingBots.Count -gt 0) {
     $ProcessIds = ($ExistingBots | ForEach-Object { $_.ProcessId }) -join ", "
     throw "Another Bot instance using this config is already running (PID: $ProcessIds). Stop it before starting Hatch."

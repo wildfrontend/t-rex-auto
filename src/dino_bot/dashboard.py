@@ -26,6 +26,7 @@ from .metrics import MetricsStore
 
 DASHBOARD_VERSION = 1
 DEFAULT_BOT_PORTS = {"hatch-hunt": 8773, "hunt": 8765, "hatch-stage": 8774}
+MODE_SWITCH_PROCESS_WAIT_SECONDS = 20
 DEFAULT_INSTANCE_ID = "main"
 DEFAULT_INSTANCE_NAME = "主力模擬器"
 HATCH_STAGE_LABELS = {
@@ -491,6 +492,7 @@ class DashboardController:
         *,
         stage: str | None = None,
         instance_id: str | None = None,
+        wait_for_existing_seconds: int = 0,
     ) -> list[str]:
         instance = self._instance(instance_id)
         scripts = self.app_root / "scripts"
@@ -552,6 +554,11 @@ class DashboardController:
             ]
         else:
             raise RuntimeError("Unsupported Bot mode")
+        if wait_for_existing_seconds > 0:
+            arguments += [
+                "-WaitForExistingSeconds",
+                str(wait_for_existing_seconds),
+            ]
         runner = runner.resolve()
         if runner.parent != scripts.resolve() or not runner.is_file():
             raise RuntimeError(f"Runner not found: {runner}")
@@ -603,7 +610,14 @@ class DashboardController:
                 if not self.discover(instance.instance_id)["running"]:
                     time.sleep(1)
                     with suppress(RuntimeError), self._start_lock:
-                        self._launch(mode, stage=stage, instance_id=instance.instance_id)
+                        self._launch(
+                            mode,
+                            stage=stage,
+                            instance_id=instance.instance_id,
+                            wait_for_existing_seconds=(
+                                MODE_SWITCH_PROCESS_WAIT_SECONDS
+                            ),
+                        )
                     return
                 time.sleep(0.5)
 
@@ -623,17 +637,31 @@ class DashboardController:
         *,
         stage: str | None = None,
         instance_id: str | None = None,
+        wait_for_existing_seconds: int = 0,
     ) -> None:
         instance = self._instance(instance_id)
         if os.name == "nt":
             creation_flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0) | getattr(
                 subprocess, "CREATE_NEW_PROCESS_GROUP", 0
             )
-            subprocess.Popen(  # noqa: S603 - fixed local PowerShell runner and allowlist
-                self._runner_command(mode, stage=stage, instance_id=instance.instance_id),
-                cwd=self.runtime_root,
-                creationflags=creation_flags,
-            )
+            instance.logs_dir.mkdir(parents=True, exist_ok=True)
+            launch_name = f"dashboard-launch-{mode}"
+            if stage is not None:
+                launch_name += f"-{stage}"
+            launch_log = instance.logs_dir / f"{launch_name}.log"
+            with launch_log.open("ab") as stream:
+                subprocess.Popen(  # noqa: S603 - fixed local PowerShell runner and allowlist
+                    self._runner_command(
+                        mode,
+                        stage=stage,
+                        instance_id=instance.instance_id,
+                        wait_for_existing_seconds=wait_for_existing_seconds,
+                    ),
+                    cwd=self.runtime_root,
+                    creationflags=creation_flags,
+                    stdout=stream,
+                    stderr=subprocess.STDOUT,
+                )
         else:
             instance.logs_dir.mkdir(parents=True, exist_ok=True)
             launch_log = instance.logs_dir / f"dashboard-launch-{mode}.log"

@@ -47,6 +47,16 @@ def test_hatch_runner_allows_dashboard_standalone_stages() -> None:
         assert f'"hatch-stage-{stage}"' in runner
 
 
+def test_windows_runners_wait_for_a_previous_bot_during_mode_switch() -> None:
+    for script in ("run-windows.ps1", "run-hatch-windows.ps1"):
+        runner = (REPO / "scripts/windows" / script).read_text(encoding="utf-8")
+
+        assert "$WaitForExistingSeconds = 0" in runner
+        assert "function Get-ExistingBots" in runner
+        assert "Waiting up to $WaitForExistingSeconds seconds" in runner
+        assert "$WaitTimer.Elapsed.TotalSeconds" in runner
+
+
 def test_hunt_entrypoint_name_matches_its_feature() -> None:
     command = (REPO / "scripts/windows/start-hunt.cmd").read_text(encoding="utf-8")
 

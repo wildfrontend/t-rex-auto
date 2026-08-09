@@ -169,6 +169,11 @@ def test_dashboard_builds_noninteractive_runner_commands(tmp_path: Path) -> None
     hunt = controller._runner_command("hunt")
     combined = controller._runner_command("hatch-hunt")
     cave = controller._runner_command("hatch-stage", stage="cave")
+    cave_after_switch = controller._runner_command(
+        "hatch-stage",
+        stage="cave",
+        wait_for_existing_seconds=20,
+    )
 
     assert hunt[:2] == ["powershell.exe", "-NoLogo"]
     assert "run-windows.ps1" in hunt[6]
@@ -178,6 +183,7 @@ def test_dashboard_builds_noninteractive_runner_commands(tmp_path: Path) -> None
     assert "run-hatch-windows.ps1" in cave[6]
     assert "hatch-stage-cave" in cave
     assert "8765" in cave
+    assert cave_after_switch[-2:] == ["-WaitForExistingSeconds", "20"]
 
 
 def test_dashboard_builds_commands_for_the_selected_instance(tmp_path: Path) -> None:
