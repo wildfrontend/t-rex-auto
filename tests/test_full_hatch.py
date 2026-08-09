@@ -1205,6 +1205,110 @@ def test_failed_egg_pile_tap_enters_recovery_before_any_retry() -> None:
     assert target is not None and target.type == RECOVERY_BACK
 
 
+def test_failed_egg_pile_tap_checks_full_capacity_before_retry(monkeypatch) -> None:
+    _patch_capacity(monkeypatch, 350)
+    planner = make_full_planner()
+    planner._capacity_checked = True
+    home = [detection(hatch.HOME_ANCHOR, 59, 561)]
+    failed_target = Target(
+        hatch.EGG_PILE,
+        450,
+        1330,
+        1.0,
+        detection(hatch.EGG_PILE, 450, 1330),
+    )
+
+    planner.on_action_failure_context(failed_target, frame(), home, 1)
+    planner.on_action_failure(hatch.EGG_PILE)
+    planner.on_retry_exhausted(failed_target)
+
+    assert planner._egg_pile_capacity_check_pending
+    assert not planner.is_hatch_blocked()
+    assert planner.choose(frame(), home) is None
+    target = planner.choose(frame(), home)
+    assert target is not None and target.type == CAVE_SWIPE
+
+    planner.on_action_success(target.type)
+    target = planner.choose(frame(), home)
+    assert target is not None and target.type == CAVE_SWIPE
+    planner.on_action_success(target.type)
+
+    cave = [detection("hatch_cave", 209, 1150)]
+    assert planner.choose(frame(), cave) is None
+    for _ in range(2):
+        target = planner.choose(frame(), cave)
+        assert target is not None and target.type == CAVE_RECENTER
+        planner.on_action_success(target.type)
+
+    assert planner.choose(frame(), home) is None
+    target = planner.choose(frame(), home)
+    assert target is not None and target.type == OPEN_NEST
+    assert planner._management_pending
+    assert not planner._egg_pile_capacity_check_pending
+
+
+def test_failed_egg_pile_tap_retries_when_capacity_is_below_limit(monkeypatch) -> None:
+    _patch_capacity(monkeypatch, 349)
+    planner = make_full_planner()
+    planner._capacity_checked = True
+    home = [detection(hatch.HOME_ANCHOR, 59, 561)]
+    failed_target = Target(
+        hatch.EGG_PILE,
+        450,
+        1330,
+        1.0,
+        detection(hatch.EGG_PILE, 450, 1330),
+    )
+
+    planner.on_action_failure_context(failed_target, frame(), home, 1)
+    planner.on_action_failure(hatch.EGG_PILE)
+    assert planner.choose(frame(), home) is None
+    target = planner.choose(frame(), home)
+    assert target is not None and target.type == CAVE_SWIPE
+    planner.on_action_success(target.type)
+    target = planner.choose(frame(), home)
+    assert target is not None and target.type == CAVE_SWIPE
+    planner.on_action_success(target.type)
+
+    cave = [detection("hatch_cave", 209, 1150)]
+    assert planner.choose(frame(), cave) is None
+    for _ in range(2):
+        target = planner.choose(frame(), cave)
+        assert target is not None and target.type == CAVE_RECENTER
+        planner.on_action_success(target.type)
+
+    assert planner.choose(frame(), home) is None
+    target = planner.choose(frame(), home)
+    assert target is not None and target.type == hatch.EGG_PILE
+    assert planner._capacity_checked
+    assert planner._egg_pile_capacity_rechecked
+    assert not planner._management_pending
+
+
+def test_egg_pile_still_failing_after_safe_capacity_uses_bounded_fuse() -> None:
+    planner = make_full_planner()
+    planner._capacity_checked = True
+    planner._egg_pile_capacity_rechecked = True
+    planner._egg_pile_failures = 2
+    home = [detection(hatch.HOME_ANCHOR, 59, 561)]
+    failed_target = Target(
+        hatch.EGG_PILE,
+        450,
+        1330,
+        1.0,
+        detection(hatch.EGG_PILE, 450, 1330),
+    )
+
+    planner.on_action_failure_context(failed_target, frame(), home, 1)
+    planner.on_action_failure(hatch.EGG_PILE)
+
+    assert planner._egg_pile_retry_pending
+    assert not planner._egg_pile_capacity_check_pending
+    assert planner.choose(frame(), home) is None
+    assert planner.choose(frame(), home) is None
+    assert planner.is_hatch_blocked()
+
+
 def test_failed_egg_pile_captures_calibration_evidence_and_fuses_hatch() -> None:
     snapshots = RecordingEggPileSnapshots()
     planner = FullHatchPlanner(

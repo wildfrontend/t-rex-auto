@@ -1499,6 +1499,13 @@ class FullHatchPlanner:
         self._standalone_returning = False
         self._egg_pile_failures = 0
         self._egg_pile_blocked = False
+        # The first inert egg-pile tap can mean the cave reached 350/350,
+        # not that the calibrated coordinate is wrong.  Recover home, run a
+        # fresh two-frame capacity preflight, and only retry the pile after a
+        # below-limit reading has been proved.
+        self._egg_pile_capacity_check_pending = False
+        self._egg_pile_capacity_rechecked = False
+        self._egg_pile_retry_pending = False
         self.completed_management_cycles = 0
         self._start_hatch_cycle()
         if self.standalone_stage is not None:
@@ -1595,6 +1602,9 @@ class FullHatchPlanner:
     def reset_workflow(self) -> None:
         self._egg_pile_failures = 0
         self._egg_pile_blocked = False
+        self._egg_pile_capacity_check_pending = False
+        self._egg_pile_capacity_rechecked = False
+        self._egg_pile_retry_pending = False
         if self.standalone_stage is not None:
             self._stage = "recover_home"
             self._child = HatchHomeRecoveryPlanner(
@@ -1680,6 +1690,9 @@ class FullHatchPlanner:
             hatch.on_action_success(target_type)
             if target_type == hatch_feature.EGG_PILE:
                 self._egg_pile_failures = 0
+                self._egg_pile_capacity_check_pending = False
+                self._egg_pile_capacity_rechecked = False
+                self._egg_pile_retry_pending = False
             if target_type == HATCH_BOOST_BUTTON:
                 self._boost_attempted = True
                 self._boost_confirmation_pending = True
@@ -1833,6 +1846,15 @@ class FullHatchPlanner:
 
         if target.type != hatch_feature.EGG_PILE:
             return
+        if (
+            self._egg_pile_capacity_check_pending
+            or self._egg_pile_retry_pending
+        ):
+            self.logger.warning(
+                "Hatch calibration | egg pile retries exhausted"
+                " | bounded capacity/recovery check already scheduled"
+            )
+            return
         self._egg_pile_blocked = True
         self._stage = "hatch_blocked"
         self._no_target_since = None
@@ -1865,12 +1887,24 @@ class FullHatchPlanner:
             if target_type == hatch_feature.CLAIM_BUTTON:
                 self._pending_claim_verification = True
             if target_type == hatch_feature.EGG_PILE:
-                # A roaming dinosaur can cover the old fixed pile point.  Its
-                # detail card leaves HOME_ANCHOR visible behind a dark modal,
-                # so blindly retrying the same coordinate could press one of
-                # that card's action buttons.  Unwind it before retrying at a
-                # newly measured point on the basket.
-                self._begin_home_recovery("egg pile tap opened an unexpected screen")
+                if not self._egg_pile_capacity_rechecked:
+                    self._capacity_checked = False
+                    self._egg_pile_capacity_check_pending = True
+                    self.logger.warning(
+                        "Hatch capacity | egg pile tap had no verified response"
+                        " | checking N/350 before retry"
+                    )
+                    self._begin_home_recovery(
+                        "egg pile tap failed; capacity recheck required"
+                    )
+                else:
+                    # Capacity was already proved below the limit.  Treat a
+                    # further miss as calibration/occlusion, but still unwind
+                    # the unexpected foreground before a bounded retry.
+                    self._egg_pile_retry_pending = True
+                    self._begin_home_recovery(
+                        "egg pile tap failed after safe capacity recheck"
+                    )
             return
         if self._stage == "capacity_preflight":
             self._capacity_child.on_action_failure(target_type)
@@ -1999,6 +2033,39 @@ class FullHatchPlanner:
                     "Hatch full | centered home confirmed | recovered=%s",
                     self._recovery_reason or "unknown",
                 )
+                if self._egg_pile_capacity_check_pending:
+                    self._begin_capacity_preflight(
+                        "egg pile tap had no response"
+                    )
+                    return self._choose_current(frame, detections)
+                if self._egg_pile_retry_pending:
+                    self._egg_pile_retry_pending = False
+                    failure_limit = int(
+                        self._hatch_kwargs["home_failure_limit"]
+                    )
+                    if self._egg_pile_failures >= failure_limit:
+                        self._egg_pile_blocked = True
+                        self._stage = "hatch_blocked"
+                        self._no_target_since = None
+                        self.logger.error(
+                            "Hatch calibration | egg pile failed %d times"
+                            " after safe capacity check | blocking hatch",
+                            self._egg_pile_failures,
+                        )
+                        return None
+                    self.logger.warning(
+                        "Hatch calibration | retrying egg pile after safe"
+                        " capacity check | failure=%d/%d",
+                        self._egg_pile_failures,
+                        failure_limit,
+                    )
+                    self._stage = "hatch"
+                    self._child = self._new_hatch()
+                    self._hatch_baseline = 0
+                    self._no_target_since = None
+                    self._recovery_reason = None
+                    self._start_hatch_cycle()
+                    return self._choose_current(frame, detections)
                 if self._management_pending:
                     missing = self._missing_screening_stages()
                     self.logger.info(
@@ -2122,6 +2189,7 @@ class FullHatchPlanner:
             self._remember_capacity_preflight_result()
             if target is None and self._capacity_child.is_complete():
                 if not self._capacity_child.capacity_readable:
+                    self._egg_pile_capacity_check_pending = False
                     self.logger.error(
                         "Hatch capacity | preflight failed; N/350 unreadable; "
                         "hatching stopped safely"
@@ -2129,12 +2197,18 @@ class FullHatchPlanner:
                     self._complete = True
                     return None
                 if self._capacity_child.cull_required:
+                    self._egg_pile_capacity_check_pending = False
+                    self._egg_pile_capacity_rechecked = False
+                    self._egg_pile_retry_pending = False
                     self._stage = "open_nest"
                     self._child = object()
                     self._collect_only_after_empty = False
                     self._no_target_since = None
                     return self._choose_current(frame, detections)
                 self._capacity_checked = True
+                if self._egg_pile_capacity_check_pending:
+                    self._egg_pile_capacity_check_pending = False
+                    self._egg_pile_capacity_rechecked = True
                 self.logger.info(
                     "Hatch capacity | preflight complete | safe to hatch"
                 )
@@ -2275,6 +2349,10 @@ class FullHatchPlanner:
                 # batch 仍 >= 門檻會立刻重跑整套管理流程。
                 self._batch_hatched = 0
                 self._batch_hunt_ready = False
+                self._egg_pile_failures = 0
+                self._egg_pile_capacity_check_pending = False
+                self._egg_pile_capacity_rechecked = False
+                self._egg_pile_retry_pending = False
                 expected = self._cave_child.expected_population
                 if expected is not None:
                     self._cave_population = expected
