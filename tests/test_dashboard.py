@@ -244,6 +244,39 @@ def test_dashboard_can_create_an_isolated_instance(tmp_path: Path) -> None:
     assert registry["instances"][-1]["status_port"] == 8775
 
 
+def test_dashboard_can_update_instance_settings_without_manual_file_edits(
+    tmp_path: Path,
+) -> None:
+    app = tmp_path / "app"
+    app.mkdir()
+    config_path = app / "config.json"
+    config_path.write_text(
+        json.dumps({"adb": {"serial": "127.0.0.1:16384"}}),
+        encoding="utf-8",
+    )
+    controller = DashboardController(tmp_path, app / "logs", config_path=config_path)
+
+    result = controller.update_instance(
+        instance_id="main",
+        name="主力新名稱",
+        serial="127.0.0.1:16386",
+        status_port=8786,
+    )
+
+    assert result["restarted"] is False
+    assert result["status_port"] == 8786
+    assert json.loads(config_path.read_text(encoding="utf-8"))["adb"]["serial"] == (
+        "127.0.0.1:16386"
+    )
+    registry = json.loads((tmp_path / "instances.json").read_text(encoding="utf-8"))
+    assert registry["instances"][0] == {
+        "id": "main",
+        "name": "主力新名稱",
+        "config": "app/config.json",
+        "status_port": 8786,
+    }
+
+
 def test_dashboard_rejects_unknown_standalone_stage(tmp_path: Path) -> None:
     controller = DashboardController(tmp_path, tmp_path / "logs")
 

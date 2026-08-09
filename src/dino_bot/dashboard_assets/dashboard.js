@@ -39,8 +39,10 @@ function escapeHtml(value) {
 }
 
 let selectedInstanceId = null;
+let knownInstances = [];
 
 function renderInstances(items) {
+  knownInstances = items || [];
   const root = $("instanceList");
   if (!items || !items.length) {
     root.innerHTML = '<p class="empty">尚未設定 Bot 實例</p>';
@@ -62,6 +64,7 @@ function renderInstances(items) {
         <button type="button" data-instance-action="select" data-instance-id="${escapeHtml(item.id)}">檢視</button>
         <button type="button" data-instance-action="start-hatch-hunt" data-instance-id="${escapeHtml(item.id)}">孵蛋＋狩獵</button>
         <button type="button" data-instance-action="start-hunt" data-instance-id="${escapeHtml(item.id)}">純狩獵</button>
+        <button type="button" data-instance-action="edit" data-instance-id="${escapeHtml(item.id)}">設定</button>
         <button type="button" class="danger" data-instance-action="stop" data-instance-id="${escapeHtml(item.id)}">停止</button>
       </div>
     </article>`;
@@ -213,11 +216,46 @@ document.querySelectorAll("button[data-action]").forEach((button) => {
   button.addEventListener("click", () => invokeControl(button));
 });
 
+function openNewInstanceForm() {
+  const form = $("instanceForm");
+  delete form.dataset.editingId;
+  form.reset();
+  $("instancePort").value = String(8775 + knownInstances.length - 1);
+  form.querySelector("button.primary").textContent = "建立實例";
+  form.classList.remove("hidden");
+}
+
+function openEditInstanceForm(instanceId) {
+  const item = knownInstances.find((candidate) => candidate.id === instanceId);
+  if (!item) return;
+  const form = $("instanceForm");
+  form.dataset.editingId = instanceId;
+  $("instanceName").value = item.name || "";
+  $("instanceSerial").value = item.serial || "";
+  $("instancePort").value = item.status_port || "";
+  form.querySelector("button.primary").textContent = "儲存並重新啟動";
+  form.classList.remove("hidden");
+  selectedInstanceId = instanceId;
+  renderInstances(knownInstances);
+}
+
+function closeInstanceForm() {
+  const form = $("instanceForm");
+  delete form.dataset.editingId;
+  form.reset();
+  form.querySelector("button.primary").textContent = "建立實例";
+  form.classList.add("hidden");
+}
+
 $("instanceList").addEventListener("click", (event) => {
   const button = event.target.closest("button[data-instance-action]");
   const card = event.target.closest("[data-instance-select]");
   const instanceId = button?.dataset.instanceId || card?.dataset.instanceSelect;
   if (!instanceId) return;
+  if (button?.dataset.instanceAction === "edit") {
+    openEditInstanceForm(instanceId);
+    return;
+  }
   if (!button || button.dataset.instanceAction === "select") {
     selectedInstanceId = instanceId;
     refresh();
@@ -230,32 +268,38 @@ $("instanceList").addEventListener("click", (event) => {
 });
 
 $("addInstanceToggle").addEventListener("click", () => {
-  $("instanceForm").classList.toggle("hidden");
+  if ($("instanceForm").classList.contains("hidden")) openNewInstanceForm();
+  else closeInstanceForm();
 });
 $("addInstanceCancel").addEventListener("click", () => {
-  $("instanceForm").classList.add("hidden");
+  closeInstanceForm();
 });
 $("instanceForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
   const button = form.querySelector("button.primary");
   button.disabled = true;
+  const editingId = form.dataset.editingId;
+  const action = editingId ? "update-instance" : "add-instance";
+  const suffix = editingId ? `?instance=${encodeURIComponent(editingId)}` : "";
   try {
-    const response = await fetch("/api/control/add-instance", {
+    const response = await fetch(`/api/control/${action}${suffix}`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Dino-Dashboard": "1" },
       body: JSON.stringify({
+        id: editingId,
         name: $("instanceName").value,
         serial: $("instanceSerial").value,
         status_port: Number($("instancePort").value),
+        restart: true,
       }),
     });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
     selectedInstanceId = payload.instance_id;
-    form.reset();
-    $("instanceForm").classList.add("hidden");
-    $("commandResult").textContent = `已建立實例：${payload.name}`;
+    closeInstanceForm();
+    $("commandResult").classList.remove("error");
+    $("commandResult").textContent = payload.message || `已儲存實例：${payload.name}`;
     await refresh();
   } catch (error) {
     $("commandResult").classList.add("error");

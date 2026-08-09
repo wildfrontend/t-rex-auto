@@ -381,6 +381,7 @@ class DashboardController:
                 "serial": self._instance_serial(instance),
                 "running": bool(status.get("running", True)),
                 "mode": mode,
+                "feature": health.get("feature"),
                 "mode_label": mode_label,
                 "port": instance.status_port,
                 "status": status,
@@ -392,6 +393,7 @@ class DashboardController:
             "serial": self._instance_serial(instance),
             "running": False,
             "mode": None,
+            "feature": None,
             "mode_label": "未啟動",
             "port": instance.status_port,
             "status": {},
@@ -807,6 +809,93 @@ class DashboardController:
             "config": str(instance.config_path),
         }
 
+    def update_instance(
+        self,
+        *,
+        instance_id: str,
+        name: str,
+        serial: str,
+        status_port: int,
+        restart: bool = True,
+    ) -> dict[str, Any]:
+        """Persist instance settings and optionally restart it on the new port."""
+
+        instance = self._instance(instance_id)
+        name = str(name).strip()
+        serial = str(serial).strip()
+        try:
+            status_port = int(status_port)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("status port must be an integer") from exc
+        if not name or not serial:
+            raise ValueError("instance name and ADB serial are required")
+        if len(name) > 40:
+            raise ValueError("instance name must be 40 characters or fewer")
+        if not 1 <= status_port <= 65535:
+            raise ValueError("status port must be between 1 and 65535")
+        if any(
+            other.instance_id != instance_id and other.status_port == status_port
+            for other in self._instances
+        ):
+            raise ValueError(f"status port {status_port} is already assigned")
+        if not isinstance(restart, bool):
+            raise ValueError("restart must be a boolean")
+
+        active = self.discover(instance_id)
+        was_running = bool(active["running"])
+        feature = active.get("feature")
+        if was_running:
+            self.stop(instance_id)
+            deadline = time.monotonic() + 25
+            while time.monotonic() < deadline:
+                if _get_json(f"http://127.0.0.1:{instance.status_port}/health") is None:
+                    break
+                time.sleep(0.25)
+
+        try:
+            config = json.loads(instance.config_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise RuntimeError(f"cannot read instance config: {exc}") from exc
+        if not isinstance(config, dict):
+            raise RuntimeError("instance config must be a JSON object")
+        adb = config.setdefault("adb", {})
+        if not isinstance(adb, dict):
+            raise RuntimeError("instance config adb section must be an object")
+        adb["serial"] = serial
+        temporary = instance.config_path.with_suffix(".tmp")
+        temporary.write_text(
+            json.dumps(config, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        temporary.replace(instance.config_path)
+
+        updated = BotInstance(instance_id, name, instance.config_path, status_port)
+        index = self._instances.index(instance)
+        self._instances[index] = updated
+        self._save_instances()
+
+        restarted = False
+        if was_running and restart:
+            mode = active.get("mode")
+            if mode == "hatch-stage":
+                stage = str(feature or "").removeprefix("hatch-stage-")
+                if stage not in HATCH_STAGE_LABELS:
+                    stage = "hatch"
+                self.start("hatch-stage", stage=stage, instance_id=instance_id)
+            elif mode in {"hunt", "hatch-hunt"}:
+                self.start(str(mode), instance_id=instance_id)
+            restarted = True
+        return {
+            "accepted": True,
+            "action": "update-instance",
+            "instance_id": instance_id,
+            "name": name,
+            "serial": serial,
+            "status_port": status_port,
+            "restarted": restarted,
+            "message": "設定已儲存並重新啟動" if restarted else "設定已儲存",
+        }
+
 
 class _DashboardHttpServer(ThreadingHTTPServer):
     daemon_threads = True
@@ -976,6 +1065,18 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                     instance_id=payload.get("id"),
                 )
                 self.server.dashboard._refresh_instance_stores()
+            elif action == "update-instance":
+                payload = self._read_json()
+                target = instance_id or payload.get("id")
+                if not isinstance(target, str) or not target:
+                    raise ValueError("instance id is required")
+                result = self.server.controller.update_instance(
+                    instance_id=target,
+                    name=payload.get("name", ""),
+                    serial=payload.get("serial", ""),
+                    status_port=payload.get("status_port", 0),
+                    restart=payload.get("restart", True),
+                )
             else:
                 self._send_json(404, {"error": "not_found"})
                 return
