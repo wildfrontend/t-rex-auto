@@ -51,6 +51,43 @@ if ($ExistingBots.Count -gt 0) {
     throw "Another Bot instance using this config is already running (PID: $ProcessIds). Stop it before starting Hatch."
 }
 
+function Stop-BundledAdbWhenIdle {
+    $MainScriptPattern = [regex]::Escape($MainScript)
+    $OtherBots = @(
+        Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.CommandLine -match $MainScriptPattern -and
+                $_.CommandLine -match " run "
+            }
+    )
+    if ($OtherBots.Count -gt 0) {
+        Write-Host "Other Bot instance(s) still running; keeping shared ADB server alive."
+        return
+    }
+    $BundledAdb = Join-Path $AppRoot "tools\platform-tools\adb.exe"
+    if (-not (Test-Path -LiteralPath $BundledAdb)) {
+        return
+    }
+    try {
+        & $BundledAdb kill-server | Out-Null
+    } catch {
+        Write-Warning "Bundled ADB kill-server failed: $($_.Exception.Message)"
+    }
+    $AdbPattern = [regex]::Escape($BundledAdb)
+    Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.Name -ieq "adb.exe" -and
+            (
+                ([string]$_.ExecutablePath) -ieq $BundledAdb -or
+                ([string]$_.CommandLine) -match $AdbPattern
+            )
+        } |
+        ForEach-Object {
+            Stop-Process -Id ([int]$_.ProcessId) -Force -ErrorAction SilentlyContinue
+        }
+    Write-Host "Bundled ADB server stopped because no Bot instances remain."
+}
+
 $RunArguments = @(
     $MainScript,
     "--config", $ConfigPath,
@@ -93,6 +130,7 @@ try {
 } finally {
     Pop-Location
     [void][DinoHatchExecutionState]::SetThreadExecutionState($Continuous)
+    Stop-BundledAdbWhenIdle
     Write-Host "System-awake request released."
 }
 exit $BotExitCode

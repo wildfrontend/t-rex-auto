@@ -16,6 +16,7 @@ def test_hatch_entrypoint_is_separate_and_fixed_to_hatch() -> None:
     assert "$ConfigPath = \"\"" in runner
     assert "$ConfigToken = [Regex]::Escape($ConfigPath)" in runner
     assert "Another Bot instance using this config is already running" in runner
+    assert "Stop-BundledAdbWhenIdle" in runner
     assert '-MaxCycles "%hatch_max_cycles%"' in command
 
 
@@ -76,6 +77,8 @@ def test_dashboard_entrypoint_uses_loopback_web_service() -> None:
     assert '"%~1"=="uninstall"' in command
     assert "dino-mutant-bot-status" in uninstaller
     assert "shutdown-dashboard" in uninstaller
+    assert "instances.json" in uninstaller
+    assert "Stopped bundled ADB process" in uninstaller
     assert 'ArgumentList @("kill-server")' in uninstaller
     assert "DinoPendingDelete" in cleanup
 

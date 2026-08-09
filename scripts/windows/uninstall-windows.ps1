@@ -10,6 +10,7 @@ $PathRoot = [System.IO.Path]::GetPathRoot($ResolvedRoot).TrimEnd("\")
 $MainScript = Join-Path $ResolvedRoot "app\main.py"
 $DashboardLauncher = Join-Path $ResolvedRoot "start-dashboard.cmd"
 $CleanupSource = Join-Path $ResolvedRoot "app\scripts\cleanup-runtime-windows.ps1"
+$InstancesPath = Join-Path $ResolvedRoot "instances.json"
 
 if (
     [string]::IsNullOrWhiteSpace($ResolvedRoot) -or
@@ -81,6 +82,24 @@ function Get-VerifiedLoopbackProcess {
 }
 
 $BotPorts = @(8765, 8766, 8772, 8773, 8774)
+if (Test-Path -LiteralPath $InstancesPath) {
+    try {
+        $Registry = Get-Content -LiteralPath $InstancesPath -Raw | ConvertFrom-Json
+        foreach ($Instance in @($Registry.instances)) {
+            $CandidatePort = 0
+            if (
+                [int]::TryParse([string]$Instance.status_port, [ref]$CandidatePort) -and
+                $CandidatePort -ge 1 -and
+                $CandidatePort -le 65535 -and
+                -not ($BotPorts -contains $CandidatePort)
+            ) {
+                $BotPorts += $CandidatePort
+            }
+        }
+    } catch {
+        Write-Warning "Could not read instances.json; continuing with legacy Bot ports."
+    }
+}
 foreach ($Port in $BotPorts) {
     $PortPattern = "--status-port\s+" + [regex]::Escape([string]$Port) + "(?:\s|$)"
     $Process = Get-VerifiedLoopbackProcess `
@@ -159,6 +178,41 @@ if (Test-Path -LiteralPath $AdbExecutable) {
     } catch {
         Write-Warning "Bundled ADB server cleanup failed; locked files will be removed after reboot."
     }
+
+    $AdbPathPattern = [regex]::Escape($AdbExecutable)
+    $BundledAdbProcesses = @(
+        Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.Name -ieq "adb.exe" -and
+                (
+                    ([string]$_.ExecutablePath) -ieq $AdbExecutable -or
+                    ([string]$_.CommandLine) -match $AdbPathPattern
+                )
+            }
+    )
+    foreach ($AdbProcess in $BundledAdbProcesses) {
+        try {
+            Stop-Process -Id ([int]$AdbProcess.ProcessId) -Force -ErrorAction Stop
+            Write-Host "Stopped bundled ADB process PID $($AdbProcess.ProcessId)."
+        } catch {
+            Write-Warning "Could not stop bundled ADB process PID $($AdbProcess.ProcessId)."
+        }
+    }
+
+    $AdbDeadline = (Get-Date).AddSeconds(5)
+    do {
+        $AdbStillRunning = @(
+            Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+                Where-Object {
+                    $_.Name -ieq "adb.exe" -and
+                    ([string]$_.ExecutablePath) -ieq $AdbExecutable
+                }
+        )
+        if ($AdbStillRunning.Count -eq 0) {
+            break
+        }
+        Start-Sleep -Milliseconds 250
+    } while ((Get-Date) -lt $AdbDeadline)
 }
 
 $StartupDirectory = [Environment]::GetFolderPath("Startup")

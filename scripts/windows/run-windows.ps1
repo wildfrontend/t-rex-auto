@@ -22,6 +22,7 @@ $ErrorActionPreference = "Stop"
 $AppRoot = Split-Path -Parent $PSScriptRoot
 $RuntimeRoot = Split-Path -Parent $AppRoot
 $PythonExecutable = Join-Path $RuntimeRoot "python\python.exe"
+$MainScript = Join-Path $AppRoot "main.py"
 $DefaultConfigPath = Join-Path $AppRoot "config.json"
 if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
     $ConfigPath = $DefaultConfigPath
@@ -83,6 +84,43 @@ if ($StatusPort -gt 0) {
     Write-Host "Local AI/status API: http://127.0.0.1:$StatusPort/status"
 }
 
+function Stop-BundledAdbWhenIdle {
+    $MainScriptPattern = [regex]::Escape($MainScript)
+    $OtherBots = @(
+        Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.CommandLine -match $MainScriptPattern -and
+                $_.CommandLine -match " run "
+            }
+    )
+    if ($OtherBots.Count -gt 0) {
+        Write-Host "Other Bot instance(s) still running; keeping shared ADB server alive."
+        return
+    }
+    $BundledAdb = Join-Path $AppRoot "tools\platform-tools\adb.exe"
+    if (-not (Test-Path -LiteralPath $BundledAdb)) {
+        return
+    }
+    try {
+        & $BundledAdb kill-server | Out-Null
+    } catch {
+        Write-Warning "Bundled ADB kill-server failed: $($_.Exception.Message)"
+    }
+    $AdbPattern = [regex]::Escape($BundledAdb)
+    Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.Name -ieq "adb.exe" -and
+            (
+                ([string]$_.ExecutablePath) -ieq $BundledAdb -or
+                ([string]$_.CommandLine) -match $AdbPattern
+            )
+        } |
+        ForEach-Object {
+            Stop-Process -Id ([int]$_.ProcessId) -Force -ErrorAction SilentlyContinue
+        }
+    Write-Host "Bundled ADB server stopped because no Bot instances remain."
+}
+
 Add-Type -TypeDefinition @"
 using System.Runtime.InteropServices;
 public static class DinoBotExecutionState {
@@ -106,6 +144,7 @@ try {
     $BotExitCode = $LASTEXITCODE
 } finally {
     [void][DinoBotExecutionState]::SetThreadExecutionState($Continuous)
+    Stop-BundledAdbWhenIdle
     Write-Host "System-awake request released."
 }
 exit $BotExitCode
