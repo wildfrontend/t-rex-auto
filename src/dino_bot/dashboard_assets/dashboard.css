@@ -47,6 +47,23 @@ h3 { font-size: 20px; }
 .live-dot { width: 11px; height: 11px; border-radius: 50%; background: #626d77; box-shadow: 0 0 0 5px rgba(98,109,119,.12); }
 .live-dot.running { background: var(--lime); box-shadow: 0 0 0 5px rgba(184,220,99,.12), 0 0 18px rgba(184,220,99,.4); }
 .panel, .metric-card { border: 1px solid var(--line); background: var(--panel); border-radius: 20px; box-shadow: 0 16px 50px rgba(0,0,0,.2); backdrop-filter: blur(18px); }
+.instances-panel { padding: 24px; margin-bottom: 14px; }
+.instances-panel .panel-heading { margin-bottom: 14px; }
+.instance-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; }
+.instance-card { padding: 15px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel-2); cursor: pointer; }
+.instance-card.selected { border-color: rgba(85,214,208,.65); box-shadow: 0 0 0 1px rgba(85,214,208,.18); }
+.instance-card.running { border-left: 3px solid var(--lime); }
+.instance-card-head, .instance-card-meta, .instance-card-actions { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.instance-card-head strong { font-size: 16px; }
+.instance-card-head small, .instance-card-meta { color: var(--muted); font-size: 11px; }
+.instance-card-meta { justify-content: flex-start; margin: 10px 0; flex-wrap: wrap; }
+.instance-state { color: var(--muted); font-size: 11px; }
+.instance-state.running { color: var(--lime); }
+.instance-card-actions { justify-content: flex-start; flex-wrap: wrap; }
+.instance-card-actions button { padding: 7px 9px; font-size: 11px; }
+.instance-form { display: grid; grid-template-columns: 1fr 1.4fr 150px auto auto; gap: 9px; align-items: end; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+.instance-form label { color: var(--muted); font-size: 10px; }
+.instance-form input { display: block; width: 100%; margin-top: 4px; border: 1px solid var(--line); border-radius: 8px; padding: 9px; color: var(--text); background: #12181e; font: inherit; }
 .hero { position: relative; min-height: 218px; padding: 30px; overflow: hidden; display: grid; grid-template-columns: 1fr auto; align-items: start; }
 .hero::after { content: ""; position: absolute; width: 420px; height: 420px; right: -130px; top: -240px; border: 60px solid rgba(85,214,208,.055); border-radius: 50%; }
 .muted { margin-top: 8px; color: var(--muted); }
@@ -137,4 +154,5 @@ button.danger { color: #ffd6d5; border-color: rgba(255,107,104,.26); background:
   .control-grid { grid-template-columns: 1fr; }
   .inventory-control { grid-template-columns: 1fr 92px 58px; }
   .inventory-control .toggle-control { grid-column: 1 / -1; justify-content: flex-start; }
+  .instance-form { grid-template-columns: 1fr; }
 }

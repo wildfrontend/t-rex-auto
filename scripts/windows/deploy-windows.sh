@@ -39,6 +39,9 @@ cp -a \
   "${project_root}/scripts/windows/watch-running-bot.ps1" \
   "${runtime_app}/scripts/"
 cp -a "${project_root}/scripts/windows/start-dashboard.cmd" "${runtime_root}/start-dashboard.cmd"
+if [[ ! -f "${runtime_root}/instances.json" ]]; then
+  cp -a "${project_root}/instances.json" "${runtime_root}/instances.json"
+fi
 
 # Keep the portable root limited to the Dashboard entrypoint. Older
 # development launchers remain recoverable under app/scripts instead of being

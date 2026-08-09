@@ -177,7 +177,71 @@ def test_dashboard_builds_noninteractive_runner_commands(tmp_path: Path) -> None
     assert combined[-4:] == ["-MaxActions", "0", "-MaxCycles", "0"]
     assert "run-hatch-windows.ps1" in cave[6]
     assert "hatch-stage-cave" in cave
-    assert "8774" in cave
+    assert "8765" in cave
+
+
+def test_dashboard_builds_commands_for_the_selected_instance(tmp_path: Path) -> None:
+    app = tmp_path / "app"
+    scripts = app / "scripts"
+    scripts.mkdir(parents=True)
+    (scripts / "run-windows.ps1").write_text("", encoding="utf-8")
+    (scripts / "run-hatch-windows.ps1").write_text("", encoding="utf-8")
+    primary = app / "config.json"
+    primary.write_text(json.dumps({"adb": {"serial": "127.0.0.1:16384"}}), encoding="utf-8")
+    second = tmp_path / "instances" / "second" / "config.json"
+    second.parent.mkdir(parents=True)
+    second.write_text(json.dumps({"adb": {"serial": "127.0.0.1:16385"}}), encoding="utf-8")
+    (tmp_path / "instances.json").write_text(
+        json.dumps(
+            {
+                "instances": [
+                    {"id": "main", "name": "主力", "config": "app/config.json", "status_port": 8765},
+                    {
+                        "id": "second",
+                        "name": "第二台",
+                        "config": "instances/second/config.json",
+                        "status_port": 8775,
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    controller = DashboardController(tmp_path, app / "logs", config_path=primary)
+    command = controller._runner_command("hunt", instance_id="second")
+
+    assert "-ConfigPath" in command
+    assert str(second) in command
+    assert command[-2:] == ["-StatusPort", "8775"]
+    assert [item.instance_id for item in controller.instances] == ["main", "second"]
+
+
+def test_dashboard_can_create_an_isolated_instance(tmp_path: Path) -> None:
+    app = tmp_path / "app"
+    app.mkdir()
+    (app / "config.json").write_text(
+        json.dumps({"adb": {"serial": "127.0.0.1:16384"}}),
+        encoding="utf-8",
+    )
+    (app / "assets").mkdir()
+    (app / "assets" / "manifest.json").write_text("{}", encoding="utf-8")
+    controller = DashboardController(tmp_path, app / "logs", config_path=app / "config.json")
+
+    result = controller.add_instance(
+        name="第二台",
+        serial="127.0.0.1:16385",
+        status_port=8775,
+    )
+
+    assert result["instance_id"] == "instance-2"
+    config = json.loads(
+        (tmp_path / "instances" / "instance-2" / "config.json").read_text(encoding="utf-8")
+    )
+    assert config["adb"]["serial"] == "127.0.0.1:16385"
+    assert (tmp_path / "instances" / "instance-2" / "assets" / "manifest.json").is_file()
+    registry = json.loads((tmp_path / "instances.json").read_text(encoding="utf-8"))
+    assert registry["instances"][-1]["status_port"] == 8775
 
 
 def test_dashboard_rejects_unknown_standalone_stage(tmp_path: Path) -> None:

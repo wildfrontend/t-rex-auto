@@ -44,6 +44,7 @@ cp -a \
   "${package_app}/scripts/"
 
 cp -a "${project_root}/scripts/windows/start-dashboard.cmd" "${package_root}/start-dashboard.cmd"
+cp -a "${project_root}/instances.json" "${package_root}/instances.json"
 cp -a "${project_root}/使用教學.md" "${package_root}/使用教學.md"
 cp -a "${project_root}/新手啟動指南.md" "${package_root}/新手啟動指南.md"
 if [ -d "${project_root}/.agents" ]; then

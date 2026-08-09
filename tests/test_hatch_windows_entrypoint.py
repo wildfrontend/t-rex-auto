@@ -13,7 +13,9 @@ def test_hatch_entrypoint_is_separate_and_fixed_to_hatch() -> None:
     assert '[string]$Feature = "hatch"' in runner
     assert '"--feature", $Feature' in runner
     assert "$StatusPort = 8766" in runner
-    assert "Another Bot is already running" in runner
+    assert "$ConfigPath = \"\"" in runner
+    assert "$ConfigToken = [Regex]::Escape($ConfigPath)" in runner
+    assert "Another Bot instance using this config is already running" in runner
     assert '-MaxCycles "%hatch_max_cycles%"' in command
 
 

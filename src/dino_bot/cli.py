@@ -425,6 +425,7 @@ def main(argv: list[str] | None = None) -> int:
                 config.logs_dir,
                 args.status_port,
                 control_handlers=control_handlers,
+                metadata={"feature": args.feature},
             )
             try:
                 status_server.start()

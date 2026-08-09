@@ -153,7 +153,16 @@ bash scripts/windows/deploy-windows.sh
 bash scripts/windows/deploy-windows.sh /mnt/d/DinoMutantBot-release /mnt/d/DinoMutantBot/python
 ```
 
-### 4. 環境檢查
+### 4. 多開 Bot 實例
+
+Dashboard 支援同時管理多個模擬器。每個實例必須使用不同的 ADB serial 與 status Port；
+同一個模擬器不可由兩個 Bot 同時操作。開啟 Dashboard 後按「新增模擬器」，填入名稱、
+例如 `127.0.0.1:16385` 的 ADB serial，以及未使用的 Port。系統會建立獨立設定、素材、
+日誌、統計資料與加速券庫存，之後可在各實例卡片分別啟動、停止、重啟與查看狀態。
+
+實例註冊資料保存在發布資料夾的 `instances.json`；更新程式時部署腳本會保留既有註冊資料。
+
+### 5. 環境檢查
 
 ```bash
 powershell.exe -NoProfile -ExecutionPolicy Bypass \

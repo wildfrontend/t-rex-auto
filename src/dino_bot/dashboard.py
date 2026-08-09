@@ -5,18 +5,20 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
 import time
 import webbrowser
 from contextlib import suppress
+from dataclasses import dataclass
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.error import URLError
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 from urllib.request import Request, urlopen
 
 from .hatch_inventory import HatchBoostInventoryStore
@@ -24,6 +26,8 @@ from .metrics import MetricsStore
 
 DASHBOARD_VERSION = 1
 DEFAULT_BOT_PORTS = {"hatch-hunt": 8773, "hunt": 8765, "hatch-stage": 8774}
+DEFAULT_INSTANCE_ID = "main"
+DEFAULT_INSTANCE_NAME = "主力模擬器"
 HATCH_STAGE_LABELS = {
     "hatch": "孵蛋一輪",
     "attack": "攻擊親代",
@@ -62,6 +66,28 @@ _CAVE_TARGETS = frozenset(
         "hatch_cave_close_button",
     }
 )
+
+
+@dataclass(frozen=True, slots=True)
+class BotInstance:
+    """A separately addressable Bot configuration managed by the dashboard."""
+
+    instance_id: str
+    name: str
+    config_path: Path
+    status_port: int
+
+    @property
+    def root(self) -> Path:
+        return self.config_path.parent
+
+    @property
+    def logs_dir(self) -> Path:
+        return self.root / "logs"
+
+    @property
+    def database(self) -> Path:
+        return self.root / "data" / "stats.sqlite3"
 
 
 def _loopback_origin_allowed(origin: str) -> bool:
@@ -217,7 +243,7 @@ def _workflow_status(logs_dir: Path, mode: str | None) -> dict[str, Any]:
 
 
 class DashboardController:
-    """Discover a running Bot and expose only explicitly allowlisted actions."""
+    """Discover and control multiple independently configured Bot instances."""
 
     def __init__(
         self,
@@ -226,54 +252,179 @@ class DashboardController:
         *,
         bot_ports: dict[str, int] | None = None,
         config_path: Path | None = None,
+        instances_path: Path | None = None,
     ) -> None:
         self.runtime_root = runtime_root
         candidate = runtime_root / "app"
         self.app_root = candidate if candidate.is_dir() else runtime_root
         self.logs_dir = logs_dir
-        self.config_path = config_path or self.app_root / "config.json"
+        self.config_path = (config_path or self.app_root / "config.json").resolve()
         self.bot_ports = dict(bot_ports or DEFAULT_BOT_PORTS)
+        self.instances_path = (instances_path or runtime_root / "instances.json").resolve()
+        self._instances = self._load_instances()
         self._start_lock = threading.Lock()
-        self._last_start = 0.0
-        self._explicit_stop_at = 0.0
+        self._last_start: dict[str, float] = {}
+        self._explicit_stop_at: dict[str, float] = {}
 
-    def discover(self) -> dict[str, Any]:
-        for mode in ("hatch-hunt", "hunt", "hatch-stage"):
-            port = self.bot_ports[mode]
-            health = _get_json(f"http://127.0.0.1:{port}/health")
-            if health and health.get("service") == "dino-mutant-bot-status":
-                status = _get_json(f"http://127.0.0.1:{port}/status") or {}
-                return {
-                    "running": bool(status.get("running", True)),
-                    "mode": mode,
-                    "mode_label": (
-                        "自動孵蛋＋狩獵"
-                        if mode == "hatch-hunt"
-                        else "純狩獵"
-                        if mode == "hunt"
-                        else "單階段孵化"
-                    ),
-                    "port": port,
-                    "status": status,
-                    "workflow": _workflow_status(self.logs_dir, mode),
+    @property
+    def instances(self) -> tuple[BotInstance, ...]:
+        return tuple(self._instances)
+
+    def _load_instances(self) -> list[BotInstance]:
+        fallback = BotInstance(
+            DEFAULT_INSTANCE_ID,
+            DEFAULT_INSTANCE_NAME,
+            self.config_path,
+            DEFAULT_BOT_PORTS["hunt"],
+        )
+        if not self.instances_path.is_file():
+            return [fallback]
+        try:
+            payload = json.loads(self.instances_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return [fallback]
+        raw_instances = payload.get("instances") if isinstance(payload, dict) else None
+        if not isinstance(raw_instances, list):
+            return [fallback]
+        instances: list[BotInstance] = []
+        seen_ids: set[str] = set()
+        seen_ports: set[int] = set()
+        for raw in raw_instances:
+            if not isinstance(raw, dict):
+                continue
+            instance_id = str(raw.get("id", "")).strip()
+            name = str(raw.get("name", instance_id)).strip() or instance_id
+            raw_config = raw.get("config")
+            if not instance_id or not isinstance(raw_config, str):
+                continue
+            config_path = Path(raw_config).expanduser()
+            if not config_path.is_absolute():
+                config_path = self.instances_path.parent / config_path
+            try:
+                status_port = int(raw.get("status_port", 0))
+            except (TypeError, ValueError):
+                continue
+            if (
+                instance_id in seen_ids
+                or not 1 <= status_port <= 65535
+                or status_port in seen_ports
+                or not config_path.is_file()
+            ):
+                continue
+            seen_ids.add(instance_id)
+            seen_ports.add(status_port)
+            instances.append(BotInstance(instance_id, name, config_path.resolve(), status_port))
+        return instances or [fallback]
+
+    def _save_instances(self) -> None:
+        def config_reference(instance: BotInstance) -> str:
+            try:
+                return str(instance.config_path.relative_to(self.instances_path.parent))
+            except ValueError:
+                return str(instance.config_path)
+
+        payload = {
+            "instances": [
+                {
+                    "id": instance.instance_id,
+                    "name": instance.name,
+                    "config": config_reference(instance),
+                    "status_port": instance.status_port,
                 }
+                for instance in self._instances
+            ]
+        }
+        self.instances_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.instances_path.with_suffix(".tmp")
+        temporary.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        temporary.replace(self.instances_path)
+
+    def _instance(self, instance_id: str | None = None) -> BotInstance:
+        if instance_id is None:
+            return self._instances[0]
+        for instance in self._instances:
+            if instance.instance_id == instance_id:
+                return instance
+        raise RuntimeError(f"Unknown Bot instance: {instance_id}")
+
+    @staticmethod
+    def _instance_serial(instance: BotInstance) -> str | None:
+        try:
+            payload = json.loads(instance.config_path.read_text(encoding="utf-8"))
+            adb = payload.get("adb", {})
+            serial = adb.get("serial") if isinstance(adb, dict) else None
+            return str(serial) if serial else None
+        except (OSError, ValueError):
+            return None
+
+    @staticmethod
+    def _mode_info(feature: str | None) -> tuple[str | None, str]:
+        if feature == "hunt":
+            return "hunt", "純狩獵"
+        if feature == "hatch-hunt":
+            return "hatch-hunt", "自動孵蛋＋狩獵"
+        if feature and feature.startswith("hatch-stage-"):
+            return "hatch-stage", "單階段孵化"
+        return None, "執行中"
+
+    def _discover_instance(self, instance: BotInstance) -> dict[str, Any]:
+        health = _get_json(f"http://127.0.0.1:{instance.status_port}/health")
+        status = _get_json(f"http://127.0.0.1:{instance.status_port}/status") or {}
+        if health and health.get("service") == "dino-mutant-bot-status":
+            mode, mode_label = self._mode_info(health.get("feature"))
+            return {
+                "instance_id": instance.instance_id,
+                "name": instance.name,
+                "serial": self._instance_serial(instance),
+                "running": bool(status.get("running", True)),
+                "mode": mode,
+                "mode_label": mode_label,
+                "port": instance.status_port,
+                "status": status,
+                "workflow": _workflow_status(instance.logs_dir, mode),
+            }
         return {
+            "instance_id": instance.instance_id,
+            "name": instance.name,
+            "serial": self._instance_serial(instance),
             "running": False,
             "mode": None,
             "mode_label": "未啟動",
-            "port": None,
+            "port": instance.status_port,
             "status": {},
-            "workflow": _workflow_status(self.logs_dir, None),
+            "workflow": _workflow_status(instance.logs_dir, None),
         }
 
-    def _bot_command(self, mode: str, *, stage: str | None = None) -> list[str]:
+    def discover(self, instance_id: str | None = None) -> dict[str, Any]:
+        if instance_id is not None:
+            return self._discover_instance(self._instance(instance_id))
+        discovered = [self._discover_instance(instance) for instance in self._instances]
+        for active in discovered:
+            if active["running"]:
+                return active
+        return discovered[0]
+
+    def discover_all(self) -> list[dict[str, Any]]:
+        return [self._discover_instance(instance) for instance in self._instances]
+
+    def _bot_command(
+        self,
+        mode: str,
+        *,
+        stage: str | None = None,
+        instance_id: str | None = None,
+    ) -> list[str]:
         """Direct Python launch used on non-Windows hosts (no PowerShell runner)."""
 
+        instance = self._instance(instance_id)
         command = [
             sys.executable,
             str(self.app_root / "main.py"),
             "--config",
-            str(self.config_path),
+            str(instance.config_path),
         ]
         if mode == "hunt":
             command += [
@@ -291,7 +442,7 @@ class DashboardController:
                 "--speed",
                 "fast",
                 "--status-port",
-                str(self.bot_ports[mode]),
+                str(instance.status_port),
                 "--verbose",
             ]
         elif mode == "hatch-hunt":
@@ -304,7 +455,7 @@ class DashboardController:
                 "--speed",
                 "safe",
                 "--status-port",
-                str(self.bot_ports[mode]),
+                str(instance.status_port),
                 "--max-actions",
                 "0",
                 "--max-cycles",
@@ -321,7 +472,7 @@ class DashboardController:
                 "--speed",
                 "safe",
                 "--status-port",
-                str(self.bot_ports[mode]),
+                str(instance.status_port),
                 "--max-actions",
                 "0",
                 "--max-cycles",
@@ -332,7 +483,14 @@ class DashboardController:
             raise RuntimeError("Unsupported Bot mode")
         return command
 
-    def _runner_command(self, mode: str, *, stage: str | None = None) -> list[str]:
+    def _runner_command(
+        self,
+        mode: str,
+        *,
+        stage: str | None = None,
+        instance_id: str | None = None,
+    ) -> list[str]:
+        instance = self._instance(instance_id)
         scripts = self.app_root / "scripts"
         if mode == "hunt":
             runner = scripts / "run-windows.ps1"
@@ -347,10 +505,12 @@ class DashboardController:
                 "10",
                 "-MailAfterHunts",
                 "30",
+                "-ConfigPath",
+                str(instance.config_path),
                 "-Speed",
                 "fast",
                 "-StatusPort",
-                str(self.bot_ports[mode]),
+                str(instance.status_port),
             ]
         elif mode == "hatch-hunt":
             runner = scripts / "run-hatch-windows.ps1"
@@ -359,10 +519,12 @@ class DashboardController:
                 "hatch-hunt",
                 "-Mode",
                 "debug",
+                "-ConfigPath",
+                str(instance.config_path),
                 "-Speed",
                 "safe",
                 "-StatusPort",
-                str(self.bot_ports[mode]),
+                str(instance.status_port),
                 "-MaxActions",
                 "0",
                 "-MaxCycles",
@@ -375,10 +537,12 @@ class DashboardController:
                 f"hatch-stage-{stage}",
                 "-Mode",
                 "debug",
+                "-ConfigPath",
+                str(instance.config_path),
                 "-Speed",
                 "safe",
                 "-StatusPort",
-                str(self.bot_ports[mode]),
+                str(instance.status_port),
                 "-MaxActions",
                 "0",
                 "-MaxCycles",
@@ -400,31 +564,44 @@ class DashboardController:
             *arguments,
         ]
 
-    def start(self, mode: str, *, stage: str | None = None) -> dict[str, Any]:
-        if mode not in self.bot_ports:
+    def start(
+        self,
+        mode: str,
+        *,
+        stage: str | None = None,
+        instance_id: str | None = None,
+    ) -> dict[str, Any]:
+        instance = self._instance(instance_id)
+        if mode not in {"hunt", "hatch-hunt", "hatch-stage"}:
             raise RuntimeError("Unsupported Bot mode")
         if mode == "hatch-stage" and stage not in HATCH_STAGE_LABELS:
             raise RuntimeError("Unsupported hatch stage")
         with self._start_lock:
             now = time.monotonic()
-            if now - self._last_start < 5:
+            if now - self._last_start.get(instance.instance_id, 0) < 5:
                 raise RuntimeError("Bot start already requested")
-            self._last_start = now
-            active = self.discover()
+            self._last_start[instance.instance_id] = now
+            active = self.discover(instance.instance_id)
             if not active["running"]:
-                self._launch(mode, stage=stage)
-                return {"accepted": True, "action": "start", "mode": mode, "stage": stage}
+                self._launch(mode, stage=stage, instance_id=instance.instance_id)
+                return {
+                    "accepted": True,
+                    "action": "start",
+                    "instance_id": instance.instance_id,
+                    "mode": mode,
+                    "stage": stage,
+                }
             previous_label = str(active["mode_label"])
             with suppress(RuntimeError):
-                self.stop()
+                self.stop(instance.instance_id)
 
         def start_after_stop() -> None:
             deadline = time.monotonic() + 25
             while time.monotonic() < deadline:
-                if not self.discover()["running"]:
+                if not self.discover(instance.instance_id)["running"]:
                     time.sleep(1)
                     with suppress(RuntimeError), self._start_lock:
-                        self._launch(mode, stage=stage)
+                        self._launch(mode, stage=stage, instance_id=instance.instance_id)
                     return
                 time.sleep(0.5)
 
@@ -432,78 +609,99 @@ class DashboardController:
         return {
             "accepted": True,
             "action": "switch",
+            "instance_id": instance.instance_id,
             "mode": mode,
             "stage": stage,
             "message": f"正在停止{previous_label}，隨後自動啟動新模式",
         }
 
-    def _launch(self, mode: str, *, stage: str | None = None) -> None:
+    def _launch(
+        self,
+        mode: str,
+        *,
+        stage: str | None = None,
+        instance_id: str | None = None,
+    ) -> None:
+        instance = self._instance(instance_id)
         if os.name == "nt":
             creation_flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0) | getattr(
                 subprocess, "CREATE_NEW_PROCESS_GROUP", 0
             )
             subprocess.Popen(  # noqa: S603 - fixed local PowerShell runner and allowlist
-                self._runner_command(mode, stage=stage),
+                self._runner_command(mode, stage=stage, instance_id=instance.instance_id),
                 cwd=self.runtime_root,
                 creationflags=creation_flags,
             )
         else:
-            self.logs_dir.mkdir(parents=True, exist_ok=True)
-            launch_log = self.logs_dir / f"dashboard-launch-{mode}.log"
+            instance.logs_dir.mkdir(parents=True, exist_ok=True)
+            launch_log = instance.logs_dir / f"dashboard-launch-{mode}.log"
             with launch_log.open("ab") as stream:
                 subprocess.Popen(  # noqa: S603 - fixed local Python entrypoint and allowlist
-                    self._bot_command(mode, stage=stage),
-                    cwd=self.app_root,
+                    self._bot_command(mode, stage=stage, instance_id=instance.instance_id),
+                    cwd=instance.root,
                     stdout=stream,
                     stderr=subprocess.STDOUT,
                     start_new_session=True,
                 )
 
-    def _active_control(self, action: str) -> dict[str, Any]:
-        active = self.discover()
+    def _active_control(
+        self,
+        action: str,
+        instance_id: str | None = None,
+    ) -> dict[str, Any]:
+        instance = self._instance(instance_id)
+        active = self.discover(instance.instance_id)
         if not active["running"] or active["port"] is None:
-            raise RuntimeError("No running Bot was found")
+            raise RuntimeError(f"Bot instance '{instance.name}' is not running")
         return _post_json(f"http://127.0.0.1:{active['port']}/control/{action}")
 
-    def stop(self) -> dict[str, Any]:
-        self._explicit_stop_at = time.monotonic()
-        return self._active_control("stop")
+    def stop(self, instance_id: str | None = None) -> dict[str, Any]:
+        instance = self._instance(instance_id)
+        self._explicit_stop_at[instance.instance_id] = time.monotonic()
+        return self._active_control("stop", instance.instance_id)
 
-    def restart_game(self) -> dict[str, Any]:
-        return self._active_control("restart-game")
+    def restart_game(self, instance_id: str | None = None) -> dict[str, Any]:
+        return self._active_control("restart-game", instance_id)
 
-    def restart_bot(self) -> dict[str, Any]:
-        active = self.discover()
+    def restart_bot(self, instance_id: str | None = None) -> dict[str, Any]:
+        instance = self._instance(instance_id)
+        active = self.discover(instance.instance_id)
         if not active["running"] or not active["mode"]:
-            raise RuntimeError("No running Bot was found")
+            raise RuntimeError(f"Bot instance '{instance.name}' is not running")
         mode = str(active["mode"])
         if mode == "hatch-stage":
             raise RuntimeError("單階段工作不支援重啟；請停止後重新選擇階段")
-        self.stop()
+        self.stop(instance.instance_id)
 
         def restart_after_stop() -> None:
             deadline = time.monotonic() + 25
             while time.monotonic() < deadline:
-                if not self.discover()["running"]:
+                if not self.discover(instance.instance_id)["running"]:
                     time.sleep(1)
                     with suppress(RuntimeError):
-                        self.start(mode)
+                        self.start(mode, instance_id=instance.instance_id)
                     return
                 time.sleep(0.5)
 
         threading.Thread(target=restart_after_stop, daemon=True).start()
-        return {"accepted": True, "action": "restart", "mode": mode}
+        return {
+            "accepted": True,
+            "action": "restart",
+            "instance_id": instance.instance_id,
+            "mode": mode,
+        }
 
-    def run_tool(self, action: str) -> dict[str, Any]:
+    def run_tool(self, action: str, instance_id: str | None = None) -> dict[str, Any]:
+        instance = self._instance(instance_id)
         main_script = self.app_root / "main.py"
-        config = self.config_path
+        config = instance.config_path
         if action == "open-logs":
-            self.logs_dir.mkdir(parents=True, exist_ok=True)
+            instance.logs_dir.mkdir(parents=True, exist_ok=True)
             startfile = getattr(os, "startfile", None)
             if callable(startfile):
-                startfile(str(self.logs_dir))
+                startfile(str(instance.logs_dir))
             elif sys.platform == "darwin":
-                subprocess.run(["/usr/bin/open", str(self.logs_dir)], check=False)
+                subprocess.run(["/usr/bin/open", str(instance.logs_dir)], check=False)
             else:
                 raise RuntimeError("Opening folders is only available on Windows and macOS")
             return {"accepted": True, "action": action}
@@ -511,7 +709,9 @@ class DashboardController:
             command = [sys.executable, str(main_script), "--config", str(config), "diagnostics"]
         elif action == "snapshot":
             output = self.app_root / "debug" / (
-                "dashboard-" + datetime.now().strftime("%Y%m%d-%H%M%S") + ".png"
+                f"dashboard-{instance.instance_id}-"
+                + datetime.now().strftime("%Y%m%d-%H%M%S")
+                + ".png"
             )
             command = [
                 sys.executable,
@@ -541,6 +741,72 @@ class DashboardController:
             "message": completed.stdout.strip(),
         }
 
+    def add_instance(
+        self,
+        *,
+        name: str,
+        serial: str,
+        status_port: int,
+        instance_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Create an isolated config/assets/log directory for a new emulator."""
+
+        name = str(name).strip()
+        serial = str(serial).strip()
+        if not name or not serial:
+            raise ValueError("instance name and ADB serial are required")
+        if not 1 <= int(status_port) <= 65535:
+            raise ValueError("status port must be between 1 and 65535")
+        if any(instance.status_port == int(status_port) for instance in self._instances):
+            raise ValueError(f"status port {status_port} is already assigned")
+        if instance_id is None:
+            instance_id = re.sub(r"[^a-zA-Z0-9_-]+", "-", name).strip("-_").lower()
+            if not instance_id:
+                instance_id = f"instance-{len(self._instances) + 1}"
+        if not instance_id or not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}", instance_id):
+            raise ValueError("instance id must use 1-32 letters, numbers, '_' or '-'")
+        if any(instance.instance_id == instance_id for instance in self._instances):
+            raise ValueError(f"instance id '{instance_id}' already exists")
+
+        instance_root = (self.runtime_root / "instances" / instance_id).resolve()
+        if instance_root.parent != (self.runtime_root / "instances").resolve():
+            raise ValueError("invalid instance path")
+        if instance_root.exists():
+            raise ValueError(f"instance directory already exists: {instance_id}")
+        source = self._instances[0].config_path
+        try:
+            config = json.loads(source.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise RuntimeError(f"cannot read base config: {exc}") from exc
+        if not isinstance(config, dict):
+            raise RuntimeError("base config must be a JSON object")
+        adb = config.setdefault("adb", {})
+        if not isinstance(adb, dict):
+            raise RuntimeError("base config adb section must be an object")
+        adb["serial"] = serial
+
+        instance_root.mkdir(parents=True)
+        try:
+            shutil.copytree(self.app_root / "assets", instance_root / "assets")
+            config_path = instance_root / "config.json"
+            config_path.write_text(
+                json.dumps(config, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            instance = BotInstance(instance_id, name, config_path, int(status_port))
+            self._instances.append(instance)
+            self._save_instances()
+        except Exception:
+            shutil.rmtree(instance_root, ignore_errors=True)
+            raise
+        return {
+            "instance_id": instance.instance_id,
+            "name": instance.name,
+            "serial": serial,
+            "status_port": instance.status_port,
+            "config": str(instance.config_path),
+        }
+
 
 class _DashboardHttpServer(ThreadingHTTPServer):
     daemon_threads = True
@@ -552,11 +818,13 @@ class _DashboardHttpServer(ThreadingHTTPServer):
         hatch_inventory: HatchBoostInventoryStore,
         controller: DashboardController,
         assets: Path,
+        dashboard: DashboardServer,
     ) -> None:
         self.metrics = metrics
         self.hatch_inventory = hatch_inventory
         self.controller = controller
         self.assets = assets
+        self.dashboard = dashboard
         super().__init__(address, _DashboardHandler)
 
 
@@ -600,7 +868,8 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         return payload
 
     def do_GET(self) -> None:  # noqa: N802
-        path = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        path = parsed.path
         if path in {"/", "/index.html"}:
             self._send_asset("index.html")
         elif path == "/dashboard.css":
@@ -618,16 +887,8 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 },
             )
         elif path == "/api/overview":
-            self._send_json(
-                200,
-                {
-                    "active": self.server.controller.discover(),
-                    "metrics": self.server.metrics.snapshot(),
-                    "hatch_boost_inventory": (
-                        self.server.hatch_inventory.snapshot().as_dict()
-                    ),
-                },
-            )
+            selected = parse_qs(parsed.query).get("instance", [None])[0]
+            self._send_json(200, self.server.dashboard._overview(selected))
         else:
             self._send_json(404, {"error": "not_found"})
 
@@ -639,21 +900,25 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         if self.headers.get("X-Dino-Dashboard") != "1":
             self._send_json(403, {"error": "dashboard_header_required"})
             return
-        action = urlparse(self.path).path.removeprefix("/api/control/")
+        parsed = urlparse(self.path)
+        action = parsed.path.removeprefix("/api/control/")
+        instance_id = parse_qs(parsed.query).get("instance", [None])[0]
         try:
             if action == "start-hunt":
-                result = self.server.controller.start("hunt")
+                result = self.server.controller.start("hunt", instance_id=instance_id)
             elif action == "start-hatch-hunt":
-                result = self.server.controller.start("hatch-hunt")
+                result = self.server.controller.start("hatch-hunt", instance_id=instance_id)
             elif action.startswith("start-stage-"):
                 stage = action.removeprefix("start-stage-")
-                result = self.server.controller.start("hatch-stage", stage=stage)
+                result = self.server.controller.start(
+                    "hatch-stage", stage=stage, instance_id=instance_id
+                )
             elif action == "stop":
-                result = self.server.controller.stop()
+                result = self.server.controller.stop(instance_id)
             elif action == "restart-game":
-                result = self.server.controller.restart_game()
+                result = self.server.controller.restart_game(instance_id)
             elif action == "restart-bot":
-                result = self.server.controller.restart_bot()
+                result = self.server.controller.restart_bot(instance_id)
             elif action == "shutdown-dashboard":
                 result = {
                     "accepted": True,
@@ -671,7 +936,10 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 remaining = payload.get("remaining")
                 if isinstance(remaining, bool) or not isinstance(remaining, int):
                     raise ValueError("remaining must be an integer")
-                inventory = self.server.hatch_inventory.set_remaining(remaining)
+                target = self.server.controller._instance(instance_id).instance_id
+                inventory = self.server.dashboard._inventory_by_instance[target].set_remaining(
+                    remaining
+                )
                 result = {
                     "accepted": True,
                     "action": action,
@@ -683,7 +951,10 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 enabled = payload.get("enabled")
                 if not isinstance(enabled, bool):
                     raise ValueError("enabled must be a boolean")
-                inventory = self.server.hatch_inventory.set_enabled(enabled)
+                target = self.server.controller._instance(instance_id).instance_id
+                inventory = self.server.dashboard._inventory_by_instance[target].set_enabled(
+                    enabled
+                )
                 result = {
                     "accepted": True,
                     "action": action,
@@ -695,7 +966,16 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                     ),
                 }
             elif action in {"diagnostics", "snapshot", "open-logs"}:
-                result = self.server.controller.run_tool(action)
+                result = self.server.controller.run_tool(action, instance_id)
+            elif action == "add-instance":
+                payload = self._read_json()
+                result = self.server.controller.add_instance(
+                    name=payload.get("name", ""),
+                    serial=payload.get("serial", ""),
+                    status_port=payload.get("status_port", 0),
+                    instance_id=payload.get("id"),
+                )
+                self.server.dashboard._refresh_instance_stores()
             else:
                 self._send_json(404, {"error": "not_found"})
                 return
@@ -726,9 +1006,15 @@ class DashboardServer:
         self.database = database
         self.port = port
         self.assets = assets or Path(__file__).with_name("dashboard_assets")
-        self.metrics = MetricsStore(database, logs_dir)
-        self.hatch_inventory = HatchBoostInventoryStore(database)
         self.controller = DashboardController(runtime_root, logs_dir, config_path=config_path)
+        self._metrics_by_instance: dict[str, MetricsStore] = {}
+        self._inventory_by_instance: dict[str, HatchBoostInventoryStore] = {}
+        self._refresh_instance_stores()
+        # Backwards-compatible handles for integrations that used the primary
+        # instance's stores directly.
+        primary = self.controller.instances[0].instance_id
+        self.metrics = self._metrics_by_instance[primary]
+        self.hatch_inventory = self._inventory_by_instance[primary]
         self._server: _DashboardHttpServer | None = None
         self._thread: threading.Thread | None = None
         self._auto_resume_thread: threading.Thread | None = None
@@ -742,6 +1028,64 @@ class DashboardServer:
     AUTO_RESUME_MODE = "hatch-hunt"
     AUTO_RESUME_IDLE_SECONDS = 10.0
 
+    def _refresh_instance_stores(self) -> None:
+        for instance in self.controller.instances:
+            self._metrics_by_instance.setdefault(
+                instance.instance_id,
+                MetricsStore(instance.database, instance.logs_dir),
+            )
+            self._inventory_by_instance.setdefault(
+                instance.instance_id,
+                HatchBoostInventoryStore(instance.database),
+            )
+
+    def _overview(self, selected_id: str | None = None) -> dict[str, Any]:
+        self._refresh_instance_stores()
+        definitions = self.controller.instances
+        if len(definitions) == 1:
+            # Keep the old monkeypatch/integration seam for single-instance
+            # callers while the normal multi-instance path is explicit.
+            active_items = [self.controller.discover()]
+        else:
+            active_items = self.controller.discover_all()
+        by_id: dict[str, dict[str, Any]] = {}
+        for item in active_items:
+            # Older integrations may provide the pre-multi-instance discovery
+            # shape; treat that result as the primary instance.
+            item.setdefault("instance_id", definitions[0].instance_id)
+            by_id[item["instance_id"]] = item
+        instances: list[dict[str, Any]] = []
+        for definition in definitions:
+            active = by_id.get(definition.instance_id) or self.controller.discover(
+                definition.instance_id
+            )
+            metrics = self._metrics_by_instance[definition.instance_id].snapshot()
+            inventory = self._inventory_by_instance[definition.instance_id].snapshot()
+            instances.append(
+                {
+                    "id": definition.instance_id,
+                    "name": definition.name,
+                    "serial": active.get("serial"),
+                    "status_port": definition.status_port,
+                    "active": active,
+                    "metrics": metrics,
+                    "hatch_boost_inventory": inventory.as_dict(),
+                }
+            )
+        selected = next(
+            (item for item in instances if item["id"] == selected_id),
+            None,
+        )
+        if selected is None:
+            selected = next((item for item in instances if item["active"]["running"]), instances[0])
+        return {
+            "selected_instance": selected["id"],
+            "instances": instances,
+            "active": selected["active"],
+            "metrics": selected["metrics"],
+            "hatch_boost_inventory": selected["hatch_boost_inventory"],
+        }
+
     def start(self) -> None:
         if self._server is not None:
             return
@@ -751,6 +1095,7 @@ class DashboardServer:
             self.hatch_inventory,
             self.controller,
             self.assets,
+            self,
         )
         if self._auto_resume_thread is None:
             self._auto_resume_thread = threading.Thread(
@@ -766,39 +1111,44 @@ class DashboardServer:
         dashboard stop suppresses the resume - stopping means stopping.
         """
 
-        last_mode: str | None = None
-        idle_since: float | None = None
+        last_mode: dict[str, str] = {}
+        idle_since: dict[str, float] = {}
         while not self._auto_resume_stop.wait(3):
             try:
-                active = self.controller.discover()
+                active_items = self.controller.discover_all()
             except Exception:
                 continue
-            if active["running"]:
-                last_mode = str(active["mode"])
-                idle_since = None
-                continue
-            if last_mode != "hatch-stage":
-                idle_since = None
-                continue
-            now = time.monotonic()
-            if now - self.controller._explicit_stop_at < 60:
-                # 使用者主動按停止:這次不自動接手。
-                last_mode = None
-                idle_since = None
-                continue
-            if now - self.controller._last_start < 30:
-                # 剛有啟動請求(可能是切換的延遲啟動),不插手。
-                idle_since = None
-                continue
-            if idle_since is None:
-                idle_since = now
-                continue
-            if now - idle_since < self.AUTO_RESUME_IDLE_SECONDS:
-                continue
-            last_mode = None
-            idle_since = None
-            with suppress(RuntimeError):
-                self.controller.start(self.AUTO_RESUME_MODE)
+            seen: set[str] = set()
+            for active in active_items:
+                instance_id = str(active["instance_id"])
+                seen.add(instance_id)
+                if active["running"]:
+                    last_mode[instance_id] = str(active["mode"])
+                    idle_since.pop(instance_id, None)
+                    continue
+                if last_mode.get(instance_id) != "hatch-stage":
+                    idle_since.pop(instance_id, None)
+                    continue
+                now = time.monotonic()
+                if now - self.controller._explicit_stop_at.get(instance_id, 0) < 60:
+                    last_mode.pop(instance_id, None)
+                    idle_since.pop(instance_id, None)
+                    continue
+                if now - self.controller._last_start.get(instance_id, 0) < 30:
+                    idle_since.pop(instance_id, None)
+                    continue
+                if instance_id not in idle_since:
+                    idle_since[instance_id] = now
+                    continue
+                if now - idle_since[instance_id] < self.AUTO_RESUME_IDLE_SECONDS:
+                    continue
+                last_mode.pop(instance_id, None)
+                idle_since.pop(instance_id, None)
+                with suppress(RuntimeError):
+                    self.controller.start(self.AUTO_RESUME_MODE, instance_id=instance_id)
+            for instance_id in (set(last_mode) | set(idle_since)) - seen:
+                last_mode.pop(instance_id, None)
+                idle_since.pop(instance_id, None)
 
     def serve_forever(self, *, open_browser: bool = False) -> None:
         self.start()

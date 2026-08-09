@@ -38,9 +38,11 @@ class _StatusHttpServer(ThreadingHTTPServer):
         address: tuple[str, int],
         logs_dir: Path,
         control_handlers: dict[str, Callable[[], bool | None]],
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         self.logs_dir = logs_dir
         self.control_handlers = control_handlers
+        self.metadata = dict(metadata or {})
         super().__init__(address, _StatusHandler)
 
 
@@ -59,15 +61,14 @@ class _StatusHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         path = urlparse(self.path).path.rstrip("/") or "/"
         if path == "/health":
-            self._send_json(
-                200,
-                {
-                    "ok": True,
-                    "service": "dino-mutant-bot-status",
-                    "api_version": 2,
-                    "process_id": os.getpid(),
-                },
-            )
+            payload = {
+                "ok": True,
+                "service": "dino-mutant-bot-status",
+                "api_version": 2,
+                "process_id": os.getpid(),
+            }
+            payload.update(self.server.metadata)
+            self._send_json(200, payload)
             return
         status = build_runtime_status(self.server.logs_dir)
         if path == "/status":
@@ -131,10 +132,12 @@ class LocalStatusServer:
         port: int = 8765,
         *,
         control_handlers: dict[str, Callable[[], bool | None]] | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         self.logs_dir = logs_dir
         self.port = port
         self.control_handlers = dict(control_handlers or {})
+        self.metadata = dict(metadata or {})
         self._server: _StatusHttpServer | None = None
         self._thread: threading.Thread | None = None
 
@@ -150,6 +153,7 @@ class LocalStatusServer:
             ("127.0.0.1", self.port),
             self.logs_dir,
             self.control_handlers,
+            self.metadata,
         )
         self._thread = threading.Thread(
             target=self._server.serve_forever,

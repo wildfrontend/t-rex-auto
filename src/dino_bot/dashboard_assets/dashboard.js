@@ -32,6 +32,42 @@ function formatDuration(seconds) {
   return `${String(Math.floor(value / 60)).padStart(2, "0")}:${String(value % 60).padStart(2, "0")}`;
 }
 
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>'"]/g, (character) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", "\"": "&quot;",
+  }[character]));
+}
+
+let selectedInstanceId = null;
+
+function renderInstances(items) {
+  const root = $("instanceList");
+  if (!items || !items.length) {
+    root.innerHTML = '<p class="empty">尚未設定 Bot 實例</p>';
+    return;
+  }
+  root.innerHTML = items.map((item) => {
+    const active = item.active || {};
+    const running = Boolean(active.running);
+    const selected = item.id === selectedInstanceId;
+    const serial = item.serial || "未設定 ADB";
+    return `<article class="instance-card${running ? " running" : ""}${selected ? " selected" : ""}" data-instance-select="${escapeHtml(item.id)}">
+      <div class="instance-card-head">
+        <strong>${escapeHtml(item.name)}</strong>
+        <span class="instance-state${running ? " running" : ""}">${running ? "● 執行中" : "○ 已停止"}</span>
+      </div>
+      <div class="instance-card-meta"><span>${escapeHtml(serial)}</span><span>Port ${item.status_port}</span></div>
+      <div class="instance-card-meta"><span>${escapeHtml(active.mode_label || "未啟動")}</span><span>${escapeHtml((active.status || {}).current_stage || "—")}</span></div>
+      <div class="instance-card-actions">
+        <button type="button" data-instance-action="select" data-instance-id="${escapeHtml(item.id)}">檢視</button>
+        <button type="button" data-instance-action="start-hatch-hunt" data-instance-id="${escapeHtml(item.id)}">孵蛋＋狩獵</button>
+        <button type="button" data-instance-action="start-hunt" data-instance-id="${escapeHtml(item.id)}">純狩獵</button>
+        <button type="button" class="danger" data-instance-action="stop" data-instance-id="${escapeHtml(item.id)}">停止</button>
+      </div>
+    </article>`;
+  }).join("");
+}
+
 function renderActive(active) {
   $("modeLabel").textContent = active.mode_label || "未啟動";
   $("liveDot").classList.toggle("running", Boolean(active.running));
@@ -91,6 +127,10 @@ function renderEvents(items) {
 }
 
 function render(data) {
+  if (!selectedInstanceId || !data.instances?.some((item) => item.id === selectedInstanceId)) {
+    selectedInstanceId = data.selected_instance || data.instances?.[0]?.id || null;
+  }
+  renderInstances(data.instances || []);
   renderActive(data.active || {});
   const inventory = data.hatch_boost_inventory || {};
   const stock = Number(inventory.remaining ?? 100);
@@ -130,7 +170,8 @@ async function refresh() {
   if (refreshing) return;
   refreshing = true;
   try {
-    const response = await fetch("/api/overview", { cache: "no-store" });
+    const query = selectedInstanceId ? `?instance=${encodeURIComponent(selectedInstanceId)}` : "";
+    const response = await fetch(`/api/overview${query}`, { cache: "no-store" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     render(await response.json());
   } catch (error) {
@@ -144,13 +185,15 @@ async function refresh() {
 
 async function invokeControl(button) {
   const action = button.dataset.action;
+  const instanceId = button.dataset.instanceId || selectedInstanceId;
   if (button.dataset.confirm && !window.confirm(button.dataset.confirm)) return;
   document.querySelectorAll("button[data-action]").forEach((item) => { item.disabled = true; });
   const result = $("commandResult");
   result.classList.remove("error");
   result.textContent = "指令執行中…";
   try {
-    const response = await fetch(`/api/control/${action}`, {
+    const suffix = instanceId ? `?instance=${encodeURIComponent(instanceId)}` : "";
+    const response = await fetch(`/api/control/${action}${suffix}`, {
       method: "POST",
       headers: { "X-Dino-Dashboard": "1" },
     });
@@ -170,6 +213,58 @@ document.querySelectorAll("button[data-action]").forEach((button) => {
   button.addEventListener("click", () => invokeControl(button));
 });
 
+$("instanceList").addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-instance-action]");
+  const card = event.target.closest("[data-instance-select]");
+  const instanceId = button?.dataset.instanceId || card?.dataset.instanceSelect;
+  if (!instanceId) return;
+  if (!button || button.dataset.instanceAction === "select") {
+    selectedInstanceId = instanceId;
+    refresh();
+    return;
+  }
+  invokeControl({
+    dataset: { action: button.dataset.instanceAction, instanceId },
+    disabled: false,
+  });
+});
+
+$("addInstanceToggle").addEventListener("click", () => {
+  $("instanceForm").classList.toggle("hidden");
+});
+$("addInstanceCancel").addEventListener("click", () => {
+  $("instanceForm").classList.add("hidden");
+});
+$("instanceForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector("button.primary");
+  button.disabled = true;
+  try {
+    const response = await fetch("/api/control/add-instance", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Dino-Dashboard": "1" },
+      body: JSON.stringify({
+        name: $("instanceName").value,
+        serial: $("instanceSerial").value,
+        status_port: Number($("instancePort").value),
+      }),
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+    selectedInstanceId = payload.instance_id;
+    form.reset();
+    $("instanceForm").classList.add("hidden");
+    $("commandResult").textContent = `已建立實例：${payload.name}`;
+    await refresh();
+  } catch (error) {
+    $("commandResult").classList.add("error");
+    $("commandResult").textContent = String(error.message || error);
+  } finally {
+    button.disabled = false;
+  }
+});
+
 $("boostStockUpdate").addEventListener("click", async () => {
   const remaining = Number($("boostStockInput").value);
   const result = $("commandResult");
@@ -182,7 +277,8 @@ $("boostStockUpdate").addEventListener("click", async () => {
   result.classList.remove("error");
   result.textContent = "更新本機庫存…";
   try {
-    const response = await fetch("/api/control/set-boost-stock", {
+    const suffix = selectedInstanceId ? `?instance=${encodeURIComponent(selectedInstanceId)}` : "";
+    const response = await fetch(`/api/control/set-boost-stock${suffix}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -211,7 +307,8 @@ $("boostEnabled").addEventListener("change", async () => {
     ? "設定下一輪孵化使用加速券…"
     : "關閉加速券使用…";
   try {
-    const response = await fetch("/api/control/set-boost-enabled", {
+    const suffix = selectedInstanceId ? `?instance=${encodeURIComponent(selectedInstanceId)}` : "";
+    const response = await fetch(`/api/control/set-boost-enabled${suffix}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

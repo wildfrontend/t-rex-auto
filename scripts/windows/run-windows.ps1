@@ -14,20 +14,44 @@ param(
     [int]$HuntConfirmDelayMs = -1,
     [int]$IdleDelayMs = -1,
     [ValidateRange(0, 65535)]
-    [int]$StatusPort = 8765
+    [int]$StatusPort = 8765,
+    [string]$ConfigPath = ""
 )
 
 $ErrorActionPreference = "Stop"
 $AppRoot = Split-Path -Parent $PSScriptRoot
 $RuntimeRoot = Split-Path -Parent $AppRoot
 $PythonExecutable = Join-Path $RuntimeRoot "python\python.exe"
+$DefaultConfigPath = Join-Path $AppRoot "config.json"
+if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
+    $ConfigPath = $DefaultConfigPath
+} else {
+    $ConfigPath = [IO.Path]::GetFullPath($ConfigPath)
+}
 if (-not (Test-Path $PythonExecutable)) {
     throw "Windows runtime is not installed. Run start-dashboard.cmd for guided setup."
+}
+if (-not (Test-Path -LiteralPath $ConfigPath)) {
+    throw "Bot configuration not found: $ConfigPath"
+}
+
+$ConfigToken = [Regex]::Escape($ConfigPath)
+$ExistingBots = @(
+    Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
+        Where-Object {
+            $_.CommandLine -match "main.py" -and
+            $_.CommandLine -match " run " -and
+            $_.CommandLine -match $ConfigToken
+        }
+)
+if ($ExistingBots.Count -gt 0) {
+    $ProcessIds = ($ExistingBots | ForEach-Object { $_.ProcessId }) -join ", "
+    throw "Another Bot instance using this config is already running (PID: $ProcessIds). Stop it before starting Hunt."
 }
 
 $RunArguments = @(
     (Join-Path $AppRoot "main.py"),
-    "--config", (Join-Path $AppRoot "config.json"),
+    "--config", $ConfigPath,
     "run", "--mode", $Mode,
     "--max-actions", $MaxActions,
     "--max-cycles", $MaxCycles,

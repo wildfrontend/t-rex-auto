@@ -23,6 +23,24 @@
     </header>
 
     <main>
+      <section class="panel instances-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="section-label">BOT INSTANCES</p>
+            <h3>多開實例管理</h3>
+          </div>
+          <button id="addInstanceToggle" type="button">新增模擬器</button>
+        </div>
+        <div id="instanceList" class="instance-grid"><p class="empty">讀取實例中…</p></div>
+        <form id="instanceForm" class="instance-form hidden">
+          <label>名稱<input id="instanceName" required maxlength="40" placeholder="例如：主力二號"></label>
+          <label>ADB serial<input id="instanceSerial" required placeholder="127.0.0.1:16385"></label>
+          <label>狀態 Port<input id="instancePort" required type="number" min="1" max="65535" value="8775"></label>
+          <button class="primary" type="submit">建立實例</button>
+          <button id="addInstanceCancel" type="button">取消</button>
+        </form>
+      </section>
+
       <section class="hero panel">
         <div>
           <p class="section-label">目前工作流程</p>

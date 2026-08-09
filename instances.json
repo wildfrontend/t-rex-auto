@@ -1,0 +1,10 @@
+{
+  "instances": [
+    {
+      "id": "main",
+      "name": "主力模擬器",
+      "config": "app/config.json",
+      "status_port": 8765
+    }
+  ]
+}
