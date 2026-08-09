@@ -1395,8 +1395,10 @@ def test_cave_estimate_triggers_screening_at_cull_threshold() -> None:
     )
     planner._child = planner._new_hatch()
     planner._start_hatch_cycle()
-    planner._cave_population = 340
-    planner._hatch_child.hatched = 12
+    # The game hard-stops at 350/350, so the emergency path must trigger on
+    # the exact boundary; a synthetic 352 state is not reachable in practice.
+    planner._cave_population = 349
+    planner._hatch_child.hatched = 1
     planner.on_action_success(hatch.CLOSE_BUTTON)
     assert planner._management_pending is True
     assert planner._collect_only_after_empty is False

@@ -2,7 +2,7 @@
 
 docs/auto-hatch-plan.md §4.5: after collecting eggs the bot slides the map to
 the cave view, reads the N/350 dino counter from the top-left HUD, and only
-runs the cull flow when the count exceeds the configured threshold. The
+runs the cull flow when the count reaches the configured threshold. The
 screen-driving part (cave template, swipe calibration, battle loop) needs
 on-device work; the judgement implemented here is verifiable offline.
 """
