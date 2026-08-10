@@ -66,6 +66,13 @@ chmod +x "${package_root}/start-dashboard.command"
 find "${package_root}" -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
 find "${package_root}" -name ".DS_Store" -delete 2>/dev/null || true
 
-(cd "${output_root}" && zip -qr "DinoMutantBot-v${version}-macOS.zip" "DinoMutantBot-v${version}-macOS")
+if command -v zip >/dev/null 2>&1; then
+  (cd "${output_root}" && zip -qr "DinoMutantBot-v${version}-macOS.zip" "DinoMutantBot-v${version}-macOS")
+elif command -v python3 >/dev/null 2>&1; then
+  (cd "${output_root}" && python3 -m zipfile -c "DinoMutantBot-v${version}-macOS.zip" "DinoMutantBot-v${version}-macOS")
+else
+  echo "Neither zip nor python3 is available to create the release archive." >&2
+  exit 1
+fi
 echo "已打包:${package_root}"
 echo "已打包:${package_root}.zip"
