@@ -288,6 +288,7 @@ RETRYABLE_NAVIGATION_TARGETS: frozenset[str] = frozenset(
     }
 )
 MAX_NAVIGATION_RETRIES = 2
+MAX_SCREENING_RECOVERY_FAILURES = 3
 
 
 HOME_FOREGROUND_TYPES: frozenset[str] = frozenset(
@@ -1506,6 +1507,8 @@ class FullHatchPlanner:
         self._egg_pile_capacity_check_pending = False
         self._egg_pile_capacity_rechecked = False
         self._egg_pile_retry_pending = False
+        self._screening_blocked = False
+        self._screening_recovery_failures: dict[str, int] = {}
         self.completed_management_cycles = 0
         self._start_hatch_cycle()
         if self.standalone_stage is not None:
@@ -1526,12 +1529,12 @@ class FullHatchPlanner:
     def is_complete(self) -> bool:
         # A standalone/full-only run has no hunt owner to fall back to. Stop
         # safely after calibration is blocked instead of spinning forever.
-        return self._complete or self._egg_pile_blocked
+        return self._complete or self._egg_pile_blocked or self._screening_blocked
 
     def is_hatch_blocked(self) -> bool:
         """Whether egg-pile recovery exhausted its safe retry budget."""
 
-        return self._egg_pile_blocked
+        return self._egg_pile_blocked or self._screening_blocked
 
     def next_ready_delay_ms(self) -> int:
         method = getattr(self._child, "next_ready_delay_ms", None)
@@ -1605,6 +1608,8 @@ class FullHatchPlanner:
         self._egg_pile_capacity_check_pending = False
         self._egg_pile_capacity_rechecked = False
         self._egg_pile_retry_pending = False
+        self._screening_blocked = False
+        self._screening_recovery_failures.clear()
         if self.standalone_stage is not None:
             self._stage = "recover_home"
             self._child = HatchHomeRecoveryPlanner(
@@ -1844,6 +1849,15 @@ class FullHatchPlanner:
     def on_retry_exhausted(self, target: Target) -> None:
         """Trip a workflow fuse instead of allowing synthetic target reuse."""
 
+        if target.type == OPEN_NEST:
+            self._screening_blocked = True
+            self._stage = "screening_blocked"
+            self._no_target_since = None
+            self.logger.error(
+                "Hatch screening | My Nest failed after bounded retries"
+                " | blocking hatch instead of reopening forever"
+            )
+            return
         if target.type != hatch_feature.EGG_PILE:
             return
         if (
@@ -1955,7 +1969,7 @@ class FullHatchPlanner:
             )
 
     def choose(self, frame: Frame, detections: Sequence[Detection]) -> Target | None:
-        if self._complete or self._egg_pile_blocked:
+        if self.is_complete():
             return None
 
         # Login overlays sit above a still-detectable outdoor HUD. Handle them
@@ -2374,6 +2388,28 @@ class FullHatchPlanner:
     def _begin_home_recovery(self, reason: str) -> None:
         if self.standalone_stage is not None and self._standalone_started:
             self._standalone_returning = True
+        if "parent_stats_unreadable" in reason:
+            failure_key = f"{self._stage}:parent_stats_unreadable"
+            failures = self._screening_recovery_failures.get(failure_key, 0) + 1
+            self._screening_recovery_failures[failure_key] = failures
+            self.logger.warning(
+                "Hatch screening | repeated calibration failure"
+                " | key=%s | failure=%d/%d",
+                failure_key,
+                failures,
+                MAX_SCREENING_RECOVERY_FAILURES,
+            )
+            if failures >= MAX_SCREENING_RECOVERY_FAILURES:
+                self._screening_blocked = True
+                self._stage = "screening_blocked"
+                self._no_target_since = None
+                self._recovery_reason = reason
+                self.logger.error(
+                    "Hatch screening | calibration recovery exhausted"
+                    " | key=%s | blocking hatch instead of looping forever",
+                    failure_key,
+                )
+                return
         self.logger.warning("Hatch full | recovering to centered home | %s", reason)
         self._stage = "recover_home"
         self._child = HatchHomeRecoveryPlanner(
@@ -2685,6 +2721,10 @@ class FullHatchPlanner:
             )
             return
         completed_stage = self._stage
+        self._screening_recovery_failures.pop(
+            f"{completed_stage}:parent_stats_unreadable",
+            None,
+        )
         self._screening_completed.add(completed_stage)
         self.logger.info(
             "Hatch full | screening stage completed | stage=%s",

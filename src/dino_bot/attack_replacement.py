@@ -19,8 +19,8 @@ from .models import Detection, Frame, Target
 from .nest_filter import NestTagFilterTestPlanner
 from .nest_readout import (
     ATTACK_PARENT_REGIONS,
-    ConsecutiveReadConsensus,
     SELECT_ROW_PITCH,
+    ConsecutiveReadConsensus,
     read_attack_parents,
 )
 from .nests import (

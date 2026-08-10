@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Generic, TypeVar
 
 from .digits import DigitReader
 from .models import Image
@@ -48,10 +47,7 @@ SELECT_FIRST_ROW_REGIONS: StatRegions = (
 )
 SELECT_ROW_PITCH = 85
 DEFAULT_VISIBLE_ROWS = 9
-Readout = TypeVar("Readout")
-
-
-class ConsecutiveReadConsensus(Generic[Readout]):
+class ConsecutiveReadConsensus[Readout]:
     """Accept a readout only after it repeats across consecutive frames."""
 
     def __init__(self, minimum_reads: int = 1) -> None:

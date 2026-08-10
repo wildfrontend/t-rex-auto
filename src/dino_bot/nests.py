@@ -70,9 +70,10 @@ def stat_value_is_valid(
             return False
         if guard.max_value is not None and value > guard.max_value:
             return False
-        if guard.multiple_of is not None:
-            if guard.multiple_of <= 0 or value % guard.multiple_of != 0:
-                return False
+        if guard.multiple_of is not None and (
+            guard.multiple_of <= 0 or value % guard.multiple_of != 0
+        ):
+            return False
     return True
 
 

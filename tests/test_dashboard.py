@@ -213,7 +213,12 @@ def test_dashboard_builds_commands_for_the_selected_instance(tmp_path: Path) -> 
         json.dumps(
             {
                 "instances": [
-                    {"id": "main", "name": "主力", "config": "app/config.json", "status_port": 8765},
+                    {
+                        "id": "main",
+                        "name": "主力",
+                        "config": "app/config.json",
+                        "status_port": 8765,
+                    },
                     {
                         "id": "second",
                         "name": "第二台",

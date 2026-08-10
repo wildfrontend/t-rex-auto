@@ -13,6 +13,7 @@ from dino_bot.digits import (
     _count_enclosed_holes,
     _prefer_matching_topology,
     _prefer_narrow_one,
+    _prefer_tall_hole_zero,
     segment_glyphs,
 )
 
@@ -126,6 +127,57 @@ def test_close_5_6_8_match_prefers_matching_topology() -> None:
         "5",
         0.900,
     )
+
+
+def test_close_six_match_with_tall_hole_prefers_zero() -> None:
+    raster = np.zeros(GLYPH_SIZE[::-1], dtype=np.uint8)
+    cv2.rectangle(raster, (4, 3), (20, 29), 255, thickness=3)
+
+    assert _prefer_tall_hole_zero(
+        "6",
+        0.770,
+        {"0": 0.747, "6": 0.770},
+        raster,
+    ) == ("0", 0.747)
+
+
+def test_short_six_bowl_is_not_changed_to_zero() -> None:
+    raster = np.zeros(GLYPH_SIZE[::-1], dtype=np.uint8)
+    cv2.rectangle(raster, (8, 16), (19, 28), 255, thickness=3)
+
+    assert _prefer_tall_hole_zero(
+        "6",
+        0.770,
+        {"0": 0.747, "6": 0.770},
+        raster,
+    ) == ("6", 0.770)
+
+
+def test_live_hp_zero_with_antialiased_tail_is_not_read_as_six(
+    reader: DigitReader,
+) -> None:
+    # 2026-08-10 live right-parent HP ended in a real zero, but its short
+    # bottom tail scored 0.770 as ``6`` versus 0.747 as ``0``.  Preserve the
+    # exact thresholded 8x10 glyph here without retaining account screenshots.
+    rows = (
+        "..#####.",
+        ".###.###",
+        "##....##",
+        "##.....#",
+        "##.....#",
+        "##.....#",
+        "##.....#",
+        ".##...##",
+        ".######.",
+        "...###..",
+    )
+    image = np.full((14, 12), 255, dtype=np.uint8)
+    for y, row in enumerate(rows, 2):
+        for x, pixel in enumerate(row, 2):
+            if pixel == "#":
+                image[y, x] = 0
+
+    assert reader.read(image) == "0"
 
 
 # -- regression against shipped glyphs (offline T6) ---------------------------

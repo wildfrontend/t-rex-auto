@@ -37,6 +37,13 @@ NARROW_ONE_MAX_SCORE_GAP = 0.05
 # template.  Their enclosed-hole counts are stable, so prefer the matching
 # topology only while the pixel scores are still close enough to be ambiguous.
 TOPOLOGY_MAX_SCORE_GAP = 0.08
+# Small HP zeroes can gain a short anti-aliased tail and score closer to the
+# shipped ``6`` template.  Both glyphs have one enclosed hole, but a zero's
+# hole spans most of the glyph height while a six's hole is confined to the
+# lower bowl.  Only override a close 6/0 score when that structural proof is
+# present.
+ZERO_MAX_SCORE_GAP = 0.05
+ZERO_MIN_HOLE_HEIGHT_RATIO = 0.55
 
 
 class DigitReadError(ValueError):
@@ -50,12 +57,17 @@ class Glyph:
     enclosed_holes: int
 
 
-def _count_enclosed_holes(raster: np.ndarray) -> int:
-    """Count background regions fully enclosed by a white glyph raster."""
+def _enclosed_hole_boxes(
+    raster: np.ndarray,
+) -> list[tuple[int, int, int, int, int]]:
+    """Return connected background boxes fully enclosed by a white glyph."""
 
     background = (raster == 0).astype(np.uint8)
-    count, labels = cv2.connectedComponents(background, connectivity=4)
-    holes = 0
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(
+        background,
+        connectivity=4,
+    )
+    holes: list[tuple[int, int, int, int, int]] = []
     for label in range(1, count):
         if (
             np.any(labels[0, :] == label)
@@ -64,8 +76,15 @@ def _count_enclosed_holes(raster: np.ndarray) -> int:
             or np.any(labels[:, -1] == label)
         ):
             continue
-        holes += 1
+        x, y, width, height, area = stats[label]
+        holes.append((int(x), int(y), int(width), int(height), int(area)))
     return holes
+
+
+def _count_enclosed_holes(raster: np.ndarray) -> int:
+    """Count background regions fully enclosed by a white glyph raster."""
+
+    return len(_enclosed_hole_boxes(raster))
 
 
 def _prefer_matching_topology(
@@ -117,6 +136,28 @@ def _prefer_narrow_one(
         and best_score - one_score <= NARROW_ONE_MAX_SCORE_GAP
     ):
         return "1", one_score
+    return best_char, best_score
+
+
+def _prefer_tall_hole_zero(
+    best_char: str,
+    best_score: float,
+    scores: dict[str, float],
+    raster: np.ndarray,
+) -> tuple[str, float]:
+    """Correct a close 0/6 match using the enclosed hole's vertical span."""
+
+    zero_score = scores.get("0", 0.0)
+    holes = _enclosed_hole_boxes(raster)
+    if (
+        best_char == "6"
+        and len(holes) == 1
+        and raster.shape[0] > 0
+        and holes[0][3] / raster.shape[0] >= ZERO_MIN_HOLE_HEIGHT_RATIO
+        and zero_score >= MIN_MATCH_SCORE
+        and best_score - zero_score <= ZERO_MAX_SCORE_GAP
+    ):
+        return "0", zero_score
     return best_char, best_score
 
 
@@ -210,6 +251,12 @@ class DigitReader:
                 best_score,
                 scores,
                 bbox,
+            )
+            best_char, best_score = _prefer_tall_hole_zero(
+                best_char,
+                best_score,
+                scores,
+                raster,
             )
             chars.append(best_char if best_score >= MIN_MATCH_SCORE else "?")
         return "".join(chars)

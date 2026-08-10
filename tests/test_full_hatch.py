@@ -1341,6 +1341,36 @@ def test_failed_egg_pile_captures_calibration_evidence_and_fuses_hatch() -> None
     assert planner.choose(frame(), [detection(hatch.HOME_ANCHOR, 59, 561)]) is None
 
 
+def test_repeated_parent_calibration_recovery_blocks_hatch() -> None:
+    planner = make_full_planner()
+
+    for attempt in range(1, 4):
+        planner._stage = "hp"
+        planner._begin_home_recovery(
+            "no actionable target at full_hp:parent_stats_unreadable"
+        )
+        assert planner.is_hatch_blocked() is (attempt == 3)
+
+    assert planner.last_stage().startswith("full_screening_blocked:")
+    assert planner.is_complete()
+
+
+def test_open_nest_retry_exhaustion_blocks_hatch() -> None:
+    planner = make_full_planner()
+    failed_target = Target(
+        OPEN_NEST,
+        49,
+        562,
+        1.0,
+        detection(OPEN_NEST, 49, 562),
+    )
+
+    planner.on_retry_exhausted(failed_target)
+
+    assert planner.is_hatch_blocked()
+    assert planner.is_complete()
+
+
 def test_failed_home_recovery_action_retries_without_completing_workflow() -> None:
     planner = make_full_planner()
     planner._management_pending = True
