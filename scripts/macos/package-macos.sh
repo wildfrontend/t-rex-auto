@@ -3,7 +3,12 @@
 set -euo pipefail
 
 project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
-version="$(sed -n 's/^version = "\(.*\)"/\1/p' "${project_root}/pyproject.toml")"
+# 版號的唯一來源;pyproject.toml 以 dynamic version 讀同一行。
+version="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' "${project_root}/src/dino_bot/__init__.py")"
+if [[ -z "${version}" ]]; then
+  echo "找不到版號:src/dino_bot/__init__.py 的 __version__" >&2
+  exit 1
+fi
 output_root="${1:-${HOME}/Downloads}"
 package_root="${output_root}/DinoMutantBot-v${version}-macOS"
 package_app="${package_root}/app"

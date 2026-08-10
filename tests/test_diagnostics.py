@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from zipfile import ZipFile
 
+from dino_bot import __version__
 from dino_bot.config import AppConfig
 from dino_bot.diagnostics import create_diagnostic_bundle, redact_text
 from dino_bot.doctor import Check
@@ -58,7 +59,9 @@ def test_diagnostic_bundle_contains_sanitized_evidence(tmp_path: Path) -> None:
         "settings.json",
         "logs/recent.log",
     } <= names
-    assert manifest["bot_version"] == "0.2.25"
+    # Assert against the single source of truth, not a literal: pinning the
+    # string here is what let the reported version drift from the shipped one.
+    assert manifest["bot_version"] == __version__
     assert manifest["snapshot_included"] is False
     assert status["successful_hunts"] == 1
     assert settings["root"] == "<app-root>"
