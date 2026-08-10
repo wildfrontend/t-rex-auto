@@ -72,6 +72,10 @@ class StubHunt:
     def __init__(self) -> None:
         self.next_target: Target | None = None
         self.delay_ms = 0
+        self.planning_types: frozenset[str] | None = frozenset({self.dinosaur_type})
+        self.full_types = frozenset(
+            {self.dinosaur_type, "duplicate_login_close_button"}
+        )
         self.successes: list[str] = []
         self.recenter_requests: list[str] = []
         self.reset_count = 0
@@ -91,8 +95,11 @@ class StubHunt:
     def reset_workflow(self) -> None:
         self.reset_count += 1
 
-    def planning_detection_types(self) -> frozenset[str]:
-        return frozenset({self.dinosaur_type})
+    def planning_detection_types(self) -> frozenset[str] | None:
+        return self.planning_types
+
+    def full_detection_types(self) -> frozenset[str]:
+        return self.full_types
 
     def last_stage(self) -> str:
         return "stub_hunt"
@@ -146,6 +153,17 @@ def test_hatch_mode_uses_hatch_scoped_detection_types() -> None:
     combined, _, _ = planner(cooldown_ms=0)
 
     assert combined.planning_detection_types() == frozenset({"hatch_button"})
+
+
+def test_hunt_full_scan_does_not_include_inactive_hatch_templates() -> None:
+    combined, _, hunt_planner = planner()
+    assert combined.choose(frame(), []) is None
+    hunt_planner.planning_types = None
+
+    requested = combined.planning_detection_types()
+
+    assert requested == hunt_planner.full_types
+    assert "hatch_button" not in requested
 
 
 def test_blocked_hatch_falls_back_to_hunting_in_combined_mode() -> None:

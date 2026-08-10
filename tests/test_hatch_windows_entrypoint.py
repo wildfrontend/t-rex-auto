@@ -127,7 +127,7 @@ def test_parent_test_entrypoint_is_isolated_and_one_tap_limited() -> None:
     assert "will not select or replace any dinosaur" in command
 
 
-def test_attack_entrypoint_is_isolated_and_strictly_upgrades() -> None:
+def test_attack_entrypoint_describes_primary_and_tiebreak_upgrade() -> None:
     command = (REPO / "scripts/windows/start-hatch-attack-test.cmd").read_text(
         encoding="utf-8"
     )
@@ -136,17 +136,17 @@ def test_attack_entrypoint_is_isolated_and_strictly_upgrades() -> None:
     assert '-StatusPort "8770"' in command
     assert '-MaxActions "20"' in command
     assert '-MaxCycles "2"' in command
-    assert "ONLY when its attack is strictly higher" in command
+    assert "higher attack, or equal attack with lower other stats" in command
 
 
-def test_hp_entrypoint_is_isolated_and_strictly_upgrades() -> None:
+def test_hp_entrypoint_describes_primary_and_tiebreak_upgrade() -> None:
     command = (REPO / "scripts/windows/start-hatch-hp-test.cmd").read_text(encoding="utf-8")
 
     assert '-Feature "hatch-hp-test"' in command
     assert '-StatusPort "8771"' in command
     assert '-MaxActions "20"' in command
     assert '-MaxCycles "2"' in command
-    assert "ONLY when its HP is strictly higher" in command
+    assert "higher HP, or equal HP with lower other stats" in command
 
 
 def test_full_hatch_entrypoint_is_separate_unbounded_and_not_hunt() -> None:

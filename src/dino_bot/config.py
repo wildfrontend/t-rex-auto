@@ -105,6 +105,9 @@ class PlannerConfig:
     # Recentering restores the supply of reachable dinosaurs; it is not about
     # where the egg sits. Reset once fewer than this many candidates survive.
     recenter_min_candidates: int = 1
+    # Two consecutive empty map observations are enough to prove the current
+    # area is exhausted without waiting for the wall-clock stall timeout.
+    empty_supply_recenter_frames: int = 2
     # Every other stall guard is written as "leave once the expected control
     # appears", so none of them fire on a screen showing no known control at
     # all. This one is measured from the planner alone.
@@ -577,6 +580,9 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
             recenter_min_candidates=int(
                 planner_data.get("recenter_min_candidates", 1)
             ),
+            empty_supply_recenter_frames=int(
+                planner_data.get("empty_supply_recenter_frames", 2)
+            ),
             blind_idle_seconds=float(planner_data.get("blind_idle_seconds", 20)),
             mail_stage_timeout_seconds=float(
                 planner_data.get("mail_stage_timeout_seconds", 20)
@@ -869,6 +875,10 @@ def _validate(config: AppConfig) -> None:
         raise ConfigError("planner.stalled_recenter_seconds must be greater than zero")
     if config.planner.recenter_min_candidates <= 0:
         raise ConfigError("planner.recenter_min_candidates must be greater than zero")
+    if config.planner.empty_supply_recenter_frames <= 0:
+        raise ConfigError(
+            "planner.empty_supply_recenter_frames must be greater than zero"
+        )
     if config.planner.blind_idle_seconds <= 0:
         raise ConfigError("planner.blind_idle_seconds must be greater than zero")
     if config.planner.mail_stage_timeout_seconds <= 0:

@@ -401,7 +401,7 @@ def test_hp_workflow_selects_highest_hp_with_lowest_secondary_load() -> None:
     assert (candidate.x, candidate.y) == (350, 520)
 
 
-def test_hp_equal_plateau_keeps_parent_without_searching() -> None:
+def test_hp_equal_plateau_selects_row_with_lower_secondary_load() -> None:
     reader = EncodedReader()
     parents = nest_frame(reader, Stats(2300, 2, 1), Stats(2300, 2, 1))
     candidates = select_frame(
@@ -414,8 +414,9 @@ def test_hp_equal_plateau_keeps_parent_without_searching() -> None:
     assert parent is not None
     planner.on_action_success(parent.type)
 
-    close = planner.choose(candidates, hp_select_detections())
-    assert close is not None and close.type == attack_replacement.SELECT_MASK_CLOSE
+    candidate = planner.choose(candidates, hp_select_detections())
+    assert candidate is not None and candidate.type == attack_replacement.CANDIDATE_ROW
+    assert (candidate.x, candidate.y) == (350, 435)
 
 
 def test_select_sort_setup_actions_are_reused_but_rows_are_rule_gated() -> None:

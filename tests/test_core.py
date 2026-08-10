@@ -98,6 +98,17 @@ def test_config_rejects_a_negative_center_distance_limit(tmp_path: Path) -> None
         load_config(config_file)
 
 
+def test_config_requires_positive_empty_supply_recenter_frames(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.json"
+    config_file.write_text(
+        json.dumps({"planner": {"empty_supply_recenter_frames": 0}}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="planner.empty_supply_recenter_frames"):
+        load_config(config_file)
+
+
 def test_cli_fast_speed_profile_reduces_hunt_delays() -> None:
     config = AppConfig(
         root=Path("."),
@@ -532,6 +543,7 @@ def test_hunt_planner_recenters_after_seconds_without_a_safe_dinosaur() -> None:
         ("map_exit_nest_button", "dinosaur"),
         own_path_radius=90,
         stalled_recenter_seconds=10.0,
+        empty_supply_recenter_frames=99,
         safe_margin=80,
         clock=lambda: now[0],
     )
@@ -608,6 +620,7 @@ def test_hunt_planner_counts_only_dinosaurs_it_could_actually_tap() -> None:
         deduplicate_types=("dinosaur",),
         dedup_radius=25.0,
         stalled_recenter_seconds=10.0,
+        empty_supply_recenter_frames=99,
         clock=lambda: now[0],
     )
     planner._last_anchor = (450.0, 800.0)
@@ -628,6 +641,24 @@ def test_hunt_planner_counts_only_dinosaurs_it_could_actually_tap() -> None:
 
     assert reset is not None and reset.type == "map_exit_nest_button"
     assert planner.last_recenter_reason() == "low_supply"
+
+
+def test_hunt_planner_recenters_after_two_confirmed_empty_map_frames() -> None:
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(
+        ("map_exit_nest_button", "dinosaur"),
+        stalled_recenter_seconds=60.0,
+        empty_supply_recenter_frames=2,
+        clock=lambda: 0.0,
+    )
+    anchor = Detection("map_center_egg", 450, 800, 1.0)
+    exit_button = Detection("map_exit_nest_button", 841, 1295, 1.0)
+
+    assert planner.choose(frame, [anchor, exit_button]) is None
+    reset = planner.choose(frame, [anchor, exit_button])
+
+    assert reset is not None and reset.type == "map_exit_nest_button"
+    assert planner.last_recenter_reason() == "empty_supply"
 
 
 def test_hunt_planner_skips_dinosaurs_too_far_from_the_viewport_center() -> None:
@@ -2588,12 +2619,32 @@ def test_planning_scan_widens_again_after_two_cycles_plan_nothing() -> None:
     assert planner.planning_detection_types() is None
     assert planner.choose(frame, [anchor, dinosaur]) is not None
     assert planner.planning_detection_types() is not None
+    planner.on_action_failure("dinosaur")
 
     assert planner.choose(frame, [anchor]) is None
     assert planner.planning_detection_types() is not None, "one empty cycle is normal"
 
     assert planner.choose(frame, [anchor]) is None
     assert planner.planning_detection_types() is None, "two in a row widens the scan"
+
+
+def test_planning_scan_does_not_widen_while_map_is_settling() -> None:
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(
+        ("dinosaur",),
+        map_settle_frames=3,
+        full_scan_after_idle_cycles=2,
+    )
+
+    assert planner.planning_detection_types() is None
+    planner.on_action_success("hunt_confirm_button")
+
+    first = Detection("map_center_egg", 420, 800, 1.0)
+    second = Detection("map_center_egg", 450, 800, 1.0)
+    assert planner.choose(frame, [first]) is None
+    assert planner.planning_detection_types() is not None
+    assert planner.choose(frame, [second]) is None
+    assert planner.planning_detection_types() is not None
 
 
 def test_planning_scan_timer_only_widens_after_scoped_scan_goes_idle() -> None:

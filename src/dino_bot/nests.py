@@ -5,10 +5,10 @@ run, which sort option each round needs, and which dinosaur (if any) should
 replace a nest parent. The screen-driving planner arrives once its templates
 are captured; keeping the rules separate lets them be verified offline.
 
-Replacement doctrine (confirmed 2026-07-30): the round's primary stat is an
-absolute priority — a candidate with a higher primary always beats one with a
-lower primary regardless of the other stats. The other two stats are only a
-soft tiebreaker among equal primaries (lower total preferred, no cutoff).
+Replacement doctrine: the round's primary stat is an absolute priority — a
+candidate with a higher primary always beats one with a lower primary
+regardless of the other stats. When a candidate ties the parent's primary,
+it is still an improvement if the other two stats have a lower total.
 Cooldowns and star markers never disqualify a candidate.
 """
 
@@ -176,8 +176,9 @@ def pick_replacement(
 
     ``rows`` are the visible list rows top-down, already sorted descending by
     the rule's primary stat (the caller verifies via ``is_descending``). Only
-    a strictly higher primary justifies a swap; among rows tied at the top
-    value the lowest secondary load wins.
+    a higher primary justifies a swap. An equal primary also justifies one
+    when its secondary load is lower than the parent's. Among all candidates
+    at the best primary value, the lowest secondary load wins.
     """
 
     if not rows:
@@ -186,16 +187,22 @@ def pick_replacement(
     valid_indices = [
         index
         for index, row in enumerate(rows)
-        if primary_of(row, rule) > parent_primary
-        and upgrade_is_valid(parent, row, rule, guards)
+        if (
+            primary_of(row, rule) > parent_primary
+            and upgrade_is_valid(parent, row, rule, guards)
+        )
+        or (
+            primary_of(row, rule) == parent_primary
+            and secondary_load(row, rule) < secondary_load(parent, rule)
+        )
     ]
     if not valid_indices:
         return None
-    best_index = valid_indices[0]
-    top = primary_of(rows[best_index], rule)
-    for index in valid_indices[1:]:
-        if primary_of(rows[index], rule) != top:
-            break
-        if secondary_load(rows[index], rule) < secondary_load(rows[best_index], rule):
-            best_index = index
-    return best_index
+    return min(
+        valid_indices,
+        key=lambda index: (
+            -primary_of(rows[index], rule),
+            secondary_load(rows[index], rule),
+            index,
+        ),
+    )

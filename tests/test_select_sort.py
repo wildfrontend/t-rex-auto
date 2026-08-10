@@ -146,7 +146,7 @@ def test_ascending_attack_values_toggle_direction_once() -> None:
 def test_equal_values_pass_as_already_sorted() -> None:
     # 同值高原上任何順序都成立;舊的 fail-closed 會讓 full-hatch
     # 篩選在恢復與重試之間無限循環(2026-08-03 生產實例:攻擊全
-    # 296)。同值中任選皆不會降級 — 替換另有「嚴格優於親代」門檻。
+    # 296)。同值中任選皆不會降低主屬性；替換階段會再比較副屬性。
     planner, frame = planner_for((276, 276, 276))
     target = planner.choose(
         frame,

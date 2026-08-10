@@ -1,8 +1,9 @@
 """Bounded end-to-end attack-parent replacement workflow.
 
 For each parent, the planner opens Select Dino, converges to all-tags and
-attack-descending, compares visible candidates, and selects only a strictly
-stronger attack candidate.  A known confirmation prompt is required before
+attack-descending, compares visible candidates, and selects a higher-primary
+candidate or an equal-primary candidate with lower secondary stats. A known
+confirmation prompt is required before
 the affirmative button is allowed.  When no upgrade exists, the list closes
 through the outside mask and the current parent is preserved.
 """

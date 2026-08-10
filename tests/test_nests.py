@@ -46,10 +46,24 @@ def test_empty_list_keeps_parent() -> None:
     assert pick_replacement(Stats(30, 276, 1), [], ATTACK_RULE) is None
 
 
-def test_equal_primary_keeps_parent() -> None:
+def test_equal_primary_without_lower_secondaries_keeps_parent() -> None:
     parent = Stats(30, 276, 1)
     rows = [Stats(2160, 276, 1), Stats(50, 270, 150)]
     assert pick_replacement(parent, rows, ATTACK_RULE) is None
+
+
+def test_equal_hp_prefers_lower_other_stats() -> None:
+    parent = Stats(1000, 3, 1)
+    rows = [Stats(1000, 1, 1)]
+
+    assert pick_replacement(parent, rows, HP_RULE) == 0
+
+
+def test_equal_attack_prefers_lower_other_stats() -> None:
+    parent = Stats(30, 1000, 3)
+    rows = [Stats(10, 1000, 1)]
+
+    assert pick_replacement(parent, rows, ATTACK_RULE) == 0
 
 
 def test_higher_primary_wins_despite_high_secondaries() -> None:

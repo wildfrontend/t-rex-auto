@@ -163,7 +163,14 @@ class HatchHuntPlanner:
 
     def planning_detection_types(self) -> frozenset[str] | None:
         if self._mode == "hunt":
-            return self.hunt.planning_detection_types()
+            hunt_types = self.hunt.planning_detection_types()
+            if hunt_types is not None:
+                return hunt_types
+            # ``None`` means a full scan to a standalone planner. The combined
+            # detector also owns all hatch templates, so translate that request
+            # into the complete hunting vocabulary when the planner exposes it.
+            full_method = getattr(self.hunt, "full_detection_types", None)
+            return full_method() if callable(full_method) else None
         hatch_method = getattr(self.hatch, "planning_detection_types", None)
         hatch_types = hatch_method() if callable(hatch_method) else None
         if self._mode != "handoff":

@@ -13,7 +13,7 @@ echo.
 echo ATTACK TEST: Process both parents with all-tags and attack-descending sorting.
 echo Open My Nest with its tag filter collapsed before continuing.
 echo The test first sets the nest filter to Attack specialization.
-echo A candidate is selected and confirmed ONLY when its attack is strictly higher.
+echo Select higher attack, or equal attack with lower other stats.
 echo This test can replace a parent when a valid upgrade exists.
 echo.
 pause

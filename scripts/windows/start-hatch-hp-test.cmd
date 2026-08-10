@@ -13,7 +13,7 @@ echo.
 echo HP TEST: Process both parents with all-tags and HP-descending sorting.
 echo Open My Nest with its tag filter collapsed before continuing.
 echo The test first sets the nest filter to HP specialization.
-echo A candidate is selected and confirmed ONLY when its HP is strictly higher.
+echo Select higher HP, or equal HP with lower other stats.
 echo This test can replace a parent when a valid upgrade exists.
 echo.
 pause

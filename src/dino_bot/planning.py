@@ -271,6 +271,7 @@ class HuntPlanner(TargetPlanner):
         own_path_angle_degrees: float = 7.0,
         stalled_recenter_seconds: float = 10.0,
         recenter_min_candidates: int = 1,
+        empty_supply_recenter_frames: int = 2,
         blind_idle_seconds: float = 20.0,
         mail_stage_timeout_seconds: float = 20.0,
         map_settle_frames: int = 2,
@@ -328,6 +329,10 @@ class HuntPlanner(TargetPlanner):
         # have enough dinosaurs to choose from, not to put the egg anywhere in
         # particular. This is the supply floor that triggers it.
         self.recenter_min_candidates = max(1, recenter_min_candidates)
+        self.empty_supply_recenter_frames = max(
+            1,
+            empty_supply_recenter_frames,
+        )
         self.blind_idle_seconds = max(0.001, blind_idle_seconds)
         self.mail_stage_timeout_seconds = max(0.001, mail_stage_timeout_seconds)
         self.map_settle_frames = max(1, map_settle_frames)
@@ -374,6 +379,7 @@ class HuntPlanner(TargetPlanner):
         # over; a predicted one accumulates a fresh error every hunt.
         self._anchor_measured = False
         self._last_supply = 0
+        self._empty_supply_frames = 0
         self._no_target_since: float | None = None
         self._last_blind_seconds = 0.0
         self._blind_escapes = 0
@@ -568,6 +574,7 @@ class HuntPlanner(TargetPlanner):
         self._map_idle_since = None
         self._last_map_idle_seconds = 0.0
         self._recenter_reason = None
+        self._empty_supply_frames = 0
         self._no_target_since = None
         self._last_blind_seconds = 0.0
         self._mail_progress_since = None
@@ -871,6 +878,7 @@ class HuntPlanner(TargetPlanner):
 
         self._hunt_count = 0
         self._map_idle_since = None
+        self._empty_supply_frames = 0
         self._recenter_stage = 1
         self._stage = "recenter"
         self._recenter_reason = reason
@@ -918,6 +926,39 @@ class HuntPlanner(TargetPlanner):
             self._scoped_idle_cycles = 0
             return None
         return self._stage_detection_types()
+
+    def full_detection_types(self) -> frozenset[str]:
+        """Return the complete vocabulary owned by the hunting workflow.
+
+        A standalone hunting detector may interpret ``None`` as its complete
+        manifest. In hatch-hunt mode, however, the shared detector also owns
+        dozens of hatch templates. Naming the hunting vocabulary keeps a
+        hunting fallback complete without paying for the inactive workflow.
+        """
+
+        return frozenset(
+            {
+                *self.target_types,
+                *self.blocking_types,
+                self.dinosaur_type,
+                *self.hunt_button_types,
+                self.completion_type,
+                self.map_exit_type,
+                self.forest_recenter_type,
+                self.center_anchor_type,
+                *self.recovery_button_types,
+                *self.interrupt_button_types,
+                *self.own_path_types,
+                self.mailbox_type,
+                self.mail_collect_all_type,
+                self.mail_reward_collect_type,
+                self.mail_close_type,
+                self.hunt_dialog_close_type,
+                self.no_available_type,
+                self.target_too_strong_type,
+                self.capacity_full_type,
+            }
+        )
 
     def failure_recovery_detection_types(
         self,
@@ -1248,7 +1289,7 @@ class HuntPlanner(TargetPlanner):
         # A scoped scan earns the next one by producing work. Counting the
         # empty ones is what lets `planning_detection_types` widen the view
         # before something it cannot see turns into a stall.
-        if target is None:
+        if target is None and self._stage not in self._BOUNDED_WAIT_STAGES:
             self._scoped_idle_cycles += 1
         else:
             self._scoped_idle_cycles = 0
@@ -1758,6 +1799,10 @@ class HuntPlanner(TargetPlanner):
             return self._choose_map_exit(frame, detections)
         target = super().choose(frame, actionable)
         self._last_supply = supply
+        if on_collect_map and supply == 0:
+            self._empty_supply_frames += 1
+        else:
+            self._empty_supply_frames = 0
         # Recentering is resupply, so run it off the supply rather than off
         # "did this cycle plan anything". Those differed by a lot: with
         # `anchor_window` rejecting against a predicted anchor, cycles reported
@@ -1768,6 +1813,9 @@ class HuntPlanner(TargetPlanner):
         # clears itself as hunts return, and resetting the moment supply dips
         # would trade a few seconds of waiting for a whole map reload.
         if supply < self.recenter_min_candidates and on_collect_map:
+            if self._empty_supply_frames >= self.empty_supply_recenter_frames:
+                self._begin_recenter("empty_supply")
+                return self._choose_map_exit(frame, detections)
             idle_now = self.clock()
             if self._map_idle_since is None:
                 self._map_idle_since = idle_now
@@ -1777,6 +1825,7 @@ class HuntPlanner(TargetPlanner):
                 return self._choose_map_exit(frame, detections)
         else:
             self._map_idle_since = None
+            self._empty_supply_frames = 0
         if target is not None and target.type == self.dinosaur_type:
             self._last_selected_dinosaur = (float(target.x), float(target.y))
             self._anchor_before_dinosaur = anchor_position

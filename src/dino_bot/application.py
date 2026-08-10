@@ -260,6 +260,7 @@ def _build_hunt_planner(config: AppConfig) -> HuntPlanner:
         own_path_angle_degrees=config.planner.own_path_angle_degrees,
         stalled_recenter_seconds=config.planner.stalled_recenter_seconds,
         recenter_min_candidates=config.planner.recenter_min_candidates,
+        empty_supply_recenter_frames=config.planner.empty_supply_recenter_frames,
         blind_idle_seconds=config.planner.blind_idle_seconds,
         mail_stage_timeout_seconds=config.planner.mail_stage_timeout_seconds,
         map_settle_frames=config.planner.map_settle_frames,
@@ -324,10 +325,10 @@ def _create_hatch_engine(
             hatch.cull_threshold,
         )
     elif hp_test:
-        logger.info("Feature | hatch-hp-test | both parents + strict HP upgrade | T11")
+        logger.info("Feature | hatch-hp-test | primary-first HP upgrade | T11")
     elif attack_test:
         logger.info(
-            "Feature | hatch-attack-test | both parents + strict upgrade | T10/T11"
+            "Feature | hatch-attack-test | primary-first upgrade | T10/T11"
         )
     elif parent_test:
         logger.info("Feature | hatch-parent-test | read parents + open left | safe T10 subset")
