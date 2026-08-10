@@ -162,8 +162,6 @@ class HatchConfig:
     # Game-imposed incubation cooldown is ~25 minutes; this is only how often
     # the bot re-enters to check, per the plan's rescan rule.
     rescan_interval_seconds: float = 600.0
-    # Keep a growth batch together before running nest management/hunting.
-    batch_hatch_count: int = 8
     # Fixed game stat increments are used as a final OCR/action guard. Update
     # these ranges here when a later game version expands them.
     stat_upgrade_guards: dict[str, StatUpgradeGuard] = field(
@@ -176,11 +174,12 @@ class HatchConfig:
     require_home_anchor: bool = True
     home_failure_limit: int = 3
     home_backoff_seconds: float = 30.0
-    # Phase C: cull only when the cave-view N/350 readout exceeds this.
-    cull_threshold: int = 350
-    # 洞穴容量預警值。完整篩選仍會等到 batch_hatch_count 或實際
-    # cull_threshold，避免預警線以上每孵少量蛋就重跑整套流程。
-    cave_screen_trigger: int = 300
+    # Phase C: cull once the cave-view N/350 readout reaches this safety limit.
+    # The game capacity remains 350; this lower threshold leaves headroom.
+    cull_threshold: int = 330
+    # Below the cull line, rerun nest screening every this many newly added
+    # dinosaurs, measured from the last completed screening.
+    screening_growth_interval: int = 20
     # Slow machines may need several complete detect cycles before the HUD is
     # rendered sharply enough for the N/350 reader.
     capacity_read_retries: int = 2
@@ -663,15 +662,16 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
             rescan_interval_seconds=float(
                 hatch_data.get("rescan_interval_seconds", 600)
             ),
-            batch_hatch_count=int(hatch_data.get("batch_hatch_count", 8)),
             stat_upgrade_guards=_stat_upgrade_guards(hatch_data),
             stat_consistent_reads=int(hatch_data.get("stat_consistent_reads", 2)),
             stat_read_retries=int(hatch_data.get("stat_read_retries", 3)),
             require_home_anchor=bool(hatch_data.get("require_home_anchor", True)),
             home_failure_limit=int(hatch_data.get("home_failure_limit", 3)),
             home_backoff_seconds=float(hatch_data.get("home_backoff_seconds", 30)),
-            cull_threshold=int(hatch_data.get("cull_threshold", 350)),
-            cave_screen_trigger=int(hatch_data.get("cave_screen_trigger", 300)),
+            cull_threshold=int(hatch_data.get("cull_threshold", 330)),
+            screening_growth_interval=int(
+                hatch_data.get("screening_growth_interval", 20)
+            ),
             capacity_read_retries=int(hatch_data.get("capacity_read_retries", 2)),
             cave_recenter_checks=int(hatch_data.get("cave_recenter_checks", 3)),
             recovery_timeout_seconds=float(
@@ -773,8 +773,6 @@ def _validate(config: AppConfig) -> None:
         raise ConfigError("hatch.max_scrolls cannot be negative")
     if config.hatch.rescan_interval_seconds < 0:
         raise ConfigError("hatch.rescan_interval_seconds cannot be negative")
-    if config.hatch.batch_hatch_count <= 0:
-        raise ConfigError("hatch.batch_hatch_count must be greater than zero")
     expected_stats = {"hp", "attack", "speed"}
     if set(config.hatch.stat_upgrade_guards) != expected_stats:
         raise ConfigError(
@@ -817,8 +815,6 @@ def _validate(config: AppConfig) -> None:
         raise ConfigError(
             "hatch.stat_read_retries cannot be less than stat_consistent_reads"
         )
-    if config.hatch.cave_screen_trigger <= 0:
-        raise ConfigError("hatch.cave_screen_trigger must be greater than zero")
     if config.hatch.capacity_read_retries <= 0:
         raise ConfigError("hatch.capacity_read_retries must be greater than zero")
     if config.hatch.cave_recenter_checks <= 0:
@@ -831,6 +827,10 @@ def _validate(config: AppConfig) -> None:
         raise ConfigError("hatch.home_backoff_seconds cannot be negative")
     if config.hatch.cull_threshold < 0:
         raise ConfigError("hatch.cull_threshold cannot be negative")
+    if config.hatch.screening_growth_interval <= 0:
+        raise ConfigError(
+            "hatch.screening_growth_interval must be greater than zero"
+        )
     if config.verify_retry < 0:
         raise ConfigError("verify_retry cannot be negative")
     if config.verify.minimum_checks <= 0:

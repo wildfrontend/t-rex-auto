@@ -201,7 +201,7 @@ def test_hatch_config_defaults_load(tmp_path) -> None:
     config_path.write_text("{}", encoding="utf-8")
     config = load_config(config_path)
     assert config.hatch.rescan_interval_seconds == 600
-    assert config.hatch.batch_hatch_count == 8
+    assert config.hatch.screening_growth_interval == 20
     assert config.hatch.egg_pile == (450.0, 1330.0)
     assert config.hatch.home_reposition_vector == (450.0, 1100.0, 450.0, 650.0)
     assert config.hatch.home_reposition_duration_ms == 400
@@ -221,14 +221,14 @@ def test_hatch_config_overrides(tmp_path) -> None:
     config_path = tmp_path / "config.json"
     config_path.write_text(
         '{"hatch": {"egg_pile": [400, 1200], "rescan_interval_seconds": 300,'
-        ' "batch_hatch_count": 14,'
+        ' "screening_growth_interval": 15,'
         ' "max_scrolls": 6}}',
         encoding="utf-8",
     )
     config = load_config(config_path)
     assert config.hatch.egg_pile == (400.0, 1200.0)
     assert config.hatch.rescan_interval_seconds == 300
-    assert config.hatch.batch_hatch_count == 14
+    assert config.hatch.screening_growth_interval == 15
     assert config.hatch.max_scrolls == 6
 
 

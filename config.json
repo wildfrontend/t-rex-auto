@@ -306,8 +306,8 @@
     "activity": "com.unity3d.player.UnityPlayerActivity"
   },
   "hatch": {
-    "batch_hatch_count": 8,
-    "cull_threshold": 350,
+    "cull_threshold": 330,
+    "screening_growth_interval": 20,
     "home_reposition_vector": [450, 1100, 450, 650],
     "home_reposition_duration_ms": 400,
     "stat_upgrade_guards": {
@@ -326,7 +326,6 @@
       }
     },
     "stat_consistent_reads": 2,
-    "stat_read_retries": 3,
-    "cave_screen_trigger": 300
+    "stat_read_retries": 3
   }
 }

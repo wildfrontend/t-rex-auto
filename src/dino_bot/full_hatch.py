@@ -1424,7 +1424,6 @@ class FullHatchPlanner:
         home_reposition_duration_ms: int = 400,
         max_scrolls: int = 0,
         rescan_interval_seconds: float = 600.0,
-        batch_hatch_count: int = 8,
         stat_upgrade_guards: Mapping[str, StatUpgradeGuard] = DEFAULT_STAT_UPGRADE_GUARDS,
         minimum_consistent_stat_reads: int = 1,
         stat_read_retries: int = 1,
@@ -1432,8 +1431,8 @@ class FullHatchPlanner:
         require_home_anchor: bool = True,
         home_failure_limit: int = 3,
         home_backoff_seconds: float = 30.0,
-        cull_threshold: int = 350,
-        cave_screen_trigger: int = 300,
+        cull_threshold: int = 330,
+        screening_growth_interval: int = 20,
         cave_safe_margin: int = 80,
         cave_bottom_exclusion_px: int = 180,
         recovery_timeout_seconds: float = 15.0,
@@ -1454,16 +1453,10 @@ class FullHatchPlanner:
         self.stat_upgrade_guards = dict(stat_upgrade_guards)
         self.minimum_consistent_stat_reads = minimum_consistent_stat_reads
         self.stat_read_retries = stat_read_retries
-        self.cave_screen_trigger = max(1, cave_screen_trigger)
-        # A warning threshold below the actual cull line must not repeatedly
-        # launch the destructive screening pipeline.  Once the cave estimate
-        # has crossed that warning it stays crossed after every no-op cull,
-        # which used to rerun all four nest stages after each tiny hatch batch.
-        self._capacity_management_trigger = max(
-            self.cave_screen_trigger,
-            self.cull_threshold,
-        )
-        self.batch_hatch_count = max(1, batch_hatch_count)
+        # Nest management is driven only by estimated total dinosaur growth.
+        # The cull threshold leaves headroom below the game's 350-capacity HUD.
+        self._capacity_management_trigger = self.cull_threshold
+        self.screening_growth_interval = max(1, screening_growth_interval)
         self.boost_inventory = boost_inventory
         self.cave_safe_margin = max(0, cave_safe_margin)
         self.cave_bottom_exclusion_px = max(0, cave_bottom_exclusion_px)
@@ -1509,13 +1502,16 @@ class FullHatchPlanner:
         # A fresh planner instance must prove that the dinosaur capacity is
         # safe before it opens the incubator. Later management cycles already
         # pass through CaveCullPlanner, so this guard is one preflight per
-        # planner lifetime rather than once per hatch batch.
+        # planner lifetime rather than once per hatch cycle.
         self._capacity_checked = False
-        self._batch_hatched = 0
-        self._batch_hunt_ready = False
-        # Cleanup is destructive: a capacity-triggered or batch-triggered
-        # management pass must retain proof that every screening stage
-        # completed, including across bounded home recovery.
+        # The first verified count performs one baseline screening. Afterwards
+        # every screening records its total as the new growth baseline.
+        self._screening_baseline_population: int | None = None
+        self._pending_screening_population: int | None = None
+        self._cave_cleanup_after_management = False
+        # Cleanup is destructive: a capacity-triggered management pass must
+        # retain proof that every screening stage completed, including across
+        # bounded home recovery.
         self._management_pending = False
         self._screening_completed: set[str] = set()
         self._observed_cooldown_until: float | None = None
@@ -1524,8 +1520,8 @@ class FullHatchPlanner:
         self._boost_confirmation_pending = False
         self._boost_revisit_pending = False
         self._collect_done_for_cycle = False
-        # 洞穴容量估算:上次實讀 + 之後累積孵化。預警值可以低於淘汰
-        # 線，但完整篩選只在批次完成或確實達到淘汰線時執行。
+        # 洞穴容量估算：上次實讀 + 之後累積孵化；每增長門檻或達清理
+        # 門檻時篩選。
         self._cave_population: int | None = None
         self._hatched_since_cave_read = 0
         self._navigation_failures: dict[tuple[str, str], int] = {}
@@ -1659,8 +1655,6 @@ class FullHatchPlanner:
             )
             self._collect_only_after_empty = False
             self._empty_rescan_wait = False
-            self._batch_hatched = 0
-            self._batch_hunt_ready = False
             self._observed_cooldown_until = None
             self._navigation_failures.clear()
             self._pending_claim_verification = False
@@ -1699,8 +1693,6 @@ class FullHatchPlanner:
         self._collect_home_fallback = False
         self._home_repositioned = False
         self._empty_rescan_wait = False
-        self._batch_hatched = 0
-        self._batch_hunt_ready = False
         self._management_pending = False
         self._screening_completed.clear()
         self._observed_cooldown_until = None
@@ -1735,7 +1727,7 @@ class FullHatchPlanner:
             self.logger.info("Hatch full | collected eggs from home-screen button")
             if self._collect_home_after_management:
                 self._collect_home_after_management = False
-                self._start_cave_cleanup()
+                self._finish_management_after_collection()
             else:
                 self._start_empty_rescan_wait()
             return
@@ -1776,14 +1768,6 @@ class FullHatchPlanner:
                     )
                 return
             if target_type == hatch_feature.CLAIM_BUTTON:
-                if self._batch_hunt_ready:
-                    self.logger.info(
-                        "Hatch full | starting next growth batch | previous=%d",
-                        self._batch_hatched,
-                    )
-                    self._batch_hatched = 0
-                    self._batch_hunt_ready = False
-                    self._screening_completed.clear()
                 self._pending_claim_verification = False
             if target_type == hatch_feature.CLOSE_BUTTON:
                 if self.standalone_stage == "hatch":
@@ -1791,7 +1775,6 @@ class FullHatchPlanner:
                     return
                 hatched = hatch.hatched - self._hatch_baseline
                 if hatched > 0:
-                    self._batch_hatched += hatched
                     self._hatched_since_cave_read += hatched
                     estimate = (
                         None
@@ -1802,26 +1785,33 @@ class FullHatchPlanner:
                         estimate is not None
                         and estimate >= self._capacity_management_trigger
                     )
-                    batch_complete = (
-                        self._batch_hatched >= self.batch_hatch_count
-                        or capacity_trigger
+                    growth = (
+                        None
+                        if estimate is None
+                        or self._screening_baseline_population is None
+                        else estimate - self._screening_baseline_population
                     )
+                    growth_trigger = (
+                        growth is not None
+                        and growth >= self.screening_growth_interval
+                    )
+                    management_trigger = capacity_trigger or growth_trigger
                     self.logger.info(
-                        "Hatch full | phase A complete | hatched=%d | batch=%d/%d"
-                        " | cave≈%s | trigger=%s",
+                        "Hatch full | phase A complete | hatched=%d | cave≈%s"
+                        " | growth=%s | trigger=%s",
                         hatched,
-                        self._batch_hatched,
-                        self.batch_hatch_count,
                         "?" if estimate is None else f"{estimate}/350",
+                        "?" if growth is None else growth,
                         "capacity"
                         if capacity_trigger
-                        else ("batch" if batch_complete else "none"),
+                        else ("growth" if growth_trigger else "none"),
                     )
-                    self._batch_hunt_ready = batch_complete
-                    if batch_complete and not self._management_pending:
-                        self._management_pending = True
-                        self._screening_completed.clear()
-                    self._enter_open_nest(collect_only=not batch_complete)
+                    if management_trigger and not self._management_pending:
+                        self._queue_management(
+                            population=estimate,
+                            cave_cleanup_after=capacity_trigger,
+                        )
+                    self._enter_open_nest(collect_only=not management_trigger)
                 else:
                     if self._collect_done_for_cycle:
                         # 加速回訪的收尾:本週期已收過蛋,直接進入等待。
@@ -2285,6 +2275,20 @@ class FullHatchPlanner:
                     self._no_target_since = None
                     return self._choose_current(frame, detections)
                 self._capacity_checked = True
+                if self._screening_baseline_population is None:
+                    self.logger.info(
+                        "Hatch capacity | starting initial screening | capacity=%d/350",
+                        self._cave_population,
+                    )
+                    self._queue_management(
+                        population=self._cave_population,
+                        cave_cleanup_after=False,
+                    )
+                    self._stage = "open_nest"
+                    self._child = object()
+                    self._collect_only_after_empty = False
+                    self._no_target_since = None
+                    return self._choose_current(frame, detections)
                 if self._egg_pile_capacity_check_pending:
                     self._egg_pile_capacity_check_pending = False
                     self._egg_pile_capacity_rechecked = True
@@ -2410,7 +2414,7 @@ class FullHatchPlanner:
                     self._stage = "open_nest"
                     self._child = object()
                     return self._choose_current(frame, detections)
-                self._start_cave_cleanup()
+                self._finish_management_after_collection()
                 return self._choose_current(frame, detections)
             return None
         if self._stage == "cave":
@@ -2424,6 +2428,7 @@ class FullHatchPlanner:
                         self._format_screening_stages(missing),
                     )
                     self._management_pending = True
+                    self._cave_cleanup_after_management = True
                     self._stage = "open_nest"
                     self._child = object()
                     self._collect_only_after_empty = False
@@ -2437,10 +2442,6 @@ class FullHatchPlanner:
                 self._capacity_checked = True
                 self._management_pending = False
                 self._screening_completed.clear()
-                # 這個批次已完整篩選+放置;歸零計數,否則下一輪
-                # batch 仍 >= 門檻會立刻重跑整套管理流程。
-                self._batch_hatched = 0
-                self._batch_hunt_ready = False
                 self._egg_pile_failures = 0
                 self._egg_pile_capacity_check_pending = False
                 self._egg_pile_capacity_rechecked = False
@@ -2449,6 +2450,13 @@ class FullHatchPlanner:
                 if expected is not None:
                     self._cave_population = expected
                     self._hatched_since_cave_read = 0
+                self._screening_baseline_population = (
+                    expected
+                    if expected is not None
+                    else self._pending_screening_population
+                )
+                self._pending_screening_population = None
+                self._cave_cleanup_after_management = False
                 self.logger.info(
                     "Hatch full | completed management cycle %d | restarting Phase A"
                     " | cave≈%s",
@@ -2542,6 +2550,43 @@ class FullHatchPlanner:
             logger=self.logger,
         )
 
+    def _queue_management(
+        self,
+        *,
+        population: int | None,
+        cave_cleanup_after: bool,
+    ) -> None:
+        """Require a full screening pass before optionally entering the cave."""
+
+        self._management_pending = True
+        self._pending_screening_population = population
+        self._cave_cleanup_after_management = cave_cleanup_after
+        self._screening_completed.clear()
+
+    def _finish_management_after_collection(self) -> None:
+        """Continue after a completed screening and its egg collection."""
+
+        if self._cave_cleanup_after_management:
+            self._start_cave_cleanup()
+            return
+        self.completed_management_cycles += 1
+        self._screening_baseline_population = self._pending_screening_population
+        self._pending_screening_population = None
+        self._management_pending = False
+        self._screening_completed.clear()
+        self.logger.info(
+            "Hatch full | completed growth screening %d | baseline=%s/350"
+            " | restarting Phase A",
+            self.completed_management_cycles,
+            "?"
+            if self._screening_baseline_population is None
+            else self._screening_baseline_population,
+        )
+        self._stage = "hatch"
+        self._child = self._new_hatch()
+        self._hatch_baseline = 0
+        self._start_hatch_cycle()
+
     def _home_reposition_target(self, frame: Frame) -> Target:
         """Move the home map once so the collect-all HUD clears the egg pile."""
 
@@ -2571,8 +2616,10 @@ class FullHatchPlanner:
                     " | required=%s",
                     self._format_screening_stages(SCREENING_STAGES),
                 )
-                self._management_pending = True
-                self._screening_completed.clear()
+                self._queue_management(
+                    population=reading,
+                    cave_cleanup_after=True,
+                )
             return
         self._capacity_checked = True
 
@@ -2680,11 +2727,9 @@ class FullHatchPlanner:
             wait_source = "screen-batch"
         self.logger.info(
             "Hatch full | nest eggs collected after empty incubator | "
-            "cooldown wait=%.0fs | source=%s | batch=%d/%d",
+            "cooldown wait=%.0fs | source=%s",
             wait_seconds,
             wait_source,
-            self._batch_hatched,
-            self.batch_hatch_count,
         )
         self._stage = "hatch"
         self._child = self._new_hatch()

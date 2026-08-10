@@ -607,7 +607,7 @@ def test_attack_filter_header_survives_into_next_scoped_planning_frame() -> None
     assert planner._replacement_child.last_stage() != "target_filter_required"
 
 
-def test_full_hatch_preflights_capacity_before_first_egg_pile_tap() -> None:
+def test_full_hatch_preflight_starts_initial_screening_before_first_egg_pile_tap() -> None:
     planner = make_full_planner()
     home = [detection(hatch.HOME_ANCHOR, 59, 561)]
 
@@ -632,8 +632,10 @@ def test_full_hatch_preflights_capacity_before_first_egg_pile_tap() -> None:
 
     assert planner.choose(capacity_frame(), home) is None
     target = planner.choose(capacity_frame(), home)
-    assert target is not None and target.type == hatch.EGG_PILE
+    assert target is not None and target.type == OPEN_NEST
     assert planner._capacity_checked
+    assert planner._management_pending
+    assert planner._screening_baseline_population is None
 
 
 def test_full_capacity_preflight_screens_before_required_cull(monkeypatch) -> None:
@@ -872,28 +874,6 @@ def test_hatch_repositions_home_map_before_tapping_pile_under_collect_button() -
     planner.on_action_success(target.type)
     target = planner.choose(frame(), home)
     assert target is not None and target.type == hatch.EGG_PILE
-
-
-def test_full_hatch_accumulates_eight_hatches_before_management() -> None:
-    planner = FullHatchPlanner(
-        DigitReader(GLYPHS),
-        egg_pile_point=(450, 1330),
-        batch_hatch_count=8,
-    )
-    planner._hatch_child.hatched = 2
-    planner.on_action_success(hatch.CLOSE_BUTTON)
-    assert planner._stage == "open_nest"
-    assert planner._collect_only_after_empty
-    assert planner._batch_hatched == 2
-
-    planner._stage = "hatch"
-    planner._child = planner._new_hatch()
-    planner._hatch_child.hatched = 6
-    planner.on_action_success(hatch.CLOSE_BUTTON)
-    assert planner._stage == "open_nest"
-    assert not planner._collect_only_after_empty
-    assert planner._batch_hatched == 8
-    assert planner._batch_hunt_ready
 
 
 def test_full_hatch_uses_observed_batch_timer_for_rescan_wait() -> None:
@@ -1324,9 +1304,10 @@ def test_failed_egg_pile_tap_checks_full_capacity_before_retry(monkeypatch) -> N
 
 
 def test_failed_egg_pile_tap_retries_when_capacity_is_below_limit(monkeypatch) -> None:
-    _patch_capacity(monkeypatch, 349)
+    _patch_capacity(monkeypatch, 329)
     planner = make_full_planner()
     planner._capacity_checked = True
+    planner._screening_baseline_population = 329
     home = [detection(hatch.HOME_ANCHOR, 59, 561)]
     failed_target = Target(
         hatch.EGG_PILE,
@@ -1580,51 +1561,51 @@ def test_full_flow_blind_screen_uses_bounded_back_then_requires_home_proof() -> 
     assert target is not None and target.type == CAVE_SWIPE
 
 
-def test_cave_warning_does_not_repeat_screening_before_cull_threshold() -> None:
+def test_growth_interval_triggers_screening_before_cull_threshold() -> None:
     planner = FullHatchPlanner(
         DigitReader(GLYPHS),
         egg_pile_point=(450, 1330),
-        batch_hatch_count=48,
     )
     planner._child = planner._new_hatch()
     planner._start_hatch_cycle()
-    planner._cave_population = 290
+    planner._cave_population = 282
+    planner._screening_baseline_population = 282
     planner._hatch_child.hatched = 12
     planner.on_action_success(hatch.CLOSE_BUTTON)
-    # 估算 302 已越過 300 預警線，但仍低於 350 淘汰線；這一小批
-    # 只收蛋，避免下一輪 1~2 顆又把四種篩選全部重跑一次。
-    assert planner._management_pending is False
-    assert planner._collect_only_after_empty is True
+    # 估算 302，比最近一次篩選多 20，先篩選但不進洞穴。
+    assert planner._management_pending is True
+    assert planner._collect_only_after_empty is False
+    assert planner._cave_cleanup_after_management is False
 
 
 def test_cave_estimate_triggers_screening_at_cull_threshold() -> None:
     planner = FullHatchPlanner(
         DigitReader(GLYPHS),
         egg_pile_point=(450, 1330),
-        batch_hatch_count=48,
     )
     planner._child = planner._new_hatch()
     planner._start_hatch_cycle()
-    # The game hard-stops at 350/350, so the emergency path must trigger on
-    # the exact boundary; a synthetic 352 state is not reachable in practice.
-    planner._cave_population = 349
+    # The screening path must trigger at the configured total-count boundary.
+    planner._cave_population = 325
+    planner._screening_baseline_population = 325
     planner._hatch_child.hatched = 1
     planner.on_action_success(hatch.CLOSE_BUTTON)
     assert planner._management_pending is True
     assert planner._collect_only_after_empty is False
+    assert planner._cave_cleanup_after_management is True
 
 
 def test_cave_estimate_below_trigger_keeps_collect_only_cycle() -> None:
     planner = FullHatchPlanner(
         DigitReader(GLYPHS),
         egg_pile_point=(450, 1330),
-        batch_hatch_count=48,
     )
     planner._child = planner._new_hatch()
     planner._start_hatch_cycle()
     planner._cave_population = 200
+    planner._screening_baseline_population = 200
     planner._hatch_child.hatched = 12
     planner.on_action_success(hatch.CLOSE_BUTTON)
-    # 估算 212 < 300 且批次 12/48 未滿:維持一般收蛋循環。
+    # 估算 212 < 330，維持一般收蛋循環。
     assert planner._management_pending is False
     assert planner._collect_only_after_empty is True
