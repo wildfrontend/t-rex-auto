@@ -134,11 +134,83 @@
         "reference_width": 900,
         "x": [
           0,
-          115
+          155
         ],
         "y": [
-          445,
-          800
+          425,
+          820
+        ]
+      },
+      {
+        "name": "map_top_banner",
+        "reference_width": 900,
+        "x": [
+          275,
+          625
+        ],
+        "y": [
+          90,
+          215
+        ]
+      },
+      {
+        "name": "map_right_hunt_counter",
+        "reference_width": 900,
+        "x": [
+          725,
+          900
+        ],
+        "y": [
+          200,
+          305
+        ]
+      },
+      {
+        "name": "map_right_hunt_action",
+        "reference_width": 900,
+        "x": [
+          755,
+          900
+        ],
+        "y": [
+          945,
+          1075
+        ]
+      },
+      {
+        "name": "map_right_mail",
+        "reference_width": 900,
+        "x": [
+          775,
+          900
+        ],
+        "y": [
+          1135,
+          1265
+        ]
+      },
+      {
+        "name": "map_right_nest",
+        "reference_width": 900,
+        "x": [
+          775,
+          900
+        ],
+        "y": [
+          1260,
+          1405
+        ]
+      },
+      {
+        "name": "map_bottom_right_navigation",
+        "reference_width": 900,
+        "x": [
+          775,
+          900
+        ],
+        "y": [
+          1450,
+          1600
         ]
       }
     ],

@@ -32,6 +32,7 @@ from dino_bot.models import (
     ActionCommand,
     BoundingBox,
     Detection,
+    ExclusionZone,
     Frame,
     Target,
     VerificationResult,
@@ -439,6 +440,60 @@ def test_hunt_planner_never_clicks_dinosaur_in_bottom_ui() -> None:
     assert bottom_only_planner.choose(
         frame,
         [anchor, bottom_ui_false_positive],
+    ) is None
+
+
+def test_hunt_planner_never_clicks_dinosaur_under_redesigned_map_hud() -> None:
+    """The redesigned map has several fixed controls on the right edge.
+
+    Their art is animated and may miss template matching for a frame, so the
+    map layout owns small exclusion zones as a second line of defence. The
+    free area immediately to their left must remain huntable.
+    """
+
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    right_hud = ExclusionZone(
+        name="map_right_hunt_action",
+        x0=755,
+        y0=945,
+        x1=900,
+        y1=1075,
+    )
+    planner = HuntPlanner(
+        ("dinosaur",),
+        safe_margin=80,
+        exclusion_zones=(right_hud,),
+    )
+    anchor = Detection("map_center_egg", 450, 800, 1.0)
+    covered = Detection("dinosaur", 820, 1010, 0.99)
+    safe = Detection("dinosaur", 700, 1010, 0.80)
+
+    target = planner.choose(frame, [anchor, covered, safe])
+
+    assert target is not None and (target.x, target.y) == (700, 1010)
+
+
+def test_hunt_planner_does_not_hunt_when_only_redesigned_map_hud_is_visible() -> None:
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    right_hud = ExclusionZone(
+        name="map_right_nest",
+        x0=775,
+        y0=1260,
+        x1=900,
+        y1=1405,
+    )
+    planner = HuntPlanner(
+        ("dinosaur",),
+        safe_margin=80,
+        exclusion_zones=(right_hud,),
+    )
+
+    assert planner.choose(
+        frame,
+        [
+            Detection("map_center_egg", 450, 800, 1.0),
+            Detection("dinosaur", 835, 1320, 0.99),
+        ],
     ) is None
 
 
