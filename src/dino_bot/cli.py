@@ -434,8 +434,17 @@ def main(argv: list[str] | None = None) -> int:
                     status_server.url,
                 )
             except OSError as exc:
-                engine.context.logger.warning("Status API | unavailable | %s", exc)
+                engine.context.logger.error(
+                    "Status API | unavailable; another Bot may already use port %d | %s",
+                    args.status_port,
+                    exc,
+                )
                 status_server = None
+                engine.close()
+                raise SystemExit(
+                    f"Status API unavailable on localhost:{args.status_port}; "
+                    "another Bot instance may already be running."
+                ) from exc
         try:
             engine.run()
         finally:

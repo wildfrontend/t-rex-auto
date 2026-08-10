@@ -943,6 +943,14 @@ class BotEngine:
         except KeyboardInterrupt:
             self.context.logger.info("Stop requested by user")
             self.context.state = BotState.STOPPED
+        except Exception:
+            self.context.logger.exception(
+                "Bot crashed | state=%s | actions=%d | cycles=%d",
+                self.context.state,
+                self.context.action_count,
+                self.context.cycle_count,
+            )
+            raise
         finally:
             self.close()
 
