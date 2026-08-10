@@ -134,14 +134,14 @@ def test_top_autoplace_round_requires_screen_anchors_and_known_prompt(caplog) ->
     planner.on_action_success(target.type)
 
     settings = [
-        detection(AUTOPLACE_TITLE, 450, 565),
-        detection(PLACE_SORT_BEST, 450, 702),
+        detection(AUTOPLACE_TITLE, 450, 490),
+        detection(PLACE_SORT_BEST, 450, 630),
     ]
     target = planner.choose(frame(), settings)
     assert target is not None and target.type == PLACE_SORT_BEST
     planner.on_action_success(target.type)
 
-    target = planner.choose(frame(), settings + [detection(PLACE_HDR_BEST, 450, 648)])
+    target = planner.choose(frame(), settings + [detection(PLACE_HDR_BEST, 450, 576)])
     assert target is not None and target.type == AUTOPLACE_MASK_CLOSE
     planner.on_action_success(target.type)
 
@@ -177,14 +177,14 @@ def test_mass_autoplace_round_selects_level_and_confirms_application() -> None:
     planner.on_action_success(target.type)
 
     settings = [
-        detection(AUTOPLACE_TITLE, 450, 565),
-        detection(PLACE_SORT_LEVEL, 450, 749),
+        detection(AUTOPLACE_TITLE, 450, 490),
+        detection(PLACE_SORT_LEVEL, 450, 678),
     ]
     target = planner.choose(frame(), settings)
     assert target is not None and target.type == PLACE_SORT_LEVEL
     planner.on_action_success(target.type)
 
-    target = planner.choose(frame(), settings + [detection(PLACE_HDR_LEVEL, 450, 648)])
+    target = planner.choose(frame(), settings + [detection(PLACE_HDR_LEVEL, 450, 576)])
     assert target is not None and target.type == AUTOPLACE_MASK_CLOSE
     planner.on_action_success(target.type)
 
@@ -208,9 +208,9 @@ def test_mass_autoplace_round_selects_level_and_confirms_application() -> None:
 def test_autoplace_sort_dropdown_is_opened_when_target_is_not_visible() -> None:
     planner = AutoPlaceRoundPlanner(TOP_RULE)
     planner._stage = "settings"
-    target = planner.choose(frame(), [detection(AUTOPLACE_TITLE, 450, 565)])
+    target = planner.choose(frame(), [detection(AUTOPLACE_TITLE, 450, 490)])
     assert target is not None and target.type == AUTOPLACE_SORT_HEADER
-    assert (target.x, target.y) == (450, 648)
+    assert (target.x, target.y) == (450, 576)
 
 
 def test_cave_below_threshold_recenters_without_entering() -> None:

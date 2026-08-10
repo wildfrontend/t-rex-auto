@@ -141,6 +141,11 @@ PLACE_SORT_BEST = "hatch_place_sort_best"
 PLACE_SORT_LEVEL = "hatch_place_sort_level"
 PLACE_HDR_BEST = "hatch_place_hdr_best"
 PLACE_HDR_LEVEL = "hatch_place_hdr_level"
+# The redesigned auto-place dialog moved upward, but the dropdown order is
+# unchanged. Coordinates are in the 900-wide reference layout.
+AUTOPLACE_SORT_HEADER_POINT = (450.0, 576.0)
+AUTOPLACE_SORT_BEST_POINT = (450.0, 630.0)
+AUTOPLACE_SORT_LEVEL_POINT = (450.0, 678.0)
 
 DEFAULT_TARGET_ACTIONS: dict[str, str] = {
     **hatch_feature.DEFAULT_TARGET_ACTIONS,
@@ -813,14 +818,14 @@ class AutoPlaceRoundPlanner:
                 nest_filter_feature.TAG_HDR_TOP,
                 PLACE_SORT_BEST,
                 PLACE_HDR_BEST,
-                (450.0, 702.0),
+                AUTOPLACE_SORT_BEST_POINT,
             ),
             MASS_RULE.tag: (
                 nest_filter_feature.TAG_MASS,
                 nest_filter_feature.TAG_HDR_MASS,
                 PLACE_SORT_LEVEL,
                 PLACE_HDR_LEVEL,
-                (450.0, 749.0),
+                AUTOPLACE_SORT_LEVEL_POINT,
             ),
         }
         if rule.tag not in mapping:
@@ -911,7 +916,7 @@ class AutoPlaceRoundPlanner:
                 return None
             desired_header = _near(
                 by_type.get(self.sort_header),
-                _scaled(frame, (450.0, 648.0), self.reference_width),
+                _scaled(frame, AUTOPLACE_SORT_HEADER_POINT, self.reference_width),
                 25,
             )
             if desired_header is not None:
@@ -926,14 +931,14 @@ class AutoPlaceRoundPlanner:
                 return _target(desired_option)
             return _synthetic(
                 AUTOPLACE_SORT_HEADER,
-                *_scaled(frame, (450.0, 648.0), self.reference_width),
+                *_scaled(frame, AUTOPLACE_SORT_HEADER_POINT, self.reference_width),
             )
         if self._stage == "verify_sort":
             if AUTOPLACE_TITLE not in by_type:
                 return None
             desired_header = _near(
                 by_type.get(self.sort_header),
-                _scaled(frame, (450.0, 648.0), self.reference_width),
+                _scaled(frame, AUTOPLACE_SORT_HEADER_POINT, self.reference_width),
                 25,
             )
             if desired_header is not None:
