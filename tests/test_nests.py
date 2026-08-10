@@ -88,25 +88,31 @@ def test_tie_scan_stops_at_first_lower_primary() -> None:
 
 def test_hp_rule_swaps_on_hp() -> None:
     parent = Stats(2230, 2, 1)
-    rows = [Stats(2250, 500, 50), Stats(2250, 2, 1), Stats(2240, 1, 1)]
+    rows = [Stats(2300, 500, 50), Stats(2300, 2, 1), Stats(2260, 1, 1)]
     assert pick_replacement(parent, rows, HP_RULE) == 1
 
 
-def test_stat_upgrade_guard_rejects_attack_jump_above_three() -> None:
+def test_stat_upgrade_guard_rejects_attack_jump_above_seven() -> None:
     parent = Stats(30, 276, 1)
-    rows = [Stats(30, 280, 1)]
+    rows = [Stats(30, 284, 1)]
     assert pick_replacement(parent, rows, ATTACK_RULE) is None
 
 
 def test_stat_upgrade_guard_skips_invalid_top_row_for_valid_lower_row() -> None:
     parent = Stats(30, 276, 1)
-    rows = [Stats(30, 280, 1), Stats(30, 279, 1)]
+    rows = [Stats(30, 284, 1), Stats(30, 283, 1)]
     assert pick_replacement(parent, rows, ATTACK_RULE) == 1
+
+
+def test_stat_upgrade_guard_accepts_attack_boundaries() -> None:
+    parent = Stats(30, 276, 1)
+    rows = [Stats(30, 283, 1), Stats(30, 283, 1)]
+    assert pick_replacement(parent, rows, ATTACK_RULE) == 0
 
 
 def test_stat_upgrade_guard_accepts_hp_boundaries() -> None:
     parent = Stats(2230, 2, 1)
-    rows = [Stats(2260, 2, 1), Stats(2240, 2, 1)]
+    rows = [Stats(2300, 2, 1), Stats(2260, 2, 1)]
     assert pick_replacement(parent, rows, HP_RULE) == 0
 
 

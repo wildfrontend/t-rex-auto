@@ -310,7 +310,7 @@ def test_confirmation_yes_is_never_guessed_without_known_prompt() -> None:
 def test_nested_parent_warning_is_confirmed_then_normal_prompt_is_confirmed() -> None:
     reader = EncodedReader()
     parent_frame = nest_frame(reader, Stats(30, 282, 1), Stats(30, 282, 1))
-    candidates = select_frame(reader, [Stats(30, 283, 1), Stats(30, 282, 1)])
+    candidates = select_frame(reader, [Stats(30, 285, 1), Stats(30, 282, 1)])
     planner = AttackReplacementTestPlanner(reader)  # type: ignore[arg-type]
     finish_main_filter(planner)
     parent = planner.choose(parent_frame, nest_detections())
@@ -345,7 +345,7 @@ def test_nested_parent_warning_is_confirmed_then_normal_prompt_is_confirmed() ->
 def test_nested_parent_warning_can_replace_directly_and_advance() -> None:
     reader = EncodedReader()
     parent_frame = nest_frame(reader, Stats(30, 282, 1), Stats(30, 282, 1))
-    candidates = select_frame(reader, [Stats(30, 283, 1), Stats(30, 282, 1)])
+    candidates = select_frame(reader, [Stats(30, 285, 1), Stats(30, 282, 1)])
     planner = AttackReplacementTestPlanner(reader)  # type: ignore[arg-type]
     finish_main_filter(planner)
     parent = planner.choose(parent_frame, nest_detections())

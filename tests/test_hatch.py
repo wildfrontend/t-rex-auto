@@ -205,10 +205,11 @@ def test_hatch_config_defaults_load(tmp_path) -> None:
     assert config.hatch.egg_pile == (450.0, 1330.0)
     assert config.hatch.max_scrolls == 0
     assert config.hatch.manifest == tmp_path / "assets/hatch/manifest.json"
-    assert config.hatch.stat_upgrade_guards["hp"].min_delta == 10
-    assert config.hatch.stat_upgrade_guards["hp"].max_delta == 30
+    assert config.hatch.stat_upgrade_guards["hp"].min_delta == 30
+    assert config.hatch.stat_upgrade_guards["hp"].max_delta == 70
     assert config.hatch.stat_upgrade_guards["hp"].multiple_of == 10
-    assert config.hatch.stat_upgrade_guards["attack"].max_delta == 3
+    assert config.hatch.stat_upgrade_guards["attack"].min_delta == 3
+    assert config.hatch.stat_upgrade_guards["attack"].max_delta == 7
     assert config.hatch.stat_upgrade_guards["speed"].min_value == 1
     assert config.hatch.stat_upgrade_guards["speed"].max_value == 150
     assert config.hatch.stat_consistent_reads == 2

@@ -89,7 +89,7 @@ def test_equal_top_attack_recommends_no_replacement() -> None:
 def test_higher_attack_recommends_first_row_without_a_screen_coordinate() -> None:
     parent = np.full((1600, 900, 3), 255, dtype=np.uint8)
     candidates = parent.copy()
-    reader = EncodedReader({10: 30, 20: 282, 21: 283, 30: 1})
+    reader = EncodedReader({10: 30, 20: 282, 21: 285, 30: 1})
     for regions in ATTACK_PARENT_REGIONS:
         fill_regions(parent, regions, (10, 20, 30))
     fill_regions(candidates, SELECT_FIRST_ROW_REGIONS, (10, 21, 30))

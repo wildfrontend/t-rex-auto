@@ -47,8 +47,8 @@ def default_stat_upgrade_guards() -> dict[str, StatUpgradeGuard]:
     """Return the conservative stat rules used by the game today."""
 
     return {
-        "hp": StatUpgradeGuard(min_delta=10, max_delta=30, multiple_of=10),
-        "attack": StatUpgradeGuard(min_delta=1, max_delta=3),
+        "hp": StatUpgradeGuard(min_delta=30, max_delta=70, multiple_of=10),
+        "attack": StatUpgradeGuard(min_delta=3, max_delta=7),
         "speed": StatUpgradeGuard(min_value=1, max_value=150),
     }
 
