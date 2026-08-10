@@ -1237,6 +1237,37 @@ def test_hunt_planner_finishes_visible_hunt_control_before_no_available_warning(
     assert target is not None and target.type == "hunt_button"
 
 
+def test_hunt_planner_skips_map_confirmed_inert_hunt_button() -> None:
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(("hunt_button", "dinosaur"), safe_margin=80)
+    hunt_button = Detection("hunt_button", 301, 546, 0.9786)
+    anchor = Detection("map_center_egg", 488, 1093, 0.9278)
+    map_exit = Detection("map_exit_nest_button", 841, 1295, 0.95)
+    dinosaur = Detection("dinosaur", 700, 600, 0.9)
+    detections = [hunt_button, anchor, map_exit, dinosaur]
+
+    failed = planner.choose(frame, detections)
+    assert failed is not None and failed.type == "hunt_button"
+
+    planner.on_action_failure_context(failed, frame, detections, attempts=2)
+    assert planner.is_suppressed(failed.type, failed.x, failed.y)
+
+    # A blind-stage release must not revive the same fixed false match.
+    planner._release_stage_machines(frame)
+    assert planner.is_suppressed(failed.type, failed.x, failed.y)
+
+    resumed = planner.choose(frame, detections)
+    assert resumed is not None and resumed.type == "dinosaur"
+
+
+def test_hunt_button_failure_recovery_rescans_for_map_evidence() -> None:
+    planner = HuntPlanner(("hunt_button", "dinosaur"))
+
+    requested = planner.failure_recovery_detection_types("hunt_button")
+
+    assert {"map_center_egg", "map_exit_nest_button", "dinosaur"} <= requested
+
+
 def test_hunt_planner_spreads_targets_away_from_existing_blue_ray() -> None:
     frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
     planner = HuntPlanner(
@@ -1739,6 +1770,57 @@ def test_engine_adaptive_verification_finishes_before_timeout() -> None:
         logger=logging.getLogger("test_adaptive_verify_early_success"),
         click_delay_ms=5000,
         transition_poll_interval_ms=250,
+        event_log=events,
+        clock=lambda: now[0],
+        state=BotState.ACTION,
+        frame=make_frame(),
+        detections=[detection],
+        target=target,
+        action=ActionCommand.tap(target.x, target.y),
+    )
+
+    def advance(seconds: float) -> bool:
+        now[0] += seconds
+        return False
+
+    with patch.object(context.stop_event, "wait", side_effect=advance):
+        engine = BotEngine(context)
+        assert engine.step() == BotState.VERIFY
+        assert engine.step() == BotState.VERIFY
+        assert engine.step() == BotState.IDLE
+
+    verify_events = [record for record in events.records if record["e"] == "verify"]
+    assert [record["phase"] for record in verify_events] == ["pending", "final"]
+    assert now[0] == pytest.approx(0.5)
+
+
+def test_engine_fast_fails_inert_hunt_button_after_two_checks() -> None:
+    now = [0.0]
+    detection = make_detection(type="hunt_button")
+    target = Target(
+        detection.type,
+        detection.x,
+        detection.y,
+        detection.confidence,
+        detection,
+    )
+    events = RecordingEventLog()
+    context = BotContext(
+        capture_provider=SequenceCapture([make_frame(10), make_frame(10)]),
+        detector=PixelDetector(),
+        planner=HuntPlanner(("hunt_button",)),
+        action_driver=RecordingActionDriver(),
+        verifier=SequenceVerifier(
+            [
+                VerificationResult(False, "no change", pixel_change=0.0),
+                VerificationResult(False, "no change", pixel_change=0.0),
+            ]
+        ),
+        observer=RuntimeMode(),
+        logger=logging.getLogger("test_inert_hunt_button_fast_failure"),
+        click_delay_ms=5000,
+        transition_poll_interval_ms=250,
+        verify_retries=0,
         event_log=events,
         clock=lambda: now[0],
         state=BotState.ACTION,

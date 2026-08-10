@@ -13,7 +13,7 @@ from .full_hatch import (
     FullHatchPlanner,
     is_centered_home_screen,
 )
-from .models import Detection, Frame, Target
+from .models import Detection, Frame, Target, VerificationResult
 from .planning import HuntPlanner
 
 
@@ -210,6 +210,19 @@ class HatchHuntPlanner:
         method = getattr(self._action_owner, "on_action_failure_context", None)
         if callable(method):
             method(target, frame, detections, attempts)
+
+    def should_finalize_verification_early(
+        self,
+        target: Target,
+        result: VerificationResult,
+        checks: int,
+    ) -> bool:
+        method = getattr(
+            self._action_owner,
+            "should_finalize_verification_early",
+            None,
+        )
+        return bool(method(target, result, checks)) if callable(method) else False
 
     def on_retry_exhausted(self, target: Target) -> None:
         method = getattr(self._action_owner, "on_retry_exhausted", None)

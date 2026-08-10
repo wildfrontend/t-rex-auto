@@ -9,7 +9,7 @@ from math import atan2, degrees, hypot
 from pathlib import Path
 from typing import Any
 
-from .models import Detection, ExclusionZone, Frame, Target
+from .models import Detection, ExclusionZone, Frame, Target, VerificationResult
 
 
 class TargetPlanner:
@@ -290,7 +290,11 @@ class HuntPlanner(TargetPlanner):
     ) -> None:
         super().__init__(*args, **kwargs)
         self.dinosaur_type = dinosaur_type
-        self.hunt_button_types = frozenset(hunt_button_types)
+        ordered_hunt_button_types = tuple(hunt_button_types)
+        self.hunt_button_types = frozenset(ordered_hunt_button_types)
+        self.hunt_entry_type = (
+            ordered_hunt_button_types[0] if ordered_hunt_button_types else "hunt_button"
+        )
         self.completion_type = completion_type
         self.map_exit_type = map_exit_type
         self.forest_recenter_type = forest_recenter_type
@@ -485,6 +489,63 @@ class HuntPlanner(TargetPlanner):
             # Step back to the stage that owns this button so the mail flow
             # retries it instead of waiting for a screen it never reached.
             self._mail_stage = self._mail_stage_by_type[target_type]
+
+    def on_action_failure_context(
+        self,
+        target: Target,
+        frame: Frame | None,
+        detections: Sequence[Detection],
+        attempts: int,
+    ) -> None:
+        """Abandon an inert hunt entry after two map-confirmed failures.
+
+        A stale hunt-button match can be nearly perfect while sitting on the
+        live collection map. Two failed taps plus stable map landmarks prove
+        that retrying the same coordinate cannot open the hunt sheet. Suppress
+        only that coordinate and let normal map planning choose another target.
+        """
+
+        if (
+            target.type != self.hunt_entry_type
+            or attempts < 2
+            or frame is None
+            or not any(
+                item.type
+                in {
+                    self.center_anchor_type,
+                    self.map_exit_type,
+                    self.mailbox_type,
+                }
+                for item in detections
+            )
+        ):
+            return
+        self.suppress(target.type, target.x, target.y)
+        self._awaiting_hunt_button = False
+        self._waited_frames = 0
+
+    def on_retry_exhausted(self, target: Target) -> None:
+        """Suppress a spent target and release hunt-entry waiting state."""
+
+        super().on_retry_exhausted(target)
+        if target.type == self.hunt_entry_type:
+            self._awaiting_hunt_button = False
+            self._waited_frames = 0
+
+    def should_finalize_verification_early(
+        self,
+        target: Target,
+        result: VerificationResult,
+        checks: int,
+    ) -> bool:
+        """Fail a hunt-entry tap once two frames prove it changed nothing."""
+
+        return bool(
+            target.type == self.hunt_entry_type
+            and checks >= 2
+            and result.pixel_change is not None
+            and result.pixel_change < 0.001
+        )
 
     def on_blocked_action_context(
         self,
@@ -964,15 +1025,14 @@ class HuntPlanner(TargetPlanner):
         self,
         target_type: str,
     ) -> frozenset[str]:
-        """Return a cheap recovery scan for a dinosaur tap that missed.
+        """Return a cheap recovery scan for a map action that missed.
 
-        Verification normally looks only for the hunt sheet. If it never
-        appears, scan that already-captured frame for map targets so the next
-        attempt can be planned without another capture or a periodic full
-        manifest scan.
+        Verification normally looks only for the expected next control. If it
+        never appears after a dinosaur or hunt-entry tap, scan that same frame
+        for map evidence so recovery can skip an inert coordinate safely.
         """
 
-        if target_type != self.dinosaur_type:
+        if target_type not in {self.dinosaur_type, self.hunt_entry_type}:
             return frozenset()
         return self._stage_detection_types()
 
@@ -1373,7 +1433,12 @@ class HuntPlanner(TargetPlanner):
         self._map_settle_anchor = None
         self._map_settle_dinosaur = None
         self._map_idle_since = None
-        self.clear_suppressed()
+        now = self.clock()
+        self._suppressed = [
+            entry
+            for entry in self._suppressed
+            if entry[0] in self.hunt_button_types and entry[4] > now
+        ]
 
     def take_blind_escape(self) -> dict[str, Any] | None:
         """Hand the engine the escape it has not reported yet, once."""
@@ -1584,9 +1649,7 @@ class HuntPlanner(TargetPlanner):
                 if forest:
                     self._recenter_dinosaur_frames = 0
                     return super().choose(frame, forest)
-                has_hunt_control = any(
-                    item.type in self.hunt_button_types for item in detections
-                )
+                has_hunt_control = bool(actionable_hunt_controls)
                 has_map_landmark = any(
                     item.type in {self.map_exit_type, self.mailbox_type}
                     for item in detections
@@ -1623,9 +1686,7 @@ class HuntPlanner(TargetPlanner):
                     return None
             return super().choose(frame, anchors)
 
-        has_hunt_control = any(
-            item.type in self.hunt_button_types for item in detections
-        )
+        has_hunt_control = bool(actionable_hunt_controls)
         on_collect_map = any(
             item.type in {
                 self.map_exit_type,
@@ -1667,10 +1728,7 @@ class HuntPlanner(TargetPlanner):
         if has_hunt_control:
             self._map_idle_since = None
             self._stage = "hunt_control"
-            hunt_controls = [
-                item for item in detections if item.type in self.hunt_button_types
-            ]
-            target = super().choose(frame, hunt_controls)
+            target = super().choose(frame, actionable_hunt_controls)
             return target
 
         if self._awaiting_hunt_button:

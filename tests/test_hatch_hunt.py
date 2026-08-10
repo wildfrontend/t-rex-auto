@@ -5,7 +5,7 @@ import numpy as np
 from dino_bot import hatch
 from dino_bot.full_hatch import STARTUP_GROWTH_RESULT, STARTUP_NEST_SHORTCUT
 from dino_bot.hatch_hunt import HatchHuntPlanner
-from dino_bot.models import BoundingBox, Detection, Frame, Target
+from dino_bot.models import BoundingBox, Detection, Frame, Target, VerificationResult
 
 
 def frame() -> Frame:
@@ -101,6 +101,14 @@ class StubHunt:
     def full_detection_types(self) -> frozenset[str]:
         return self.full_types
 
+    def should_finalize_verification_early(
+        self,
+        target: Target,
+        result: VerificationResult,
+        checks: int,
+    ) -> bool:
+        return target.type == "hunt_button" and result.pixel_change == 0 and checks >= 2
+
     def last_stage(self) -> str:
         return "stub_hunt"
 
@@ -147,6 +155,13 @@ def test_long_hatch_cooldown_switches_to_hunt_and_keeps_action_owner() -> None:
 
     combined.on_action_success(chosen.type)
     assert hunt_planner.successes == ["dinosaur"]
+
+    inert_button = target("hunt_button", 301, 546)
+    assert combined.should_finalize_verification_early(
+        inert_button,
+        VerificationResult(False, "no change", pixel_change=0.0),
+        2,
+    )
 
 
 def test_hatch_mode_uses_hatch_scoped_detection_types() -> None:

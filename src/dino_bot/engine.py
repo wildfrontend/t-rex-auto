@@ -511,9 +511,23 @@ class VerifyState:
             and context.verification_checks
             < max(1, context.verification_minimum_checks)
         )
+        early_finalize_method = getattr(
+            context.planner,
+            "should_finalize_verification_early",
+            None,
+        )
+        early_finalize = bool(
+            callable(early_finalize_method)
+            and early_finalize_method(
+                context.target,
+                result,
+                context.verification_checks,
+            )
+        )
         pending = (
             not result.success
             and not explicit_failure
+            and not early_finalize
             and (within_deadline or minimum_checks_pending)
         )
         remaining_ms = (
