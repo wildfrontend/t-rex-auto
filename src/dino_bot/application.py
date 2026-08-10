@@ -42,6 +42,7 @@ from .recovery import AdbAppRestarter, BlackScreenRecovery, HuntProgressWatchdog
 from .select_sort import SelectSortTestPlanner
 from .stalls import (
     CapacitySnapshotWriter,
+    DinosaurFailureSnapshotWriter,
     EggPileSnapshotWriter,
     ParentStatsSnapshotWriter,
     StallSnapshotWriter,
@@ -198,6 +199,16 @@ def _create_hunt_engine(config: AppConfig, *, verbose: bool = False) -> BotEngin
         if config.stalls.snapshots_enabled
         else None
     )
+    dinosaur_failure_snapshots = (
+        DinosaurFailureSnapshotWriter(
+            config.stalls_dir,
+            logger,
+            limit=config.stalls.snapshot_limit,
+            min_interval_seconds=config.stalls.snapshot_min_interval_seconds,
+        )
+        if config.stalls.snapshots_enabled
+        else None
+    )
     context = BotContext(
         capture_provider=capture,
         detector=detector,
@@ -222,6 +233,7 @@ def _create_hunt_engine(config: AppConfig, *, verbose: bool = False) -> BotEngin
         runtime_recovery=runtime_recovery,
         hunt_progress_recovery=hunt_progress_recovery,
         stall_snapshots=stall_snapshots,
+        dinosaur_failure_snapshots=dinosaur_failure_snapshots,
         event_log=event_log,
     )
     return BotEngine(context)
@@ -590,6 +602,16 @@ def _create_hatch_engine(
         if config.stalls.snapshots_enabled
         else None
     )
+    dinosaur_failure_snapshots = (
+        DinosaurFailureSnapshotWriter(
+            config.stalls_dir,
+            logger,
+            limit=config.stalls.snapshot_limit,
+            min_interval_seconds=config.stalls.snapshot_min_interval_seconds,
+        )
+        if config.stalls.snapshots_enabled and hunt_during_cooldown
+        else None
+    )
     post_action_delays = dict(defaults.DEFAULT_POST_ACTION_DELAYS_MS)
     post_action_delays.update(config.post_action_delays)
     target_actions = dict(defaults.DEFAULT_TARGET_ACTIONS)
@@ -621,6 +643,7 @@ def _create_hatch_engine(
         runtime_recovery=runtime_recovery,
         hunt_progress_recovery=None,
         stall_snapshots=stall_snapshots,
+        dinosaur_failure_snapshots=dinosaur_failure_snapshots,
         event_log=event_log,
     )
     return BotEngine(context)

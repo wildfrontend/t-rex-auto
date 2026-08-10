@@ -1522,6 +1522,7 @@ def test_growth_interval_triggers_screening_before_cull_threshold() -> None:
     planner._start_hatch_cycle()
     planner._cave_population = 282
     planner._screening_baseline_population = 282
+    planner._hatched_since_cave_read = 8
     planner._hatch_child.hatched = 12
     planner.on_action_success(hatch.CLOSE_BUTTON)
     # 估算 302，比最近一次篩選多 20，先篩選但不進洞穴。
@@ -1538,8 +1539,8 @@ def test_cave_estimate_triggers_screening_at_cull_threshold() -> None:
     planner._child = planner._new_hatch()
     planner._start_hatch_cycle()
     # The screening path must trigger at the configured total-count boundary.
-    planner._cave_population = 325
-    planner._screening_baseline_population = 325
+    planner._cave_population = 329
+    planner._screening_baseline_population = 329
     planner._hatch_child.hatched = 1
     planner.on_action_success(hatch.CLOSE_BUTTON)
     assert planner._management_pending is True

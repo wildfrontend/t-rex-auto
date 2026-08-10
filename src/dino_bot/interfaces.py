@@ -77,6 +77,19 @@ class StallRecorder(Protocol):
     ) -> Path | None: ...
 
 
+class DinosaurFailureRecorder(Protocol):
+    def capture(
+        self,
+        before: Frame,
+        after: Frame,
+        target: Target,
+        detections: Sequence[Detection],
+        result: VerificationResult,
+        *,
+        attempt: int,
+    ) -> Path | None: ...
+
+
 class HuntProgressRecovery(Protocol):
     def observe(
         self,

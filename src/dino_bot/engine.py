@@ -23,6 +23,7 @@ from .interfaces import (
     ActionDriver,
     CaptureProvider,
     Detector,
+    DinosaurFailureRecorder,
     HuntProgressRecovery,
     ModeObserver,
     Planner,
@@ -83,6 +84,7 @@ class BotContext:
     runtime_recovery: RuntimeRecovery | None = None
     hunt_progress_recovery: HuntProgressRecovery | None = None
     stall_snapshots: StallRecorder | None = None
+    dinosaur_failure_snapshots: DinosaurFailureRecorder | None = None
     event_log: EventLog = field(default_factory=NullEventLog, repr=False)
     state: BotState = BotState.IDLE
     stop_requested: bool = False
@@ -646,6 +648,44 @@ class VerifyState:
             )
             return BotState.IDLE
         context.logger.warning("Verify | Failed | %s", result.reason)
+        if context.attempt <= context.verify_retries:
+            recovery_types = getattr(
+                context.planner,
+                "failure_recovery_detection_types",
+                None,
+            )
+            detect_types = getattr(context.detector, "detect_types", None)
+            if callable(recovery_types) and callable(detect_types):
+                requested = recovery_types(context.target.type)
+                if requested:
+                    started = time.perf_counter()
+                    context.after_detections = detect_types(after, requested)
+                    detect_ms = round((time.perf_counter() - started) * 1000)
+                    context.logger.info(
+                        "Recover | rescan failed frame | %d targets | %dms | scoped=%d",
+                        len(context.after_detections),
+                        detect_ms,
+                        len(requested),
+                    )
+                    context.event_log.emit(
+                        "recover_detect",
+                        ms=detect_ms,
+                        scoped=len(requested),
+                        n=len(context.after_detections),
+                        det=detection_payload(context.after_detections),
+                    )
+        if (
+            context.dinosaur_failure_snapshots is not None
+            and context.target.type == "dinosaur"
+        ):
+            context.dinosaur_failure_snapshots.capture(
+                context.before_frame,
+                after,
+                context.target,
+                context.after_detections,
+                result,
+                attempt=context.attempt,
+            )
         on_action_failure_context = getattr(
             context.planner,
             "on_action_failure_context",
@@ -690,6 +730,23 @@ class VerifyState:
             context.attempt_target_type = None
             return BotState.IDLE
         if context.attempt <= context.verify_retries:
+            can_reuse_failed = getattr(
+                context.planner,
+                "can_reuse_failed_verification_result",
+                None,
+            )
+            if callable(can_reuse_failed) and can_reuse_failed(
+                context.target.type,
+                context.after_detections,
+            ):
+                context.logger.info(
+                    "Recover | reuse failed verification frame and re-plan"
+                )
+                context.frame = after
+                context.detections = list(context.after_detections)
+                context.target = None
+                context.action = None
+                return BotState.PLANNING
             return BotState.RECOVER
         context.logger.error("Verify | retry limit exhausted after %d attempts", context.attempt)
         context.event_log.emit(

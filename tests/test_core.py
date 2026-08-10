@@ -43,6 +43,7 @@ from dino_bot.recovery import AdbAppRestarter, BlackScreenRecovery
 from dino_bot.stalls import (
     HUD_ZOOM,
     CapacitySnapshotWriter,
+    DinosaurFailureSnapshotWriter,
     StallSnapshotWriter,
 )
 from dino_bot.verification import TargetChangedVerifier
@@ -2280,6 +2281,55 @@ def test_stall_snapshot_writer_keeps_the_newest_frames_only(tmp_path: Path) -> N
     assert sidecar["detections"] == {"dinosaur": 2}
 
 
+def test_dinosaur_failure_snapshot_keeps_before_after_and_tap_metadata(
+    tmp_path: Path,
+) -> None:
+    writer = DinosaurFailureSnapshotWriter(
+        tmp_path / "stalls",
+        logging.getLogger("test_dinosaur_failure_writer"),
+        clock=lambda: 0.0,
+        now=lambda: datetime(2026, 8, 10, 22, 31, 12),
+    )
+    before = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    after = Frame(np.full((1600, 900, 3), 30, dtype=np.uint8))
+    detection = Detection(
+        "dinosaur",
+        477,
+        914,
+        0.704,
+        metadata={
+            "anchor_bbox": {"x": 455, "y": 869, "width": 18, "height": 18}
+        },
+    )
+    target = Target("dinosaur", 477, 914, 0.704, detection)
+
+    path = writer.capture(
+        before,
+        after,
+        target,
+        [Detection("dinosaur", 415, 751, 0.794)],
+        VerificationResult(
+            False,
+            "expected next UI not detected: hunt_button",
+            pixel_change=0.096,
+        ),
+        attempt=1,
+    )
+
+    assert path is not None
+    assert path.name == "dinosaur-tap-20260810-223112.png"
+    assert path.with_name(f"{path.stem}-after.png").exists()
+    sidecar = json.loads(path.with_suffix(".json").read_text(encoding="utf-8"))
+    assert sidecar["target"] == {
+        "x": 477,
+        "y": 914,
+        "confidence": 0.704,
+        "anchor_bbox": {"x": 455, "y": 869, "width": 18, "height": 18},
+    }
+    assert sidecar["verification"]["pixel_change"] == pytest.approx(0.096)
+    assert sidecar["after_detections"][0]["type"] == "dinosaur"
+
+
 def test_capacity_snapshot_saves_the_hud_crop_and_the_glyphs(tmp_path: Path) -> None:
     writer = CapacitySnapshotWriter(
         tmp_path / "stalls",
@@ -2546,8 +2596,8 @@ def test_planning_scan_widens_again_after_two_cycles_plan_nothing() -> None:
     assert planner.planning_detection_types() is None, "two in a row widens the scan"
 
 
-def test_planning_scan_sweeps_everything_on_a_timer() -> None:
-    """A run that never stalls still has to re-check the screens it skips."""
+def test_planning_scan_timer_only_widens_after_scoped_scan_goes_idle() -> None:
+    """Productive hunting must not pay an 18-second periodic full scan."""
 
     frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
     now = [0.0]
@@ -2566,7 +2616,79 @@ def test_planning_scan_sweeps_everything_on_a_timer() -> None:
     assert planner.planning_detection_types() is not None
 
     now[0] = 30.0
+    assert planner.planning_detection_types() is not None
+
+    planner.on_action_failure("dinosaur")
+    assert planner.choose(frame, [anchor]) is None
     assert planner.planning_detection_types() is None
+
+
+def test_failed_dinosaur_recovery_reuses_the_verified_frame() -> None:
+    """A missed tap should re-plan from its final frame without recapturing."""
+
+    class RecoveryDetector:
+        def __init__(self) -> None:
+            self.requests: list[frozenset[str]] = []
+
+        def detect_types(
+            self,
+            frame: Frame,
+            target_types: frozenset[str],
+        ) -> list[Detection]:
+            self.requests.append(target_types)
+            if "dinosaur" not in target_types:
+                return []
+            return [
+                Detection("map_center_egg", 450, 800, 1.0),
+                Detection("map_exit_nest_button", 841, 1295, 1.0),
+                Detection("dinosaur", 500, 900, 0.9),
+            ]
+
+        def detect(self, frame: Frame) -> list[Detection]:
+            raise AssertionError("recovery must not request a full scan")
+
+    before = Frame(np.full((1600, 900, 3), 10, dtype=np.uint8), sequence=1)
+    after = Frame(np.full((1600, 900, 3), 20, dtype=np.uint8), sequence=2)
+    source = Detection("dinosaur", 394, 447, 0.751)
+    target = Target("dinosaur", source.x, source.y, source.confidence, source)
+    capture = SequenceCapture([after])
+    detector = RecoveryDetector()
+    context = BotContext(
+        capture_provider=capture,
+        detector=detector,
+        planner=HuntPlanner(("dinosaur",)),
+        action_driver=RecordingActionDriver(),
+        verifier=AlwaysFailsVerifier(),
+        observer=RuntimeMode(),
+        logger=logging.getLogger("test_failed_dinosaur_reuse"),
+        verify_retries=1,
+        state=BotState.VERIFY,
+        frame=before,
+        before_frame=before,
+        before_detections=[source],
+        target=target,
+        action=ActionCommand.tap(target.x, target.y),
+        attempt=1,
+        attempt_target_type="dinosaur",
+    )
+    engine = BotEngine(context)
+
+    assert engine.step() == BotState.PLANNING
+    assert capture.index == 1, "verification captured once; recovery did not recapture"
+    assert "dinosaur" not in detector.requests[0]
+    assert "dinosaur" in detector.requests[1]
+
+    assert engine.step() == BotState.ACTION
+    assert context.target is not None and context.target.type == "dinosaur"
+
+
+def test_dinosaur_manifest_clicks_deeper_inside_the_body() -> None:
+    manifest = json.loads(Path("assets/manifest.json").read_text(encoding="utf-8"))
+    dinosaur = next(
+        item for item in manifest["templates"] if item["type"] == "dinosaur"
+    )
+
+    assert dinosaur["click_offset"] == [22, 45]
 
 
 def test_restarting_the_game_forces_a_full_planning_scan() -> None:

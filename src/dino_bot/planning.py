@@ -894,24 +894,66 @@ class HuntPlanner(TargetPlanner):
         dialogs are a quarter of that bill on screens that cannot appear again
         once a run is under way. Narrowing the scan to the stage the planner is
         actually in is safe exactly while the narrow view keeps producing work,
-        so a scan that plans nothing twice running - or a sweep that has not
-        happened for ``full_scan_interval_seconds`` - widens the next one back
-        to everything. An unexpected dialog therefore costs a wasted cycle
-        rather than a stall.
+        so a scan that plans nothing twice running widens the next one back to
+        everything. The timer only accelerates that fallback after an empty
+        scoped cycle; it must not interrupt a productive map every 30 seconds,
+        because a live full scan can cost more than 15 seconds.
         """
 
         if not self.stage_scoped_scan:
             return None
         now = self.clock()
+        timer_due_after_idle = (
+            self.full_scan_interval_seconds > 0
+            and self._scoped_idle_cycles > 0
+            and self._last_full_scan is not None
+            and now - self._last_full_scan >= self.full_scan_interval_seconds
+        )
         if (
             self._last_full_scan is None
             or self._scoped_idle_cycles >= self.full_scan_after_idle_cycles
-            or now - self._last_full_scan >= self.full_scan_interval_seconds
+            or timer_due_after_idle
         ):
             self._last_full_scan = now
             self._scoped_idle_cycles = 0
             return None
         return self._stage_detection_types()
+
+    def failure_recovery_detection_types(
+        self,
+        target_type: str,
+    ) -> frozenset[str]:
+        """Return a cheap recovery scan for a dinosaur tap that missed.
+
+        Verification normally looks only for the hunt sheet. If it never
+        appears, scan that already-captured frame for map targets so the next
+        attempt can be planned without another capture or a periodic full
+        manifest scan.
+        """
+
+        if target_type != self.dinosaur_type:
+            return frozenset()
+        return self._stage_detection_types()
+
+    def can_reuse_failed_verification_result(
+        self,
+        target_type: str,
+        detections: Sequence[Detection],
+    ) -> bool:
+        """Reuse a failed dinosaur frame when it still contains map work."""
+
+        if target_type != self.dinosaur_type:
+            return False
+        visible = {item.type for item in detections}
+        return bool(
+            visible
+            & {
+                self.dinosaur_type,
+                *self.hunt_button_types,
+                *self.recovery_button_types,
+                *self.interrupt_button_types,
+            }
+        )
 
     def _stage_detection_types(self) -> frozenset[str]:
         """Return the detections the planner's current stage can act on.

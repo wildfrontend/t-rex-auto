@@ -234,6 +234,25 @@ class HatchHuntPlanner:
         method = getattr(self._action_owner, "can_reuse_verification_result", None)
         return bool(method(target_type, detections)) if callable(method) else False
 
+    def failure_recovery_detection_types(
+        self,
+        target_type: str,
+    ) -> frozenset[str]:
+        method = getattr(self._action_owner, "failure_recovery_detection_types", None)
+        return method(target_type) if callable(method) else frozenset()
+
+    def can_reuse_failed_verification_result(
+        self,
+        target_type: str,
+        detections: Sequence[Detection],
+    ) -> bool:
+        method = getattr(
+            self._action_owner,
+            "can_reuse_failed_verification_result",
+            None,
+        )
+        return bool(method(target_type, detections)) if callable(method) else False
+
     def reset_workflow(self) -> None:
         self.hatch.reset_workflow()
         self.hunt.reset_workflow()

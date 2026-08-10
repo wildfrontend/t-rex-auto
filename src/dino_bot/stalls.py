@@ -26,7 +26,7 @@ from typing import Any, Protocol
 import cv2
 
 from .cull import CapacityRead
-from .models import Detection, Frame, Image, utc_now
+from .models import Detection, Frame, Image, Target, VerificationResult, utc_now
 
 
 class DigitEvidenceReader(Protocol):
@@ -199,6 +199,106 @@ class StallSnapshotWriter(_SnapshotWriter):
             "Stall | no actionable target for %.0fs | stage=%s | saved %s",
             seconds,
             stage or "unknown",
+            path.name,
+        )
+        return path
+
+
+class DinosaurFailureSnapshotWriter(_SnapshotWriter):
+    """Keep bounded before/after evidence for missed dinosaur taps."""
+
+    prefix = "dinosaur-tap"
+
+    def capture(
+        self,
+        before: Frame,
+        after: Frame,
+        target: Target,
+        detections: Sequence[Detection],
+        result: VerificationResult,
+        *,
+        attempt: int,
+    ) -> Path | None:
+        moment = self.clock()
+        if self._throttled(moment):
+            return None
+
+        annotated_before = before.image.copy()
+        annotated_after = after.image.copy()
+        radius = max(10, round(20 * before.width / 900.0))
+        thickness = max(2, round(4 * before.width / 900.0))
+        for image in (annotated_before, annotated_after):
+            cv2.circle(image, (target.x, target.y), radius, (0, 0, 255), thickness)
+            cv2.line(
+                image,
+                (target.x - radius, target.y),
+                (target.x + radius, target.y),
+                (0, 0, 255),
+                thickness,
+            )
+            cv2.line(
+                image,
+                (target.x, target.y - radius),
+                (target.x, target.y + radius),
+                (0, 0, 255),
+                thickness,
+            )
+
+        anchor = target.detection.metadata.get("anchor_bbox")
+        if isinstance(anchor, dict):
+            try:
+                x0 = int(anchor["x"])
+                y0 = int(anchor["y"])
+                x1 = x0 + int(anchor["width"])
+                y1 = y0 + int(anchor["height"])
+                cv2.rectangle(
+                    annotated_before,
+                    (x0, y0),
+                    (x1, y1),
+                    (255, 255, 0),
+                    thickness,
+                )
+            except (KeyError, TypeError, ValueError):
+                anchor = None
+
+        evidence = Frame(
+            annotated_before,
+            captured_at=before.captured_at,
+            source=before.source,
+            sequence=before.sequence,
+        )
+        path = self._write(
+            evidence,
+            {
+                "reason": "dinosaur_tap_failed",
+                "attempt": attempt,
+                "target": {
+                    "x": target.x,
+                    "y": target.y,
+                    "confidence": round(float(target.confidence), 6),
+                    "anchor_bbox": anchor,
+                },
+                "verification": {
+                    "reason": result.reason,
+                    "pixel_change": result.pixel_change,
+                },
+                "after_detections": [item.to_dict() for item in detections],
+                "legend": {
+                    "red": "tap point",
+                    "cyan": "matched Lv anchor",
+                },
+            },
+            extra_images={"after": annotated_after},
+        )
+        if path is None:
+            return None
+
+        self._last_written = moment
+        self._prune()
+        self.logger.warning(
+            "Hunt calibration | dinosaur tap failed | target=(%d,%d) | saved %s",
+            target.x,
+            target.y,
             path.name,
         )
         return path
