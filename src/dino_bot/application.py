@@ -420,6 +420,8 @@ def _create_hatch_engine(
             reference_width=hatch.reference_width,
             scroll_vector=hatch.scroll_vector,
             scroll_duration_ms=hatch.scroll_duration_ms,
+            home_reposition_vector=hatch.home_reposition_vector,
+            home_reposition_duration_ms=hatch.home_reposition_duration_ms,
             max_scrolls=hatch.max_scrolls,
             rescan_interval_seconds=hatch.rescan_interval_seconds,
             batch_hatch_count=hatch.batch_hatch_count,

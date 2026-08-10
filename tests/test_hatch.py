@@ -203,6 +203,8 @@ def test_hatch_config_defaults_load(tmp_path) -> None:
     assert config.hatch.rescan_interval_seconds == 600
     assert config.hatch.batch_hatch_count == 8
     assert config.hatch.egg_pile == (450.0, 1330.0)
+    assert config.hatch.home_reposition_vector == (450.0, 1100.0, 450.0, 650.0)
+    assert config.hatch.home_reposition_duration_ms == 400
     assert config.hatch.max_scrolls == 0
     assert config.hatch.manifest == tmp_path / "assets/hatch/manifest.json"
     assert config.hatch.stat_upgrade_guards["hp"].min_delta == 10

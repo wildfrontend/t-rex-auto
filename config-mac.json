@@ -308,6 +308,8 @@
   "hatch": {
     "batch_hatch_count": 8,
     "cull_threshold": 350,
+    "home_reposition_vector": [450, 1100, 450, 650],
+    "home_reposition_duration_ms": 400,
     "stat_upgrade_guards": {
       "hp": {
         "min_delta": 10,

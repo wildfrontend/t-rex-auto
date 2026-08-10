@@ -24,6 +24,8 @@ from dino_bot.full_hatch import (
     HATCH_BOOST_BUTTON,
     HATCH_BOOST_CONFIRM,
     HATCH_DETAIL_CLOSE,
+    HOME_COLLECT_BUTTON,
+    HOME_REPOSITION,
     NEST_GEAR,
     NEST_MASK_CLOSE,
     OPEN_NEST,
@@ -724,12 +726,33 @@ def test_cleanup_gate_allows_cave_only_after_every_screening_stage() -> None:
     planner._management_pending = True
     planner._collect_only_after_empty = False
     planner._screening_completed = {"attack", "hp", "top", "mass"}
-    home = [detection(hatch.HOME_ANCHOR, 59, 561)]
+    home = [
+        detection(hatch.HOME_ANCHOR, 59, 561),
+        detection(COLLECT_EGGS_BUTTON, 450, 1305),
+    ]
 
     target = planner.choose(frame(), home)
 
-    assert target is not None and target.type == CAVE_SWIPE
+    assert target is not None and target.type == HOME_COLLECT_BUTTON
+    assert planner._stage == "home_collect_button"
+    planner.on_action_success(target.type)
     assert planner._stage == "cave"
+
+
+def test_cleanup_gate_falls_back_to_my_nest_when_home_collect_button_is_missing() -> None:
+    planner = make_full_planner()
+    planner._stage = "verify_nest_closed"
+    planner._child = object()
+    planner._management_pending = True
+    planner._screening_completed = {"attack", "hp", "top", "mass"}
+
+    target = planner.choose(
+        frame(),
+        [detection(hatch.HOME_ANCHOR, 59, 561)],
+    )
+
+    assert target is not None and target.type == OPEN_NEST
+    assert planner._collect_home_fallback
 
 
 def test_workflow_reset_preserves_and_resumes_incomplete_screening() -> None:
@@ -796,6 +819,59 @@ def test_full_flow_collects_all_nest_eggs_before_empty_rescan_wait() -> None:
     assert not planner.is_hunt_cooldown_active()
     target = planner.choose(frame(), home)
     assert target is not None and target.type == CAVE_SWIPE
+
+
+def test_collect_only_prefers_home_collect_button_before_opening_my_nest() -> None:
+    planner = make_full_planner()
+    planner._stage = "open_nest"
+    planner._collect_only_after_empty = True
+    home = [
+        detection(hatch.HOME_ANCHOR, 59, 561),
+        detection(COLLECT_EGGS_BUTTON, 450, 1305),
+    ]
+
+    target = planner.choose(frame(), home)
+
+    assert target is not None and target.type == HOME_COLLECT_BUTTON
+    assert planner._stage == "home_collect_button"
+    planner.on_action_success(target.type)
+    assert planner._stage == "hatch"
+    assert planner.is_hunt_cooldown_active()
+
+
+def test_collect_only_falls_back_to_my_nest_when_home_button_is_missing() -> None:
+    planner = make_full_planner()
+    planner._stage = "open_nest"
+    planner._collect_only_after_empty = True
+
+    target = planner.choose(
+        frame(),
+        [detection(hatch.HOME_ANCHOR, 59, 561)],
+    )
+
+    assert target is not None and target.type == OPEN_NEST
+
+
+def test_hatch_repositions_home_map_before_tapping_pile_under_collect_button() -> None:
+    planner = make_full_planner()
+    planner._capacity_checked = True
+    home = [
+        detection(hatch.HOME_ANCHOR, 59, 561),
+        detection(COLLECT_EGGS_BUTTON, 450, 1305),
+    ]
+
+    target = planner.choose(frame(), home)
+
+    assert target is not None and target.type == HOME_REPOSITION
+    assert target.detection.metadata["swipe"] == {
+        "x2": 450,
+        "y2": 650,
+        "duration_ms": 400,
+    }
+
+    planner.on_action_success(target.type)
+    target = planner.choose(frame(), home)
+    assert target is not None and target.type == hatch.EGG_PILE
 
 
 def test_full_hatch_accumulates_eight_hatches_before_management() -> None:
