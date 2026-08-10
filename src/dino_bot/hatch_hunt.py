@@ -229,6 +229,26 @@ class HatchHuntPlanner:
         if callable(method):
             method(target)
 
+    def recover_from_action_failures(
+        self,
+        target: Target,
+        stage: str,
+        episodes: int,
+        frame: Frame | None,
+        detections: Sequence[Detection],
+    ) -> bool:
+        method = getattr(self._action_owner, "recover_from_action_failures", None)
+        return bool(
+            method(target, stage, episodes, frame, detections)
+        ) if callable(method) else False
+
+    def is_recovery_progress(self, target_type: str) -> bool:
+        for owner in (self._action_owner, self.hatch, self.hunt):
+            method = getattr(owner, "is_recovery_progress", None)
+            if callable(method) and method(target_type):
+                return True
+        return False
+
     def on_blocked_action_context(
         self,
         target: Target,

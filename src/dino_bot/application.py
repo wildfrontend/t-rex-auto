@@ -235,6 +235,15 @@ def _create_hunt_engine(config: AppConfig, *, verbose: bool = False) -> BotEngin
         stall_snapshots=stall_snapshots,
         dinosaur_failure_snapshots=dinosaur_failure_snapshots,
         event_log=event_log,
+        action_failure_stage_threshold=(
+            config.recovery.action_failure_stage_threshold
+        ),
+        action_failure_restart_threshold=(
+            config.recovery.action_failure_restart_threshold
+        ),
+        max_restarts_without_progress=(
+            config.recovery.max_restarts_without_progress
+        ),
     )
     return BotEngine(context)
 
@@ -646,6 +655,15 @@ def _create_hatch_engine(
         stall_snapshots=stall_snapshots,
         dinosaur_failure_snapshots=dinosaur_failure_snapshots,
         event_log=event_log,
+        action_failure_stage_threshold=(
+            config.recovery.action_failure_stage_threshold
+        ),
+        action_failure_restart_threshold=(
+            config.recovery.action_failure_restart_threshold
+        ),
+        max_restarts_without_progress=(
+            config.recovery.max_restarts_without_progress
+        ),
     )
     return BotEngine(context)
 

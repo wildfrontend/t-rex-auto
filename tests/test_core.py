@@ -2283,6 +2283,148 @@ def test_engine_clears_transient_state_after_black_screen_recovery() -> None:
     assert not planner._awaiting_hunt_button
 
 
+def test_engine_escalates_repeated_action_failures_and_opens_restart_fuse() -> None:
+    class EscalationPlanner(TargetPlanner):
+        def __init__(self) -> None:
+            super().__init__(("resource",))
+            self.stage_recoveries: list[tuple[str, str, int]] = []
+
+        def last_stage(self) -> str:
+            return "test_stage"
+
+        def recover_from_action_failures(
+            self,
+            target: Target,
+            stage: str,
+            episodes: int,
+            frame: Frame | None,
+            detections,
+        ) -> bool:
+            assert frame is not None
+            self.stage_recoveries.append((stage, target.type, episodes))
+            return True
+
+    class EscalationRecovery:
+        def __init__(self) -> None:
+            self.requests: list[tuple[str, str]] = []
+
+        def observe(self, frame: Frame) -> bool:
+            return False
+
+        def request_restart(
+            self,
+            reason: str,
+            *,
+            reason_key: str,
+            bypass_cooldown: bool = False,
+        ) -> bool:
+            del bypass_cooldown
+            self.requests.append((reason, reason_key))
+            return True
+
+    detection = make_detection()
+    target = Target(
+        detection.type,
+        detection.x,
+        detection.y,
+        detection.confidence,
+        detection,
+    )
+    planner = EscalationPlanner()
+    recovery = EscalationRecovery()
+    events = RecordingEventLog()
+    context = BotContext(
+        capture_provider=SequenceCapture([make_frame(10)]),
+        detector=PixelDetector(),
+        planner=planner,
+        action_driver=RecordingActionDriver(),
+        verifier=AlwaysFailsVerifier(),
+        observer=RuntimeMode(),
+        logger=logging.getLogger("test_action_failure_escalation"),
+        click_delay_ms=0,
+        idle_delay_ms=0,
+        verify_retries=0,
+        runtime_recovery=recovery,
+        event_log=events,
+    )
+    engine = BotEngine(context)
+
+    def exhaust_once() -> BotState:
+        context.state = BotState.VERIFY
+        context.before_frame = make_frame(10)
+        context.before_detections = [detection]
+        context.target = target
+        context.action = ActionCommand.tap(target.x, target.y)
+        context.action_stage = "test_stage"
+        context.attempt = 1
+        context.attempt_target_type = target.type
+        return engine.step()
+
+    assert exhaust_once() == BotState.IDLE
+    assert planner.stage_recoveries == []
+
+    assert exhaust_once() == BotState.IDLE
+    assert planner.stage_recoveries == [("test_stage", "resource", 2)]
+
+    assert exhaust_once() == BotState.IDLE
+    assert len(recovery.requests) == 1
+    assert context.recovery_restarts_without_progress == 1
+
+    assert exhaust_once() == BotState.IDLE
+    assert exhaust_once() == BotState.IDLE
+    assert len(recovery.requests) == 3
+    assert context.recovery_restarts_without_progress == 3
+
+    assert exhaust_once() == BotState.STOPPED
+    escalation_actions = [
+        record["action"]
+        for record in events.records
+        if record["e"] == "failure_escalation"
+    ]
+    assert escalation_actions == [
+        "local_exhausted",
+        "stage_recovery",
+        "restart_game",
+        "restart_game",
+        "restart_game",
+        "stop_bot",
+    ]
+
+
+def test_engine_productive_milestone_resets_action_failure_fuse() -> None:
+    detection = make_detection(type="hunt_confirm_button")
+    target = Target(
+        detection.type,
+        detection.x,
+        detection.y,
+        detection.confidence,
+        detection,
+    )
+    context = BotContext(
+        capture_provider=SequenceCapture([make_frame(255)]),
+        detector=PixelDetector(),
+        planner=HuntPlanner(("hunt_confirm_button",)),
+        action_driver=RecordingActionDriver(),
+        verifier=SequenceVerifier([VerificationResult(True, "hunt completed")]),
+        observer=RuntimeMode(),
+        logger=logging.getLogger("test_action_failure_progress_reset"),
+        click_delay_ms=0,
+        state=BotState.VERIFY,
+        before_frame=make_frame(10),
+        before_detections=[detection],
+        target=target,
+        action=ActionCommand.tap(target.x, target.y),
+        action_stage="hunt_confirm",
+        attempt=1,
+        action_failure_episodes={("hunt_confirm", target.type): 4},
+        recovery_restarts_without_progress=2,
+    )
+
+    assert BotEngine(context).step() == BotState.IDLE
+    assert context.action_failure_episodes == {}
+    assert context.recovery_restarts_without_progress == 0
+
+
 class RecordingStallSnapshots:
     def __init__(self) -> None:
         self.captures: list[dict[str, object]] = []

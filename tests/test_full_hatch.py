@@ -501,6 +501,23 @@ def make_full_planner() -> FullHatchPlanner:
     )
 
 
+def test_full_hatch_repeated_action_failure_enters_safe_home_recovery() -> None:
+    planner = make_full_planner()
+    failed = detection(COLLECT_EGGS_BUTTON, 450, 1300)
+    target = Target(failed.type, failed.x, failed.y, failed.confidence, failed)
+
+    assert planner.recover_from_action_failures(
+        target,
+        "full_collect_button",
+        2,
+        frame(),
+        [],
+    )
+    assert planner.last_stage().startswith("full_recover_home:")
+    assert planner.is_recovery_progress(hatch.CLAIM_BUTTON)
+    assert not planner.is_recovery_progress(COLLECT_EGGS_BUTTON)
+
+
 def test_full_hatch_scopes_detection_by_workflow_phase() -> None:
     planner = make_full_planner()
 

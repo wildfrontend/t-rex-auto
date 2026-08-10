@@ -247,6 +247,13 @@ class RecoveryConfig:
     hunt_progress_suspend_budget_seconds: float = 120.0
     restart_cooldown_seconds: float = 90.0
     launch_wait_seconds: float = 15.0
+    # One exhausted retry budget is still a local failure. Repeated exhausted
+    # budgets for the same behaviour first unwind its workflow, then restart
+    # the game. If restarts themselves do not produce a real milestone, stop
+    # instead of force-stopping the app forever.
+    action_failure_stage_threshold: int = 2
+    action_failure_restart_threshold: int = 3
+    max_restarts_without_progress: int = 3
     package: str = "com.mondayoff.dinomutant"
     activity: str = "com.unity3d.player.UnityPlayerActivity"
 
@@ -698,6 +705,15 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
             launch_wait_seconds=float(
                 recovery_data.get("launch_wait_seconds", 15)
             ),
+            action_failure_stage_threshold=int(
+                recovery_data.get("action_failure_stage_threshold", 2)
+            ),
+            action_failure_restart_threshold=int(
+                recovery_data.get("action_failure_restart_threshold", 3)
+            ),
+            max_restarts_without_progress=int(
+                recovery_data.get("max_restarts_without_progress", 3)
+            ),
             package=str(
                 recovery_data.get("package", "com.mondayoff.dinomutant")
             ),
@@ -849,6 +865,22 @@ def _validate(config: AppConfig) -> None:
         raise ConfigError("recovery.restart_cooldown_seconds cannot be negative")
     if config.recovery.launch_wait_seconds < 0:
         raise ConfigError("recovery.launch_wait_seconds cannot be negative")
+    if config.recovery.action_failure_stage_threshold <= 0:
+        raise ConfigError(
+            "recovery.action_failure_stage_threshold must be greater than zero"
+        )
+    if (
+        config.recovery.action_failure_restart_threshold
+        <= config.recovery.action_failure_stage_threshold
+    ):
+        raise ConfigError(
+            "recovery.action_failure_restart_threshold must be greater than "
+            "action_failure_stage_threshold"
+        )
+    if config.recovery.max_restarts_without_progress <= 0:
+        raise ConfigError(
+            "recovery.max_restarts_without_progress must be greater than zero"
+        )
     if not config.recovery.package or not config.recovery.activity:
         raise ConfigError("recovery package/activity cannot be empty")
     if config.planner.own_path_radius < 0:

@@ -1874,6 +1874,37 @@ class FullHatchPlanner:
             " | blocking hatch until explicit workflow reset"
         )
 
+    def recover_from_action_failures(
+        self,
+        target: Target,
+        stage: str,
+        episodes: int,
+        frame: Frame | None,
+        detections: Sequence[Detection],
+    ) -> bool:
+        """Return uncertain hatch mutations to a proven centred home screen."""
+
+        del frame, detections
+        if self.is_hatch_blocked():
+            return False
+        self.logger.warning(
+            "Hatch recovery | repeated action failure | stage=%s target=%s"
+            " episodes=%d | returning to centered home",
+            stage,
+            target.type,
+            episodes,
+        )
+        self._begin_home_recovery(
+            f"repeated action failure at {stage}: {target.type} ({episodes})"
+        )
+        return True
+
+    @staticmethod
+    def is_recovery_progress(target_type: str) -> bool:
+        """A verified hatch claim is the workflow's productive milestone."""
+
+        return target_type == hatch_feature.CLAIM_BUTTON
+
     def on_action_failure(self, target_type: str) -> None:
         if target_type in STARTUP_INTERRUPTS:
             # Leave the workflow stage intact. If the modal remains visible,

@@ -440,6 +440,9 @@ D:\DinoMutantBot\python\python.exe `
   `300000` ms（5 分鐘）。
 - `recovery.black_screen_timeout_seconds`: 持續黑畫面多久後重啟遊戲，預設 `45` 秒。
 - `recovery.restart_cooldown_seconds`: 兩次遊戲重啟的最短間隔，預設 `90` 秒。
+- `recovery.action_failure_stage_threshold`: 同一階段／行為耗盡幾輪重試後執行安全階段恢復，預設 `2`。
+- `recovery.action_failure_restart_threshold`: 同一階段／行為耗盡幾輪重試後重啟遊戲，預設 `3`。
+- `recovery.max_restarts_without_progress`: 行為失敗升級鏈在沒有完成狩獵或孵蛋里程碑時最多重啟幾次，預設 `3`；再失敗會安全停止 Bot。
 - `workflow.max_cycles`: 完整「狩獵、信箱收取、關閉」流程次數；`0` 代表持續執行。
 
 ## 背景執行

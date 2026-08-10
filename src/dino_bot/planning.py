@@ -532,6 +532,36 @@ class HuntPlanner(TargetPlanner):
             self._awaiting_hunt_button = False
             self._waited_frames = 0
 
+    def recover_from_action_failures(
+        self,
+        target: Target,
+        stage: str,
+        episodes: int,
+        frame: Frame | None,
+        detections: Sequence[Detection],
+    ) -> bool:
+        """Unwind all hunt stages before another failed budget is attempted."""
+
+        del detections
+        if frame is None:
+            return False
+        self.suppress(target.type, target.x, target.y)
+        self._release_stage_machines(frame)
+        self._begin_recenter("repeated_action_failure")
+        self.logger.warning(
+            "Hunt recovery | repeated action failure | stage=%s target=%s"
+            " episodes=%d | recentering map",
+            stage,
+            target.type,
+            episodes,
+        )
+        return True
+
+    def is_recovery_progress(self, target_type: str) -> bool:
+        """Only a verified completed hunt proves the recovery really worked."""
+
+        return target_type == self.completion_type
+
     def should_finalize_verification_early(
         self,
         target: Target,

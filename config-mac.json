@@ -303,6 +303,9 @@
     "hunt_progress_suspend_budget_seconds": 120,
     "restart_cooldown_seconds": 90,
     "launch_wait_seconds": 15,
+    "action_failure_stage_threshold": 2,
+    "action_failure_restart_threshold": 3,
+    "max_restarts_without_progress": 3,
     "package": "com.mondayoff.dinomutant",
     "activity": "com.unity3d.player.UnityPlayerActivity"
   },

@@ -113,10 +113,200 @@ class BotContext:
     escalate_to_back: bool = False
     inert_tap_threshold: int = 2
     inert_pixel_change: float = 0.001
+    action_failure_stage_threshold: int = 2
+    action_failure_restart_threshold: int = 3
+    max_restarts_without_progress: int = 3
+    action_stage: str = ""
+    action_failure_episodes: dict[tuple[str, str], int] = field(default_factory=dict)
+    recovery_restarts_without_progress: int = 0
 
 
 class StateHandler(Protocol):
     def execute(self, context: BotContext) -> BotState: ...
+
+
+def _planner_stage(planner: Planner) -> str:
+    method = getattr(planner, "last_stage", None)
+    return str(method()) if callable(method) else ""
+
+
+def _failure_stage_key(stage: str) -> str:
+    """Drop volatile child detail while preserving the owning workflow stage."""
+
+    parts = stage.split(":")
+    if stage.startswith("hatch_hunt_") and len(parts) > 1:
+        return ":".join(parts[:2])
+    return parts[0]
+
+
+def _is_recovery_progress(context: BotContext, target_type: str) -> bool:
+    method = getattr(context.planner, "is_recovery_progress", None)
+    if callable(method):
+        return bool(method(target_type))
+    return bool(
+        target_type in context.cycle_complete_targets
+        or target_type == getattr(context.planner, "completion_type", None)
+    )
+
+
+def _record_action_success(context: BotContext, target_type: str) -> None:
+    """Clear only recovered behaviour failures; milestones clear the fuse."""
+
+    for key in tuple(context.action_failure_episodes):
+        if key[1] == target_type:
+            context.action_failure_episodes.pop(key, None)
+    if not _is_recovery_progress(context, target_type):
+        return
+    if context.action_failure_episodes or context.recovery_restarts_without_progress:
+        context.logger.info(
+            "Recovery | progress milestone restored | target=%s | restart fuse reset",
+            target_type,
+        )
+        context.event_log.emit(
+            "failure_escalation",
+            level=0,
+            action="progress_restored",
+            target=target_type,
+            restarts=context.recovery_restarts_without_progress,
+        )
+    context.action_failure_episodes.clear()
+    context.recovery_restarts_without_progress = 0
+
+
+def _request_stage_recovery(
+    context: BotContext,
+    target: Target,
+    *,
+    stage: str,
+    episodes: int,
+) -> bool:
+    method = getattr(context.planner, "recover_from_action_failures", None)
+    if not callable(method):
+        return False
+    return bool(
+        method(
+            target,
+            stage,
+            episodes,
+            context.after_frame,
+            context.after_detections,
+        )
+    )
+
+
+def _escalate_retry_exhaustion(context: BotContext, target: Target) -> BotState | None:
+    """Escalate repeated exhausted retry budgets across every action type."""
+
+    stage = context.action_stage or _planner_stage(context.planner) or "unknown"
+    key = (_failure_stage_key(stage), target.type)
+    episodes = context.action_failure_episodes.get(key, 0) + 1
+    context.action_failure_episodes[key] = episodes
+    stage_threshold = max(1, context.action_failure_stage_threshold)
+    restart_threshold = max(stage_threshold + 1, context.action_failure_restart_threshold)
+
+    if episodes < stage_threshold:
+        level, action = 1, "local_exhausted"
+    elif episodes < restart_threshold:
+        level = 2
+        action = (
+            "stage_recovery"
+            if _request_stage_recovery(
+                context,
+                target,
+                stage=stage,
+                episodes=episodes,
+            )
+            else "stage_recovery_unavailable"
+        )
+    else:
+        if (
+            context.recovery_restarts_without_progress
+            >= max(1, context.max_restarts_without_progress)
+        ):
+            context.logger.critical(
+                "Recovery | action failure fuse opened | stage=%s target=%s"
+                " episodes=%d restarts=%d | stopping bot",
+                stage,
+                target.type,
+                episodes,
+                context.recovery_restarts_without_progress,
+            )
+            context.event_log.emit(
+                "failure_escalation",
+                level=5,
+                action="stop_bot",
+                stage=stage,
+                target=target.type,
+                episodes=episodes,
+                restarts=context.recovery_restarts_without_progress,
+            )
+            context.stop_requested = True
+            context.stop_event.set()
+            return BotState.STOPPED
+
+        recovery = context.runtime_recovery
+        restarted = bool(
+            recovery is not None
+            and recovery.request_restart(
+                f"repeated action failure at {stage}: {target.type}"
+                f" ({episodes} exhausted retry budgets)",
+                reason_key="action_failure",
+            )
+        )
+        if restarted:
+            context.recovery_restarts_without_progress += 1
+            context.logger.error(
+                "Recovery | action failure escalation | level=4 stage=%s"
+                " target=%s episodes=%d restart=%d/%d",
+                stage,
+                target.type,
+                episodes,
+                context.recovery_restarts_without_progress,
+                context.max_restarts_without_progress,
+            )
+            context.event_log.emit(
+                "failure_escalation",
+                level=4,
+                action="restart_game",
+                stage=stage,
+                target=target.type,
+                episodes=episodes,
+                restarts=context.recovery_restarts_without_progress,
+            )
+            _reset_after_runtime_recovery(context)
+            return BotState.IDLE
+
+        level = 3
+        recovered = _request_stage_recovery(
+            context,
+            target,
+            stage=stage,
+            episodes=episodes,
+        )
+        action = "restart_deferred" if recovery is not None else "restart_unavailable"
+        if recovered:
+            action += "_stage_recovery"
+
+    context.logger.warning(
+        "Recovery | action failure escalation | level=%d action=%s"
+        " stage=%s target=%s episodes=%d restarts=%d",
+        level,
+        action,
+        stage,
+        target.type,
+        episodes,
+        context.recovery_restarts_without_progress,
+    )
+    context.event_log.emit(
+        "failure_escalation",
+        level=level,
+        action=action,
+        stage=stage,
+        target=target.type,
+        episodes=episodes,
+        restarts=context.recovery_restarts_without_progress,
+    )
+    return None
 
 
 def _build_action(action_kind: ActionKind, target: Target) -> ActionCommand:
@@ -347,6 +537,7 @@ class PlanningState:
             if delay_ms and _wait_for_delay(context, delay_ms):
                 return BotState.STOPPED
             return BotState.IDLE
+        context.action_stage = stage
         action_kind = context.target_action_kinds.get(
             context.target.type,
             ActionKind.TAP,
@@ -605,6 +796,7 @@ class VerifyState:
             on_action_success = getattr(context.planner, "on_action_success", None)
             if callable(on_action_success):
                 on_action_success(target_type)
+            _record_action_success(context, target_type)
             # A confirmed hunt is the only thing the stall watchdog accepts as
             # progress; everything else on screen can stay unchanged for a
             # quarter of an hour while the bot produces nothing. It also ends
@@ -794,9 +986,10 @@ class VerifyState:
                 "mailbox_full_recovery",
                 target=target_payload(context.target),
             )
+        escalation_state = _escalate_retry_exhaustion(context, context.target)
         context.attempt = 0
         context.attempt_target_type = None
-        return BotState.IDLE
+        return escalation_state or BotState.IDLE
 
 
 class RecoverState:
@@ -869,6 +1062,7 @@ def _reset_after_runtime_recovery(context: BotContext) -> None:
     context.last_result = None
     context.attempt = 0
     context.attempt_target_type = None
+    context.action_stage = ""
     context.verification_timeout_ms = 0
     context.verification_deadline = None
     context.verification_started_at = None
