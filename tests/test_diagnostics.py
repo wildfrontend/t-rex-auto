@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 from zipfile import ZipFile
@@ -235,6 +236,43 @@ def test_diagnostic_bundle_includes_only_explicit_snapshot(tmp_path: Path) -> No
     with ZipFile(output) as archive:
         assert archive.read("snapshot.png") == b"fake-png"
         assert "snapshot_error.txt" not in archive.namelist()
+
+
+def test_diagnostic_bundle_includes_recent_failure_evidence(tmp_path: Path) -> None:
+    stalls_dir = tmp_path / "logs" / "stalls"
+    stalls_dir.mkdir(parents=True)
+    for index in range(4):
+        stem = f"parent-stats-20260811-0044{index:02d}"
+        stalls_dir.joinpath(f"{stem}.png").write_bytes(f"frame-{index}".encode())
+        stalls_dir.joinpath(f"{stem}-left-hp.png").write_bytes(
+            f"crop-{index}".encode()
+        )
+        stalls_dir.joinpath(f"{stem}.json").write_text(
+            json.dumps({"reason": "parent_stats_unreadable", "token": "hidden"}),
+            encoding="utf-8",
+        )
+        os.utime(stalls_dir / f"{stem}.json", (index + 1, index + 1))
+
+    output = create_diagnostic_bundle(
+        AppConfig(root=tmp_path),
+        tmp_path / "with-evidence.zip",
+        config_path=tmp_path / "config.json",
+        checks=[],
+    )
+
+    with ZipFile(output) as archive:
+        names = set(archive.namelist())
+        manifest = json.loads(archive.read("manifest.json"))
+        newest_json = archive.read(
+            "logs/stalls/parent-stats-20260811-004403.json"
+        ).decode("utf-8")
+
+    assert "logs/stalls/parent-stats-20260811-004403.png" in names
+    assert "logs/stalls/parent-stats-20260811-004403-left-hp.png" in names
+    assert "logs/stalls/parent-stats-20260811-004400.json" not in names
+    assert manifest["failure_evidence"]["by_type"] == {"parent-stats": 3}
+    assert "hidden" not in newest_json
+    assert "<redacted>" in newest_json
 
 
 def test_redact_text_removes_bearer_and_home_paths(tmp_path: Path) -> None:

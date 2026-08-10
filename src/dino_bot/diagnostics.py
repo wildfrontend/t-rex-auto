@@ -37,6 +37,15 @@ _STALL_WARNING_SECONDS = 300.0
 # How many times the same target may be planned at the same coordinate before
 # it reads as a loop rather than a legitimate retry.
 _REPEATED_TARGET_LIMIT = 6
+_EVIDENCE_PREFIXES = (
+    "stall",
+    "dinosaur-tap",
+    "egg-pile",
+    "capacity",
+    "parent-stats",
+)
+_EVIDENCE_GROUPS_PER_TYPE = 3
+_EVIDENCE_TOTAL_BYTES = 32 * 1024 * 1024
 
 _CODEX_GUIDE = """# 猛龍計畫診斷包
 
@@ -90,11 +99,12 @@ _CODEX_GUIDE = """# 猛龍計畫診斷包
 5. `logs/recent.log`：已遮蔽敏感資訊的近期人類可讀日誌。
 6. `settings.json`：已遮蔽路徑及秘密值的有效設定。
 7. `snapshot.png`：只有使用者明確選擇時才會包含。
-8. `logs/stalls/stall-*.png`（不在這個壓縮檔內，請向使用者索取）：`blind_stalls`
-   不為零時，這是規劃器當下看到的畫面。同名 `.json` 記著那一幀偵測到什麼。
+8. `logs/stalls/`：保留每種故障證據最新三組，包含完整畫面、對應裁切與 `.json`。
+   `stall-*.png` 對應 `blind_stalls` 不為零時規劃器當下看到的畫面；同名 `.json`
+   記著那一幀偵測到什麼。
    這類卡死的成因是畫面上沒有任何認得的控制項，事件流只能報「有比對到什麼」，
    本質上描述不了它——沒有這張圖就不要猜是哪個畫面。
-9. `logs/stalls/capacity-*.png`（同樣請向使用者索取）：日誌出現
+9. `logs/stalls/capacity-*.png`：日誌出現
    `capacity unreadable; skipping cull` 或 `navigation failed` 時的畫面。
    同名 `-hud.png` 是放大六倍的 N/350 讀取區，`.json` 的 `reason` 已分好類：
    - `unparsed`：那個位置沒有能組成 `N/M` 的字元。看 `glyphs` 欄位——空字串代表
@@ -356,6 +366,80 @@ def _summary(
     }
 
 
+def _evidence_prefix(path: Path) -> str | None:
+    """Return the recognized primary-evidence prefix for a sidecar JSON."""
+
+    for prefix in _EVIDENCE_PREFIXES:
+        if path.stem.startswith(f"{prefix}-"):
+            return prefix
+    return None
+
+
+def _evidence_entries(
+    stalls_dir: Path,
+    root: Path,
+) -> tuple[list[tuple[str, bytes]], dict[str, Any]]:
+    """Return bounded, self-contained failure evidence for a diagnostic ZIP."""
+
+    groups: dict[str, list[Path]] = {prefix: [] for prefix in _EVIDENCE_PREFIXES}
+    try:
+        sidecars = list(stalls_dir.glob("*.json"))
+    except OSError:
+        sidecars = []
+    for path in sidecars:
+        prefix = _evidence_prefix(path)
+        if prefix is not None:
+            groups[prefix].append(path)
+
+    entries: list[tuple[str, bytes]] = []
+    included_by_type: dict[str, int] = {}
+    total_bytes = 0
+    for prefix in _EVIDENCE_PREFIXES:
+        try:
+            latest = sorted(
+                groups[prefix],
+                key=lambda path: path.stat().st_mtime,
+                reverse=True,
+            )[:_EVIDENCE_GROUPS_PER_TYPE]
+        except OSError:
+            continue
+        for sidecar in latest:
+            files = [sidecar, sidecar.with_suffix(".png")]
+            try:
+                files.extend(sorted(stalls_dir.glob(f"{sidecar.stem}-*.png")))
+            except OSError:
+                continue
+            group_entries: list[tuple[str, bytes]] = []
+            for path in files:
+                try:
+                    if path.suffix == ".json":
+                        payload = json.loads(path.read_text(encoding="utf-8"))
+                        content = (
+                            json.dumps(_sanitize(payload, root), ensure_ascii=False, indent=2)
+                            + "\n"
+                        ).encode("utf-8")
+                    else:
+                        content = path.read_bytes()
+                except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                    group_entries = []
+                    break
+                group_entries.append((f"logs/stalls/{path.name}", content))
+            group_bytes = sum(len(content) for _, content in group_entries)
+            if not group_entries or total_bytes + group_bytes > _EVIDENCE_TOTAL_BYTES:
+                continue
+            entries.extend(group_entries)
+            total_bytes += group_bytes
+            included_by_type[prefix] = included_by_type.get(prefix, 0) + 1
+    return entries, {
+        "groups": sum(included_by_type.values()),
+        "files": len(entries),
+        "bytes": total_bytes,
+        "groups_per_type_limit": _EVIDENCE_GROUPS_PER_TYPE,
+        "total_bytes_limit": _EVIDENCE_TOTAL_BYTES,
+        "by_type": included_by_type,
+    }
+
+
 def create_diagnostic_bundle(
     config: AppConfig | None,
     output: Path,
@@ -374,6 +458,7 @@ def create_diagnostic_bundle(
 
     root = config.root if config is not None else config_path.resolve().parent
     logs_dir = config.logs_dir if config is not None else root / "logs"
+    stalls_dir = config.stalls_dir if config is not None else logs_dir / "stalls"
     status = build_runtime_status(logs_dir, recent_action_limit=50)
     resolved_checks = list(checks) if checks is not None else (run_checks(config) if config else [])
     safe_status = _sanitize(status, root)
@@ -386,6 +471,7 @@ def create_diagnostic_bundle(
     safe_config_error = redact_text(config_error, root) if config_error else None
     safe_snapshot_error = redact_text(snapshot_error, root) if snapshot_error else None
     events = _recent_event_text(logs_dir, max(1, recent_event_lines), root)
+    evidence_entries, evidence_manifest = _evidence_entries(stalls_dir, root)
     summary = _summary(safe_status, resolved_checks, safe_config_error, safe_snapshot_error)
     # Reported next to the faults rather than in a file of its own: a bundle is
     # opened once, and a second file is a second thing to remember to read.
@@ -400,6 +486,7 @@ def create_diagnostic_bundle(
         "config_loaded": config is not None,
         "snapshot_requested": snapshot_requested,
         "snapshot_included": snapshot_png is not None,
+        "failure_evidence": evidence_manifest,
         "recent_log_line_limit": max(1, recent_log_lines),
         "recent_event_line_limit": max(1, recent_event_lines),
     }
@@ -425,6 +512,8 @@ def create_diagnostic_bundle(
         )
         if events.strip():
             archive.writestr("logs/events.jsonl", events)
+        for archive_name, content in evidence_entries:
+            archive.writestr(archive_name, content)
         if safe_config_error:
             archive.writestr("config_error.txt", safe_config_error + "\n")
         if snapshot_png is not None:

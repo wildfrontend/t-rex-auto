@@ -67,9 +67,9 @@ def test_equal_attack_prefers_lower_other_stats() -> None:
 
 
 def test_higher_primary_wins_despite_high_secondaries() -> None:
-    # 攻擊絕對優先:50/277/150 勝過持有 2160/268/1 的想像替代品。
+    # 攻擊絕對優先:50/279/150 勝過持有 2160/268/1 的想像替代品。
     parent = Stats(30, 276, 1)
-    rows = [Stats(50, 277, 150), Stats(2160, 268, 1)]
+    rows = [Stats(50, 279, 150), Stats(2160, 268, 1)]
     assert pick_replacement(parent, rows, ATTACK_RULE) == 0
 
 

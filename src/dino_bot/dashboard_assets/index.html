@@ -159,6 +159,19 @@
             </label>
             <button id="boostStockUpdate" type="button">更新</button>
           </div>
+          <div class="mutation-guard-control">
+            <div>
+              <span>異變安全範圍</span>
+              <small>只接受此範圍內的親代升級；儲存後下次啟動生效。</small>
+            </div>
+            <div class="mutation-guard-fields">
+              <label>HP 最小增量<input id="hpMinDeltaInput" type="number" min="0" max="10000" step="10" value="30"></label>
+              <label>HP 最大增量<input id="hpMaxDeltaInput" type="number" min="0" max="10000" step="10" value="70"></label>
+              <label>攻擊最小增量<input id="attackMinDeltaInput" type="number" min="0" max="10000" step="1" value="3"></label>
+              <label>攻擊最大增量<input id="attackMaxDeltaInput" type="number" min="0" max="10000" step="1" value="7"></label>
+            </div>
+            <button id="mutationGuardsUpdate" type="button">儲存範圍</button>
+          </div>
           <p class="control-label">只執行一個階段</p>
           <div class="control-grid stage-controls">
             <button data-action="start-stage-hatch" data-confirm="只執行一輪孵蛋並返回主畫面？">孵蛋一輪</button>

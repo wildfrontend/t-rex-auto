@@ -147,6 +147,19 @@ function render(data) {
   if (document.activeElement !== $("boostStockInput")) {
     $("boostStockInput").value = stock;
   }
+  const guards = data.mutation_guards || {};
+  const guardInputs = {
+    hp_min_delta: "hpMinDeltaInput",
+    hp_max_delta: "hpMaxDeltaInput",
+    attack_min_delta: "attackMinDeltaInput",
+    attack_max_delta: "attackMaxDeltaInput",
+  };
+  Object.entries(guardInputs).forEach(([key, inputId]) => {
+    const input = $(inputId);
+    if (document.activeElement !== input && Number.isInteger(guards[key])) {
+      input.value = guards[key];
+    }
+  });
   const metrics = data.metrics || {};
   const counters = metrics.counters || {};
   setCounter("hunt", counters.hunt);
@@ -370,6 +383,54 @@ $("boostEnabled").addEventListener("change", async () => {
     result.textContent = String(error.message || error);
   } finally {
     checkbox.disabled = false;
+  }
+});
+
+$("mutationGuardsUpdate").addEventListener("click", async () => {
+  const values = {
+    hp_min_delta: Number($("hpMinDeltaInput").value),
+    hp_max_delta: Number($("hpMaxDeltaInput").value),
+    attack_min_delta: Number($("attackMinDeltaInput").value),
+    attack_max_delta: Number($("attackMaxDeltaInput").value),
+  };
+  const result = $("commandResult");
+  if (!Object.values(values).every((value) => Number.isInteger(value) && value >= 0 && value <= 10000)) {
+    result.classList.add("error");
+    result.textContent = "異變增量必須是 0 到 10000 的整數。";
+    return;
+  }
+  if (values.hp_min_delta % 10 || values.hp_max_delta % 10) {
+    result.classList.add("error");
+    result.textContent = "HP 增量必須是 10 的倍數。";
+    return;
+  }
+  if (values.hp_min_delta > values.hp_max_delta || values.attack_min_delta > values.attack_max_delta) {
+    result.classList.add("error");
+    result.textContent = "最小增量不可大於最大增量。";
+    return;
+  }
+  $("mutationGuardsUpdate").disabled = true;
+  result.classList.remove("error");
+  result.textContent = "儲存異變安全範圍…";
+  try {
+    const suffix = selectedInstanceId ? `?instance=${encodeURIComponent(selectedInstanceId)}` : "";
+    const response = await fetch(`/api/control/set-mutation-guards${suffix}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Dino-Dashboard": "1",
+      },
+      body: JSON.stringify(values),
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "HTTP " + response.status);
+    result.textContent = payload.message;
+    await refresh();
+  } catch (error) {
+    result.classList.add("error");
+    result.textContent = String(error.message || error);
+  } finally {
+    $("mutationGuardsUpdate").disabled = false;
   }
 });
 refresh();

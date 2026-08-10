@@ -8,9 +8,9 @@ on screen - only that 17 dinosaur labels and no map control were matched, which
 fits a background overlay, a zoomed-out view and a screen with no template
 alike. An unreadable N/350 capacity HUD is the same problem one crop smaller.
 
-The frame itself settles both. These files are written next to the log rather
-than into a diagnostic bundle because the bundle is exported by hand, long
-after the screen has moved on.
+The frame itself settles both. These files stay beside the log for the full
+local evidence set, while the diagnostic bundle carries a bounded recent
+subset so a hand-export still contains the frame that explains the failure.
 """
 
 from __future__ import annotations
