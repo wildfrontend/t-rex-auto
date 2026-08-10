@@ -152,10 +152,6 @@ class HatchConfig:
     egg_pile: tuple[float, float] = (450.0, 1330.0)
     scroll_vector: tuple[float, float, float, float] = (450.0, 1100.0, 450.0, 500.0)
     scroll_duration_ms: int = 400
-    # The home-screen collect-all button overlays the central egg pile in the
-    # current layout. Move the map down once before tapping the pile for hatch.
-    home_reposition_vector: tuple[float, float, float, float] = (450.0, 1100.0, 450.0, 650.0)
-    home_reposition_duration_ms: int = 400
     # Ready eggs are ordered at the top. If the visible rows have no hatch
     # label, lower rows do not need scanning. Keep scrolling opt-in only.
     max_scrolls: int = 0
@@ -648,16 +644,6 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
                 (450.0, 1100.0, 450.0, 500.0),
             ),
             scroll_duration_ms=int(hatch_data.get("scroll_duration_ms", 400)),
-            home_reposition_vector=_number_tuple(
-                hatch_data,
-                "hatch.home_reposition_vector",
-                "home_reposition_vector",
-                4,
-                (450.0, 1100.0, 450.0, 650.0),
-            ),
-            home_reposition_duration_ms=int(
-                hatch_data.get("home_reposition_duration_ms", 400)
-            ),
             max_scrolls=int(hatch_data.get("max_scrolls", 0)),
             rescan_interval_seconds=float(
                 hatch_data.get("rescan_interval_seconds", 600)

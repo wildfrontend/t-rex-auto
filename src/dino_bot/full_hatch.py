@@ -67,8 +67,6 @@ from .stalls import EggPileSnapshot, ParentStatsSnapshot
 
 # Full-workflow synthetic actions and newly cropped screen anchors.
 OPEN_NEST = "hatch_full_open_nest"
-HOME_COLLECT_BUTTON = "hatch_home_collect_eggs_button"
-HOME_REPOSITION = "hatch_home_reposition"
 NEST_GEAR = "hatch_nest_gear"
 AUTOPLACE_TITLE = "hatch_autoplace_title"
 AUTOPLACE_PROMPT = "hatch_autoplace_prompt"
@@ -153,8 +151,6 @@ DEFAULT_TARGET_ACTIONS: dict[str, str] = {
     **hatch_feature.DEFAULT_TARGET_ACTIONS,
     **replacement_feature.DEFAULT_TARGET_ACTIONS,
     OPEN_NEST: "tap",
-    HOME_COLLECT_BUTTON: "tap",
-    HOME_REPOSITION: "swipe",
     NEST_GEAR: "tap",
     AUTOPLACE_SORT_HEADER: "tap",
     PLACE_SORT_BEST: "tap",
@@ -194,8 +190,6 @@ DEFAULT_POST_ACTION_DELAYS_MS: dict[str, int] = {
     **hatch_feature.DEFAULT_POST_ACTION_DELAYS_MS,
     **replacement_feature.DEFAULT_POST_ACTION_DELAYS_MS,
     OPEN_NEST: 3500,
-    HOME_COLLECT_BUTTON: 5000,
-    HOME_REPOSITION: 1500,
     NEST_GEAR: 3000,
     AUTOPLACE_SORT_HEADER: 5000,
     PLACE_SORT_BEST: 2500,
@@ -235,12 +229,6 @@ DEFAULT_SUCCESS_TRANSITIONS: dict[str, tuple[str, ...]] = {
     **hatch_feature.DEFAULT_SUCCESS_TRANSITIONS,
     **replacement_feature.DEFAULT_SUCCESS_TRANSITIONS,
     OPEN_NEST: (NEST_TITLE,),
-    HOME_COLLECT_BUTTON: (
-        hatch_feature.HOME_ANCHOR,
-        hatch_feature.INCUBATOR_TITLE,
-        hatch_feature.HATCH_LABEL,
-    ),
-    HOME_REPOSITION: (hatch_feature.HOME_ANCHOR,),
     NEST_GEAR: (AUTOPLACE_TITLE,),
     AUTOPLACE_SORT_HEADER: (PLACE_SORT_BEST, PLACE_SORT_LEVEL),
     PLACE_SORT_BEST: (PLACE_HDR_BEST,),
@@ -337,9 +325,6 @@ HATCH_DETECTION_TYPES: frozenset[str] = frozenset(
         *STARTUP_DETECTION_TYPES,
         *hatch_feature.DEFAULT_TARGET_ACTIONS,
         hatch_feature.HOME_ANCHOR,
-        # The home-screen collect-all control shares its label asset with the
-        # My Nest button and must be visible during the collection handoff.
-        COLLECT_EGGS_BUTTON,
         hatch_feature.EXPEL_BUTTON,
         CONFIRM_YES,
         CONFIRM_NO,
@@ -1415,13 +1400,6 @@ class FullHatchPlanner:
         reference_width: float = 900.0,
         scroll_vector: tuple[float, float, float, float] = (450, 1100, 450, 500),
         scroll_duration_ms: int = 400,
-        home_reposition_vector: tuple[float, float, float, float] = (
-            450,
-            1100,
-            450,
-            650,
-        ),
-        home_reposition_duration_ms: int = 400,
         max_scrolls: int = 0,
         rescan_interval_seconds: float = 600.0,
         stat_upgrade_guards: Mapping[str, StatUpgradeGuard] = DEFAULT_STAT_UPGRADE_GUARDS,
@@ -1467,8 +1445,6 @@ class FullHatchPlanner:
         self.parent_stats_snapshots = parent_stats_snapshots
         self.egg_pile_snapshots = egg_pile_snapshots
         self.stage_scoped_scan = bool(stage_scoped_scan)
-        self.home_reposition_vector = home_reposition_vector
-        self.home_reposition_duration_ms = max(1, home_reposition_duration_ms)
         if standalone_stage is not None and standalone_stage not in STANDALONE_STAGES:
             raise ValueError(f"unsupported standalone hatch stage: {standalone_stage}")
         self.standalone_stage = standalone_stage
@@ -1495,9 +1471,6 @@ class FullHatchPlanner:
         self._recovery_reason: str | None = None
         self._recovery_rounds = 0
         self._collect_only_after_empty = False
-        self._collect_home_after_management = False
-        self._collect_home_fallback = False
-        self._home_repositioned = False
         self._empty_rescan_wait = False
         # A fresh planner instance must prove that the dinosaur capacity is
         # safe before it opens the incubator. Later management cycles already
@@ -1593,7 +1566,6 @@ class FullHatchPlanner:
         if self._stage in {
             "collect",
             "collect_button",
-            "home_collect_button",
             "close_nest",
             "verify_nest_closed",
         }:
@@ -1674,9 +1646,6 @@ class FullHatchPlanner:
             self._no_target_since = None
             self._recovery_reason = "resume incomplete screening after workflow reset"
             self._collect_only_after_empty = False
-            self._collect_home_after_management = False
-            self._collect_home_fallback = False
-            self._home_repositioned = False
             self._empty_rescan_wait = False
             self._observed_cooldown_until = None
             self._navigation_failures.clear()
@@ -1689,9 +1658,6 @@ class FullHatchPlanner:
         self._no_target_since = None
         self._recovery_reason = None
         self._collect_only_after_empty = False
-        self._collect_home_after_management = False
-        self._collect_home_fallback = False
-        self._home_repositioned = False
         self._empty_rescan_wait = False
         self._management_pending = False
         self._screening_completed.clear()
@@ -1715,21 +1681,6 @@ class FullHatchPlanner:
                 target_type,
             )
             self._no_target_since = None
-            return
-        if target_type == HOME_REPOSITION:
-            self._home_repositioned = True
-            self._no_target_since = None
-            self.logger.info(
-                "Hatch full | home map repositioned before egg-pile tap"
-            )
-            return
-        if target_type == HOME_COLLECT_BUTTON:
-            self.logger.info("Hatch full | collected eggs from home-screen button")
-            if self._collect_home_after_management:
-                self._collect_home_after_management = False
-                self._finish_management_after_collection()
-            else:
-                self._start_empty_rescan_wait()
             return
         self._navigation_failures.pop((self._stage, target_type), None)
         if self._stage == "recover_home":
@@ -2155,7 +2106,6 @@ class FullHatchPlanner:
             self._stage == "hatch"
             and is_home_screen(frame, detections)
             and not is_centered_home_screen(frame, detections)
-            and not self._home_repositioned
         ):
             self._begin_home_recovery("hatch started from shifted cave view")
             return self.choose(frame, detections)
@@ -2204,14 +2154,6 @@ class FullHatchPlanner:
                     return _synthetic(HATCH_BOOST_CONFIRM, yes.x, yes.y)
                 return None
             self._observe_hatch_cooldown(frame, by_type)
-            if (
-                not self._home_repositioned
-                and hatch_feature.HOME_ANCHOR in by_type
-                and by_type.get(COLLECT_EGGS_BUTTON)
-                and hatch_feature.INCUBATOR_TITLE not in by_type
-                and is_home_screen(frame, detections)
-            ):
-                return self._home_reposition_target(frame)
             detail_close = _unready_egg_detail_close(frame)
             if detail_close is not None:
                 if self._pending_claim_verification:
@@ -2306,20 +2248,11 @@ class FullHatchPlanner:
                 if self.standalone_stage is not None:
                     self._start_standalone_nest_phase()
                     return self._choose_current(frame, detections)
-                if self._collect_home_fallback:
-                    self._collect_home_fallback = False
-                    self._start_collect()
-                    return self._choose_current(frame, detections)
                 if self._collect_only_after_empty:
                     self._start_collect()
                 else:
                     self._start_next_screening_stage()
                 return self._choose_current(frame, detections)
-            if self._collect_only_after_empty:
-                button = _best(by_type.get(COLLECT_EGGS_BUTTON))
-                if button is not None:
-                    self._stage = "home_collect_button"
-                    return _retarget(button, HOME_COLLECT_BUTTON)
             anchor = _best(by_type.get(hatch_feature.HOME_ANCHOR))
             return _synthetic(OPEN_NEST, anchor.x, anchor.y) if anchor is not None else None
         if self._stage in ("attack", "hp"):
@@ -2349,23 +2282,6 @@ class FullHatchPlanner:
                 return None
             button = _best(by_type.get(COLLECT_EGGS_BUTTON))
             return _target(button) if button is not None else None
-        if self._stage == "home_collect_button":
-            button = _best(by_type.get(COLLECT_EGGS_BUTTON))
-            if button is not None:
-                return _retarget(button, HOME_COLLECT_BUTTON)
-            if self._collect_home_after_management:
-                self.logger.warning(
-                    "Hatch full | home collect button missing; using My Nest fallback"
-                )
-                self._collect_home_after_management = False
-                self._collect_home_fallback = True
-                self._stage = "open_nest"
-                self._child = object()
-                return self._choose_current(frame, detections)
-            if self._collect_only_after_empty:
-                self._stage = "open_nest"
-                return self._choose_current(frame, detections)
-            return None
         if self._stage == "close_nest":
             if NEST_TITLE not in by_type:
                 self._stage = "verify_nest_closed"
@@ -2398,9 +2314,6 @@ class FullHatchPlanner:
                         self._hatch_baseline = 0
                         return self._choose_current(frame, detections)
                     self._start_empty_rescan_wait()
-                    return self._choose_current(frame, detections)
-                if self._collect_home_after_management:
-                    self._stage = "home_collect_button"
                     return self._choose_current(frame, detections)
                 missing = self._missing_screening_stages()
                 if missing:
@@ -2587,19 +2500,6 @@ class FullHatchPlanner:
         self._hatch_baseline = 0
         self._start_hatch_cycle()
 
-    def _home_reposition_target(self, frame: Frame) -> Target:
-        """Move the home map once so the collect-all HUD clears the egg pile."""
-
-        return _swipe_target(
-            HOME_REPOSITION,
-            *_scaled_swipe(
-                frame,
-                self.home_reposition_vector,
-                self.reference_width,
-            ),
-            duration_ms=self.home_reposition_duration_ms,
-        )
-
     def _remember_capacity_preflight_result(self) -> None:
         """Persist a valid capacity read before cave recentering can recover."""
 
@@ -2634,7 +2534,6 @@ class FullHatchPlanner:
         self._boost_enabled_for_cycle = False
         self._boost_revisit_pending = False
         self._collect_done_for_cycle = False
-        self._home_repositioned = False
         if self.boost_inventory is None:
             return
         inventory = self.boost_inventory.snapshot()
@@ -2829,12 +2728,7 @@ class FullHatchPlanner:
                 "Hatch full | screening complete | completed=%s",
                 self._format_screening_stages(self._screening_completed),
             )
-            # Return to the home map and prefer its collect-all button. If
-            # that button is absent, ``home_collect_button`` falls back to the
-            # original My Nest collection path.
-            self._collect_home_after_management = True
-            self._stage = "close_nest"
-            self._child = object()
+            self._start_collect()
             return
         next_stage = missing[0]
         self.logger.info(
