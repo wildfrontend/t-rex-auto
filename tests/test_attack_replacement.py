@@ -189,7 +189,7 @@ def test_parent_stats_recalibrate_when_consecutive_frames_disagree() -> None:
     assert target is not None and target.type == attack_replacement.PARENT_LEFT
 
 
-def test_invalid_hp_exhausts_calibration_without_a_tap() -> None:
+def test_invalid_numeric_hp_does_not_exhaust_parent_calibration() -> None:
     reader = EncodedReader()
     evidence = SnapshotCollector()
     invalid = nest_frame(reader, Stats(2926, 3, 1), Stats(2920, 3, 1))
@@ -202,14 +202,11 @@ def test_invalid_hp_exhausts_calibration_without_a_tap() -> None:
     finish_main_filter(planner)
 
     assert planner.choose(invalid, nest_detections()) is None
-    assert planner.choose(invalid, nest_detections()) is None
-    assert planner.choose(invalid, nest_detections()) is None
-    assert planner.last_stage() == "parent_stats_unreadable"
-    assert evidence.calls == [
-        ("parent_stats_calibrating", "left", 1),
-        ("parent_stats_calibrating", "left", 2),
-        ("parent_stats_unreadable", "left", 3),
-    ]
+    target = planner.choose(invalid, nest_detections())
+
+    assert target is not None and target.type == attack_replacement.PARENT_LEFT
+    assert planner.last_stage() == "open_left"
+    assert evidence.calls == []
 
 
 def test_candidate_stats_require_two_matching_frames_before_a_tap() -> None:

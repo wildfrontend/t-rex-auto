@@ -181,19 +181,22 @@ def pick_replacement(
     at the best primary value, the lowest secondary load wins.
     """
 
-    if not rows:
+    if not rows or not stat_value_is_valid(parent, guards):
         return None
     parent_primary = primary_of(parent, rule)
     valid_indices = [
         index
         for index, row in enumerate(rows)
-        if (
-            primary_of(row, rule) > parent_primary
-            and upgrade_is_valid(parent, row, rule, guards)
-        )
-        or (
-            primary_of(row, rule) == parent_primary
-            and secondary_load(row, rule) < secondary_load(parent, rule)
+        if stat_value_is_valid(row, guards)
+        and (
+            (
+                primary_of(row, rule) > parent_primary
+                and upgrade_is_valid(parent, row, rule, guards)
+            )
+            or (
+                primary_of(row, rule) == parent_primary
+                and secondary_load(row, rule) < secondary_load(parent, rule)
+            )
         )
     ]
     if not valid_indices:

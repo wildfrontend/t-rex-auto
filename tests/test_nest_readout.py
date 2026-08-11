@@ -45,25 +45,40 @@ def test_reads_both_parent_sides_and_candidate_rows() -> None:
     assert read_candidate_rows(frame, reader) == [Stats(30, 282, 1), Stats(2230, 276, 150)]
 
 
-def test_rejects_speed_reading_outside_game_range() -> None:
-    for speed in (0, 151):
-        frame = np.full((1600, 900, 3), 255, dtype=np.uint8)
-        reader = EncodedReader(
-            {10: 30, 20: 282, 30: speed, 40: 2230, 50: 276, 60: 1}
-        )
-        fill_regions(frame, ATTACK_PARENT_REGIONS[0], (10, 20, 30))
-        fill_regions(frame, ATTACK_PARENT_REGIONS[1], (40, 50, 60))
+def test_speed_reading_below_game_range_does_not_block_numeric_readout() -> None:
+    frame = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    reader = EncodedReader({10: 30, 20: 282, 30: 0, 40: 2230, 50: 276, 60: 1})
+    fill_regions(frame, ATTACK_PARENT_REGIONS[0], (10, 20, 30))
+    fill_regions(frame, ATTACK_PARENT_REGIONS[1], (40, 50, 60))
 
-        assert read_attack_parents(frame, reader) is None
+    assert read_attack_parents(frame, reader) == (
+        Stats(30, 282, 0),
+        Stats(2230, 276, 1),
+    )
 
 
-def test_rejects_hp_that_is_not_a_multiple_of_ten() -> None:
+def test_speed_ocr_above_game_range_is_capped_instead_of_blocking() -> None:
+    frame = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    reader = EncodedReader({10: 1960, 20: 213, 30: 1, 40: 1930, 50: 750})
+    fill_regions(frame, ATTACK_PARENT_REGIONS[0], (10, 20, 30))
+    fill_regions(frame, ATTACK_PARENT_REGIONS[1], (40, 20, 50))
+
+    assert read_attack_parents(frame, reader) == (
+        Stats(1960, 213, 1),
+        Stats(1930, 213, 150),
+    )
+
+
+def test_hp_outside_guard_does_not_block_numeric_readout() -> None:
     frame = np.full((1600, 900, 3), 255, dtype=np.uint8)
     reader = EncodedReader({10: 2920, 20: 3, 30: 1, 40: 2926})
     fill_regions(frame, ATTACK_PARENT_REGIONS[0], (10, 20, 30))
     fill_regions(frame, ATTACK_PARENT_REGIONS[1], (40, 20, 30))
 
-    assert read_attack_parents(frame, reader) is None
+    assert read_attack_parents(frame, reader) == (
+        Stats(2920, 3, 1),
+        Stats(2926, 3, 1),
+    )
 
 
 def test_left_parent_hp_crop_keeps_the_complete_leading_digit() -> None:

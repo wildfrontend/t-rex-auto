@@ -116,6 +116,20 @@ def test_stat_upgrade_guard_accepts_hp_boundaries() -> None:
     assert pick_replacement(parent, rows, HP_RULE) == 0
 
 
+def test_parent_outside_absolute_guard_keeps_parent_without_blocking_readout() -> None:
+    parent = Stats(2926, 3, 1)
+    rows = [Stats(2960, 3, 1)]
+
+    assert pick_replacement(parent, rows, HP_RULE) is None
+
+
+def test_candidate_outside_absolute_guard_is_skipped_for_valid_lower_row() -> None:
+    parent = Stats(2920, 3, 1)
+    rows = [Stats(2990, 3, 0), Stats(2960, 3, 1)]
+
+    assert pick_replacement(parent, rows, HP_RULE) == 1
+
+
 def test_descending_prefix_rejects_late_ocr_value_that_rises() -> None:
     rows = [
         Stats(2340, 3, 1),

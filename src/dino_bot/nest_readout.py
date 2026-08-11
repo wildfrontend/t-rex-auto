@@ -47,6 +47,24 @@ SELECT_FIRST_ROW_REGIONS: StatRegions = (
 )
 SELECT_ROW_PITCH = 85
 DEFAULT_VISIBLE_ROWS = 9
+
+
+def _normalize_speed_overflow(value: int, guard: StatUpgradeGuard | None) -> int:
+    """Cap impossible speed OCR instead of blocking the screening round.
+
+    Speed is never the primary stat in the manual Attack/HP replacement
+    rounds.  The game also caps its base value, so an OCR result above the
+    configured maximum is evidence of a digit mismatch (for example the live
+    ``150`` -> ``750`` case), not a useful reason to stop parent screening.
+    Keeping the value at the configured ceiling also prevents the bad OCR
+    from dominating equal-primary secondary-stat comparisons.
+    """
+
+    if guard is not None and guard.max_value is not None and value > guard.max_value:
+        return guard.max_value
+    return value
+
+
 class ConsecutiveReadConsensus[Readout]:
     """Accept a readout only after it repeats across consecutive frames."""
 
@@ -92,20 +110,48 @@ def read_stats(
     reference_width: float = 900.0,
     stat_guards: Mapping[str, StatUpgradeGuard] = DEFAULT_STAT_UPGRADE_GUARDS,
 ) -> Stats | None:
-    """Read HP/attack/speed regions, failing closed if any one is unclear."""
+    """Read numeric stats without turning guard anomalies into workflow stalls.
+
+    A non-numeric OCR result is still unreadable.  Numeric values outside the
+    configured guards are returned so the caller can finish the current
+    parent/candidate pass; replacement selection separately rejects any
+    untrusted values.
+    """
 
     if reference_width <= 0:
         raise ValueError("reference_width must be greater than zero")
     scale = image.shape[1] / reference_width
     values: list[int] = []
-    for region in regions:
+    for name, region in zip(("hp", "attack", "speed"), regions, strict=True):
         x0, y0, x1, y1 = (round(value * scale) for value in region)
         value = reader.read_int(image[y0:y1, x0:x1])
         if value is None:
             return None
+        if name == "speed":
+            normalized = _normalize_speed_overflow(value, stat_guards.get(name))
+            if normalized != value:
+                logger = getattr(reader, "logger", None)
+                if logger is not None:
+                    logger.warning(
+                        "Hatch OCR | speed reading %d exceeds configured max %d"
+                        " | using max instead of blocking",
+                        value,
+                        normalized,
+                    )
+                value = normalized
         values.append(value)
     stats = Stats(hp=values[0], attack=values[1], speed=values[2])
-    return stats if stat_value_is_valid(stats, stat_guards) else None
+    if not stat_value_is_valid(stats, stat_guards):
+        logger = getattr(reader, "logger", None)
+        if logger is not None:
+            logger.warning(
+                "Hatch OCR | numeric stats outside configured guards"
+                " | hp=%d attack=%d speed=%d | continuing without unsafe replacement",
+                stats.hp,
+                stats.attack,
+                stats.speed,
+            )
+    return stats
 
 
 def read_attack_parents(
