@@ -26,8 +26,10 @@ package_python="${package_root}/python"
 cache_root="${project_root}/.runtime-windows"
 
 # 這裡只把 host python 當成「下載 win_amd64 輪子的 pip 宿主」,跨平台下載的
-# 產物與哪一個直譯器跑無關。uv 建的 .venv 沒有 pip 也沒有 ensurepip,所以光檢查
-# 可執行不夠,要連 pip 一起確認,否則會停在「No module named pip」。
+# 產物與哪一個直譯器跑無關,所以挑到哪一個都可以,能跑 pip 才是重點。
+# Debian/Ubuntu 把 ensurepip 拆進 python3.12-venv 套件,沒裝它時
+# `python3 -m venv` 仍建得出環境,但裡面不會有 pip。這種 .venv 可執行卻沒有
+# pip,光檢查可執行會挑中它然後停在「No module named pip」。
 host_python=""
 for candidate in "${project_root}/.venv/bin/python" "$(command -v python3 || true)"; do
   if [[ -n "${candidate}" ]] && [[ -x "${candidate}" ]] \
@@ -38,7 +40,8 @@ for candidate in "${project_root}/.venv/bin/python" "$(command -v python3 || tru
 done
 if [[ -z "${host_python}" ]]; then
   echo "找不到帶 pip 的 python:.venv/bin/python 與 python3 都不可用" >&2
-  echo "請安裝 pip(例如 python3 -m ensurepip 或發行版套件)後重試。" >&2
+  echo "Debian/Ubuntu:sudo apt install python3-pip python3.12-venv" >&2
+  echo "macOS:python3 -m ensurepip --upgrade" >&2
   exit 1
 fi
 
