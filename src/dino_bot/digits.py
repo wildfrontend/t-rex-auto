@@ -1,7 +1,7 @@
 """Template-based digit reading for hatch phases B/C.
 
 The game renders every number the bot cares about as dark hand-drawn glyphs
-on a light background (stat bars, counters, the N/350 capacity readout), so a
+on a light background (stat bars, counters, the N/M capacity readout), so a
 full OCR stack is unnecessary: binarize, split into glyphs by connected
 components, and match each glyph against a small labelled set cropped from
 reference screenshots (``assets/hatch/digits``).
@@ -10,7 +10,7 @@ Callers must crop regions that contain digits (and ``/``) only. There is no
 reliable rejection of other glyphs: hand-drawn letters score inside the digit
 range (``o`` genuinely is ``0``), so a mispositioned crop over text yields a
 plausible-looking number rather than ``None``. Guard call sites structurally
-instead, e.g. ``read_fraction`` demanding the known ``/350`` denominator.
+instead, e.g. ``read_fraction`` demanding the configured denominator.
 """
 
 from __future__ import annotations
@@ -270,7 +270,7 @@ class DigitReader:
         return int(text)
 
     def read_fraction(self, image: Image) -> tuple[int, int] | None:
-        """Read an ``N/M`` readout such as the 282/350 capacity counter."""
+        """Read an ``N/M`` capacity counter."""
 
         return parse_fraction(self.read(image))
 

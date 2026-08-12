@@ -177,14 +177,17 @@ class HatchConfig:
     require_home_anchor: bool = True
     home_failure_limit: int = 3
     home_backoff_seconds: float = 30.0
-    # Phase C: cull once the cave-view N/350 readout reaches this safety limit.
-    # The game capacity remains 350; this lower threshold leaves headroom.
+    # Phase C: the denominator shown by the cave-view population HUD.
+    # Keep this configurable because the game can expand the population cap.
+    capacity_limit: int = 350
+    # Cull once the cave-view population readout reaches this safety limit.
+    # This lower threshold leaves headroom below the configured cap.
     cull_threshold: int = 330
     # Below the cull line, rerun nest screening every this many newly added
     # dinosaurs, measured from the last completed screening.
     screening_growth_interval: int = 20
     # Slow machines may need several complete detect cycles before the HUD is
-    # rendered sharply enough for the N/350 reader.
+    # rendered sharply enough for the capacity reader.
     capacity_read_retries: int = 2
     # Give the cave map more complete detect cycles to prove that it returned
     # home before entering bounded recovery.
@@ -742,6 +745,7 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
             require_home_anchor=bool(hatch_data.get("require_home_anchor", True)),
             home_failure_limit=int(hatch_data.get("home_failure_limit", 3)),
             home_backoff_seconds=float(hatch_data.get("home_backoff_seconds", 30)),
+            capacity_limit=int(hatch_data.get("capacity_limit", 350)),
             cull_threshold=int(hatch_data.get("cull_threshold", 330)),
             screening_growth_interval=int(
                 hatch_data.get("screening_growth_interval", 20)
@@ -955,6 +959,8 @@ def _validate(config: AppConfig) -> None:
         raise ConfigError("hatch.home_failure_limit must be greater than zero")
     if config.hatch.home_backoff_seconds < 0:
         raise ConfigError("hatch.home_backoff_seconds cannot be negative")
+    if config.hatch.capacity_limit <= 0:
+        raise ConfigError("hatch.capacity_limit must be greater than zero")
     if config.hatch.cull_threshold < 0:
         raise ConfigError("hatch.cull_threshold cannot be negative")
     if config.hatch.screening_growth_interval <= 0:

@@ -43,8 +43,10 @@ def test_windows_deploy_exposes_only_dashboard_entrypoint() -> None:
 def test_hatch_runner_allows_dashboard_standalone_stages() -> None:
     runner = (REPO / "scripts/windows/run-hatch-windows.ps1").read_text(encoding="utf-8")
 
-    for stage in ("hatch", "attack", "hp", "top", "mass", "collect", "cave"):
+    for stage in ("hatch", "attack", "hp", "collect", "cave"):
         assert f'"hatch-stage-{stage}"' in runner
+    assert '"hatch-stage-top"' not in runner
+    assert '"hatch-stage-mass"' not in runner
 
 
 def test_windows_runners_wait_for_a_previous_bot_during_mode_switch() -> None:

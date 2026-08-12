@@ -117,7 +117,7 @@ function renderTimeline(items) {
 function eventDetails(event) {
   const details = event.details || {};
   if (event.kind === "replacement") return `${details.tag || "親代"} · ${details.hp}/${details.attack}/${details.speed}`;
-  if (event.kind === "cull_decision") return `${details.capacity}/350 · ${details.cull ? "執行淘汰" : "安全跳過"}`;
+  if (event.kind === "cull_decision") return `${details.capacity}/${details.capacity_limit || 350} · ${details.cull ? "執行淘汰" : "安全跳過"}`;
   if (event.kind === "cull_removed") return `${details.before} → ${details.expected_after} · 選取 ${details.selected}`;
   if (event.kind === "verification_failure") return details.target || "未知目標";
   return "已驗證";
@@ -179,8 +179,6 @@ function render(data) {
   setRecord("hp", metrics.records?.hp);
   setRecord("attack", metrics.records?.attack);
   setRecord("speed", metrics.records?.speed);
-  $("topTotal").textContent = counters.autoplace_top?.total || 0;
-  $("massTotal").textContent = counters.autoplace_mass?.total || 0;
   $("failureToday").textContent = counters.verification_failure?.today || 0;
   $("trendScope").textContent = metrics.timeline_date
     ? `${metrics.timeline_date} · 每小時`

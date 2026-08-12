@@ -1,8 +1,8 @@
 """Dino culling (Phase C) offline pieces: capacity readout and threshold.
 
 docs/auto-hatch-plan.md §4.5: after collecting eggs the bot slides the map to
-the cave view, reads the N/350 dino counter from the top-left HUD, and only
-runs the cull flow when the count reaches the configured threshold. The
+the cave view, reads the N/M dino counter from the top-left HUD, and only runs
+the cull flow when the count reaches the configured threshold. The
 screen-driving part (cave template, swipe calibration, battle loop) needs
 on-device work; the judgement implemented here is verifiable offline.
 """
@@ -19,8 +19,8 @@ from .models import Image
 # whole UI anchors top-left and scales with frame width, so both axes rescale
 # by width, same as ExclusionZone.
 # Start below the top edge of the glyphs' row.  Live frames can contain tiny
-# confetti particles at y=236-238; including one after ``/350`` turns an
-# otherwise valid read into ``280/350?``.  The digits themselves remain fully
+# confetti particles at y=236-238; including one after the fraction turns an
+# otherwise valid read into ``280/350?``. The digits themselves remain fully
 # connected from y=239 onward at 900-wide reference scale.
 CAPACITY_REGION = (10.0, 239.0, 110.0, 258.0)
 EXPECTED_CAPACITY = 350
@@ -28,7 +28,7 @@ EXPECTED_CAPACITY = 350
 
 @dataclass(frozen=True, slots=True)
 class CapacityRead:
-    """One attempt at the N/350 HUD, including why it was rejected.
+    """One attempt at the configured N/M HUD, including why it was rejected.
 
     ``read_dino_count`` collapses every failure to None, which is the right
     contract for the planner but leaves a diagnostic bundle unable to tell a
@@ -54,8 +54,12 @@ def probe_dino_count(
     reader: DigitReader,
     *,
     reference_width: float = 900.0,
+    expected_capacity: int = EXPECTED_CAPACITY,
 ) -> CapacityRead:
     """Read the cave-view dino count and report what happened either way."""
+
+    if expected_capacity <= 0:
+        raise ValueError("expected_capacity must be greater than zero")
 
     height, width = image.shape[0], image.shape[1]
     scale = width / reference_width
@@ -71,7 +75,7 @@ def probe_dino_count(
     if fraction is None:
         return CapacityRead(None, text, None, region, "unparsed")
     count, capacity = fraction
-    if capacity != EXPECTED_CAPACITY:
+    if capacity != expected_capacity:
         return CapacityRead(None, text, fraction, region, "unexpected_capacity")
     if not 0 <= count <= capacity:
         return CapacityRead(None, text, fraction, region, "count_out_of_range")
@@ -83,16 +87,22 @@ def read_dino_count(
     reader: DigitReader,
     *,
     reference_width: float = 900.0,
+    expected_capacity: int = EXPECTED_CAPACITY,
 ) -> int | None:
     """Read the cave-view dino count, or None when the readout is not trusted.
 
     Digit reading cannot reject foreign glyphs, so a mispositioned crop could
-    parse as a plausible number; requiring the exact /350 denominator is what
+    parse as a plausible number; requiring the configured denominator is what
     keeps a bad read from triggering (or suppressing) a cull. Frames narrower
     than ~600px lose the slash to downscaling and fail safe to None.
     """
 
-    return probe_dino_count(image, reader, reference_width=reference_width).count
+    return probe_dino_count(
+        image,
+        reader,
+        reference_width=reference_width,
+        expected_capacity=expected_capacity,
+    ).count
 
 
 def should_cull(count: int, threshold: int) -> bool:

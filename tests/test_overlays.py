@@ -1,6 +1,7 @@
 from dino_bot.models import Detection
 from dino_bot.overlays import (
     AUTOPLACE_NOTICE,
+    AUTOPLACE_UNAVAILABLE,
     BLOCKED,
     CONFIRM_NO,
     CONFIRM_YES,
@@ -46,6 +47,12 @@ def test_prompt_without_no_button_fails_closed() -> None:
 
 def test_incubator_full_toast_is_informational_not_a_wait_state() -> None:
     step = next_safe_step([detection(INCUBATOR_FULL_TOAST)])
+    assert step.kind == INFO
+    assert step.point is None
+
+
+def test_autoplace_unavailable_toast_is_informational() -> None:
+    step = next_safe_step([detection(AUTOPLACE_UNAVAILABLE)])
     assert step.kind == INFO
     assert step.point is None
 

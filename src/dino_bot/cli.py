@@ -45,8 +45,6 @@ def build_parser() -> argparse.ArgumentParser:
             "hatch-stage-hatch",
             "hatch-stage-attack",
             "hatch-stage-hp",
-            "hatch-stage-top",
-            "hatch-stage-mass",
             "hatch-stage-collect",
             "hatch-stage-cave",
         ],

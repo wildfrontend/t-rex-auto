@@ -8,6 +8,7 @@
   },
   "hatch": {
     "beginner_population_limit": 200,
-    "beginner_stat_upgrade_guards": {}
+    "beginner_stat_upgrade_guards": {},
+    "capacity_limit": 380
   }
 }

@@ -4,7 +4,7 @@ The calibrated motion is expressed in 900-wide reference coordinates.  It
 moves the camera down and left (finger moves up, then right) from the game's
 default home view.  The planner never taps the cave: reaching a frame where
 the cave template is visible is the terminal read-only state used to read the
-N/350 counter.
+N/M counter.
 """
 
 from __future__ import annotations

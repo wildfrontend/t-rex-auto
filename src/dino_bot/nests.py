@@ -109,12 +109,11 @@ HP_RULE = ReplacementRule(tag="HP特化", sort_option="HP", primary="hp")
 TOP_RULE = AutoPlaceRule(tag="頂尖", sort_option="最佳屬性組合")
 MASS_RULE = AutoPlaceRule(tag="量產", sort_option="等級")
 
-# 攻擊特化 → HP特化 → 頂尖 → 量產, then reset the filter and collect eggs.
+# Main-account screening only checks Attack and HP parents. Auto-place belongs
+# exclusively to the beginner hatch workflow.
 ROUND_ORDER: tuple[ReplacementRule | AutoPlaceRule, ...] = (
     ATTACK_RULE,
     HP_RULE,
-    TOP_RULE,
-    MASS_RULE,
 )
 FINAL_TAG = "所有"
 

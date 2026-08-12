@@ -914,3 +914,233 @@ class StartupAutoBattleDialogDetector:
                 },
             )
         ]
+
+
+class HatchAutoplaceUnavailableDetector:
+    """Detect the centered toast shown when auto-place has no nest target.
+
+    The game changes the toast text between versions and accounts, so a text
+    template is a poor fit here. Its dark rounded panel is stable: it is
+    centered below the nest header and has a distinctive wide, shallow outline.
+    This detector is intentionally opt-in from the hatch composition root; the
+    same toast shape is harmless outside the beginner auto-place result stage.
+    """
+
+    def __init__(
+        self,
+        target_type: str = "hatch_autoplace_unavailable",
+        reference_size: tuple[int, int] = (900, 1600),
+    ) -> None:
+        self.target_type = target_type
+        self.reference_size = reference_size
+
+    def detect(self, frame: Frame) -> list[Detection]:
+        width, height = self.reference_size
+        image = frame.image
+        if (frame.width, frame.height) != self.reference_size:
+            image = cv2.resize(image, (width, height), interpolation=cv2.INTER_LINEAR)
+
+        # The toast is the only wide, shallow outlined panel in this central
+        # band. Keep the search bounded so nest cards and bottom controls
+        # cannot become a similarly shaped candidate.
+        x1, y1, x2, y2 = 120, 280, 780, 560
+        gray = cv2.cvtColor(image[y1:y2, x1:x2], cv2.COLOR_BGR2GRAY)
+        edges = cv2.Canny(gray, 35, 110)
+        contours, _ = cv2.findContours(
+            edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE
+        )
+        candidate: tuple[int, int, int, int, float] | None = None
+        for contour in contours:
+            left, top, candidate_width, candidate_height = cv2.boundingRect(contour)
+            if not 430 <= candidate_width <= 580:
+                continue
+            if not 100 <= candidate_height <= 190:
+                continue
+            center_x = x1 + left + candidate_width / 2
+            center_y = y1 + top + candidate_height / 2
+            if abs(center_x - width / 2) > 45 or not 340 <= center_y <= 490:
+                continue
+            perimeter = max(cv2.arcLength(contour, True), 1.0)
+            area = float(cv2.contourArea(contour))
+            rectangularity = area / max(candidate_width * candidate_height, 1)
+            if rectangularity < 0.55:
+                continue
+            confidence = min(
+                0.99,
+                0.75
+                + min(0.12, (candidate_width - 430) / 1500)
+                + min(0.12, area / (perimeter * 1000)),
+            )
+            current = (left, top, candidate_width, candidate_height, confidence)
+            if candidate is None or confidence > candidate[4]:
+                candidate = current
+
+        if candidate is None:
+            return []
+        left, top, candidate_width, candidate_height, confidence = candidate
+        scale_x = frame.width / width
+        scale_y = frame.height / height
+        bbox = BoundingBox(
+            x=round((x1 + left) * scale_x),
+            y=round((y1 + top) * scale_y),
+            width=max(1, round(candidate_width * scale_x)),
+            height=max(1, round(candidate_height * scale_y)),
+        )
+        return [
+            Detection(
+                type=self.target_type,
+                x=round((x1 + left + candidate_width / 2) * scale_x),
+                y=round((y1 + top + candidate_height / 2) * scale_y),
+                confidence=confidence,
+                bbox=bbox,
+                metadata={"detector": "hatch_autoplace_unavailable_toast"},
+            )
+        ]
+
+
+class HatchAutoplaceConfirmYesDetector:
+    """Detect the cyan ``是`` button in the auto-place confirmation modal.
+
+    The explanatory text has several localized/layout variants and can be
+    dimmed differently by the game. The affirmative button's cyan fill and
+    fixed lower-modal position are more stable, while the planner still gates
+    any click on having just completed the auto-place action.
+    """
+
+    def __init__(
+        self,
+        target_type: str = "hatch_confirm_yes",
+        reference_size: tuple[int, int] = (900, 1600),
+    ) -> None:
+        self.target_type = target_type
+        self.reference_size = reference_size
+
+    def detect(self, frame: Frame) -> list[Detection]:
+        width, height = self.reference_size
+        image = frame.image
+        if (frame.width, frame.height) != self.reference_size:
+            image = cv2.resize(image, (width, height), interpolation=cv2.INTER_LINEAR)
+
+        # The button is below the modal copy and left of the red ``否`` button.
+        # Restricting both the region and the component shape avoids treating
+        # the green auto-place control as a confirmation.
+        x1, y1, x2, y2 = 220, 740, 510, 1080
+        roi = image[y1:y2, x1:x2]
+        blue, green, red = cv2.split(roi)
+        cyan = (
+            (blue >= 120)
+            & (green >= 120)
+            & (blue >= red + 25)
+            & (green >= red + 25)
+        ).astype(np.uint8) * 255
+        cyan = cv2.morphologyEx(cyan, cv2.MORPH_OPEN, np.ones((3, 3), dtype=np.uint8))
+        count, _, stats, _ = cv2.connectedComponentsWithStats(cyan)
+        candidate: tuple[int, int, int, int, int] | None = None
+        for left, top, button_width, button_height, area in stats[1:]:
+            left, top, button_width, button_height, area = map(
+                int, (left, top, button_width, button_height, area)
+            )
+            if not 100 <= button_width <= 210 or not 45 <= button_height <= 115:
+                continue
+            if area < 2500:
+                continue
+            current = (left, top, button_width, button_height, area)
+            if candidate is None or area > candidate[4]:
+                candidate = current
+
+        if candidate is None:
+            return []
+        left, top, button_width, button_height, area = candidate
+        scale_x = frame.width / width
+        scale_y = frame.height / height
+        bbox = BoundingBox(
+            x=round((x1 + left) * scale_x),
+            y=round((y1 + top) * scale_y),
+            width=max(1, round(button_width * scale_x)),
+            height=max(1, round(button_height * scale_y)),
+        )
+        return [
+            Detection(
+                type=self.target_type,
+                x=round((x1 + left + button_width / 2) * scale_x),
+                y=round((y1 + top + button_height / 2) * scale_y),
+                confidence=min(0.99, 0.8 + min(0.19, area / 30000)),
+                bbox=bbox,
+                metadata={"detector": "hatch_autoplace_confirm_yes_layout"},
+            )
+        ]
+
+
+class HatchAutoplaceDialogDetector:
+    """Detect auto-place confirmation variants by their stable modal layout.
+
+    Both the best-attribute and level-order wording contain orange emphasis,
+    followed by a cyan Yes button and a red No button. Requiring all three
+    regions distinguishes this dialog from parent-selection confirmations.
+    """
+
+    def __init__(
+        self,
+        target_type: str = "hatch_autoplace_notice",
+        reference_size: tuple[int, int] = (900, 1600),
+    ) -> None:
+        self.target_type = target_type
+        self.reference_size = reference_size
+
+    def detect(self, frame: Frame) -> list[Detection]:
+        width, height = self.reference_size
+        image = frame.image
+        if (frame.width, frame.height) != self.reference_size:
+            image = cv2.resize(image, (width, height), interpolation=cv2.INTER_LINEAR)
+
+        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+        orange = cv2.inRange(hsv[600:820, 235:665], (0, 70, 120), (18, 255, 255))
+        if cv2.countNonZero(orange) < 80:
+            return []
+
+        def color_ratio(
+            region: np.ndarray,
+            predicate: np.ndarray,
+        ) -> float:
+            return float(np.mean(predicate)) if region.size else 0.0
+
+        yes = image[800:1010, 250:455].astype(np.int16)
+        yes_ratio = color_ratio(
+            yes,
+            (yes[:, :, 0] >= 120)
+            & (yes[:, :, 1] >= 120)
+            & (yes[:, :, 0] >= yes[:, :, 2] + 25)
+            & (yes[:, :, 1] >= yes[:, :, 2] + 25),
+        )
+        no = image[800:1010, 445:650].astype(np.int16)
+        no_ratio = color_ratio(
+            no,
+            (no[:, :, 2] >= 150)
+            & (no[:, :, 2] >= no[:, :, 0] + 35)
+            & (no[:, :, 2] >= no[:, :, 1] + 20),
+        )
+        if yes_ratio < 0.08 or no_ratio < 0.08:
+            return []
+
+        scale_x = frame.width / width
+        scale_y = frame.height / height
+        bbox = BoundingBox(
+            x=round(235 * scale_x),
+            y=round(580 * scale_y),
+            width=round(430 * scale_x),
+            height=round(440 * scale_y),
+        )
+        return [
+            Detection(
+                type=self.target_type,
+                x=round(450 * scale_x),
+                y=round(720 * scale_y),
+                confidence=min(0.99, 0.8 + min(yes_ratio, no_ratio)),
+                bbox=bbox,
+                metadata={
+                    "detector": "hatch_autoplace_dialog_layout",
+                    "yes_ratio": yes_ratio,
+                    "no_ratio": no_ratio,
+                },
+            )
+        ]

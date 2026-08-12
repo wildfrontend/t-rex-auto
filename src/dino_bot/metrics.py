@@ -26,11 +26,11 @@ _SELECTED = re.compile(
 )
 _AUTOPLACE = re.compile(r"^Hatch auto-place \| tag=(?P<tag>[^|]+) \|")
 _CAVE = re.compile(
-    r"^Hatch cave \| capacity=(?P<count>\d+)/350 \| threshold=(?P<threshold>\d+)"
+    r"^Hatch cave \| capacity=(?P<count>\d+)/(?P<capacity>\d+) \| threshold=(?P<threshold>\d+)"
     r" \| cull=(?P<cull>True|False)"
 )
 _CULL_COMPLETED = re.compile(
-    r"^Hatch cave \| cull completed \| before=(?P<before>\d+)/350"
+    r"^Hatch cave \| cull completed \| before=(?P<before>\d+)/(?P<capacity>\d+)"
     r" \| selected=(?P<selected>\d+) \| expected_after=(?P<after>\d+)"
     r" \| result=claim_verified$"
 )
@@ -549,6 +549,7 @@ class MetricsStore:
                 "cull_decision",
                 payload={
                     "capacity": int(cave.group("count")),
+                    "capacity_limit": int(cave.group("capacity")),
                     "threshold": int(cave.group("threshold")),
                     "cull": cave.group("cull") == "True",
                 },

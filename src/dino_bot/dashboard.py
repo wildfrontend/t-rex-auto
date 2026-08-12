@@ -37,8 +37,6 @@ HATCH_STAGE_LABELS = {
     "hatch": "孵蛋一輪",
     "attack": "攻擊親代",
     "hp": "HP 親代",
-    "top": "頂尖自動放置",
-    "mass": "量產自動放置",
     "collect": "收集所有巢蛋",
     "cave": "洞穴容量與淘汰",
 }

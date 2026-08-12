@@ -16,6 +16,7 @@ from .models import Detection
 SELECT_CONFIRM_PROMPT = "hatch_select_confirm_prompt"
 NESTED_PARENT_WARNING = "hatch_nested_parent_warning"
 AUTOPLACE_NOTICE = "hatch_autoplace_notice"
+AUTOPLACE_UNAVAILABLE = "hatch_autoplace_unavailable"
 CONFIRM_YES = "hatch_confirm_yes"
 CONFIRM_NO = "hatch_confirm_no"
 INCUBATOR_FULL_TOAST = "hatch_incubator_full_toast"
@@ -64,6 +65,9 @@ def next_safe_step(detections: Sequence[Detection]) -> OverlayStep:
             return OverlayStep(BLOCKED, None, f"{prompt_type} visible without No button")
         button = max(no_buttons, key=lambda item: item.confidence)
         return OverlayStep(DISMISS, (button.x, button.y), f"cancel {prompt_type}")
+
+    if AUTOPLACE_UNAVAILABLE in by_type:
+        return OverlayStep(INFO, None, "auto-place has no available nest")
 
     if INCUBATOR_FULL_TOAST in by_type:
         return OverlayStep(INFO, None, "incubator full toast is transient")

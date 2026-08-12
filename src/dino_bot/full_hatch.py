@@ -4,7 +4,7 @@ This module closes the loop described in ``docs/auto-hatch-plan.md``:
 
 * hatch every ready egg;
 * optimize Attack and HP parents;
-* auto-place Top and Mass nests;
+* optimize Attack and HP parents without using auto-place;
 * collect every egg and close My Nest;
 * navigate to the cave, cull only above the configured threshold, and return;
 * when no egg was ready, collect completed nest eggs and then keep the
@@ -42,7 +42,7 @@ from .cave_navigation import (
     SWIPE,
     CaveNavigator,
 )
-from .cull import CapacityRead, probe_dino_count, should_cull
+from .cull import EXPECTED_CAPACITY, CapacityRead, probe_dino_count, should_cull
 from .digits import DigitReader
 from .hatch_inventory import HatchBoostInventoryStore
 from .models import Detection, Frame, Target
@@ -135,9 +135,9 @@ HUNT_ACTIVE_TYPES: frozenset[str] = frozenset(
     }
 )
 STANDALONE_STAGES: frozenset[str] = frozenset(
-    {"hatch", "attack", "hp", "top", "mass", "collect", "cave"}
+    {"hatch", "attack", "hp", "collect", "cave"}
 )
-SCREENING_STAGES: tuple[str, ...] = ("attack", "hp", "top", "mass")
+SCREENING_STAGES: tuple[str, ...] = ("attack", "hp")
 
 PLACE_SORT_BEST = "hatch_place_sort_best"
 PLACE_SORT_LEVEL = "hatch_place_sort_level"
@@ -361,7 +361,7 @@ NEST_DETECTION_TYPES: frozenset[str] = frozenset(
         SELECT_TITLE,
         *nest_filter_feature.DEFAULT_TARGET_ACTIONS,
         # The option tap is verified against a collapsed tag header, but the
-        # replacement/autoplace planners must prove that same header again on
+        # replacement planners must prove that same header again on
         # the following planning frame before touching parents or settings.
         # Keeping only actionable controls in this scoped set made every
         # verified Attack/HP/Top/Mass selection disappear one frame later and
@@ -404,6 +404,9 @@ NEST_BASE_DETECTION_TYPES: frozenset[str] = frozenset(
         hatch_feature.HOME_ANCHOR,
         NEST_TITLE,
         COLLECT_EGGS_BUTTON,
+        AUTOPLACE_PROMPT,
+        AUTOPLACE_NOTICE,
+        CONFIRM_NO,
     }
 )
 NEST_REPLACEMENT_DETECTION_TYPES: frozenset[str] = frozenset(
@@ -510,6 +513,12 @@ def is_home_screen(frame: Frame, detections: Sequence[Detection]) -> bool:
     types = {item.type for item in detections}
     if hatch_feature.HOME_ANCHOR not in types or types & HOME_FOREGROUND_TYPES:
         return False
+    return _is_bright_outdoor_map(frame)
+
+
+def _is_bright_outdoor_map(frame: Frame) -> bool:
+    """Reject dimmed/unknown foregrounds without requiring a template."""
+
     image = frame.image
     if image.size == 0:
         return False
@@ -545,9 +554,16 @@ def home_pile_offset(frame: Frame) -> tuple[float, float] | None:
 def is_centered_home_screen(frame: Frame, detections: Sequence[Detection]) -> bool:
     """Return whether the normal home map (not the shifted cave view) is ready."""
 
-    if not is_home_screen(frame, detections) or any(
-        item.type == CAVE for item in detections
-    ):
+    types = {item.type for item in detections}
+    if any(item.type == CAVE for item in detections) or types & HOME_FOREGROUND_TYPES:
+        return False
+    # The home anchor can be clipped after a successful map return even when
+    # the stable egg-pile base is exactly centred. The Forest control is a
+    # second named outdoor-map landmark; require it for this narrow fallback
+    # instead of accepting an arbitrary bright screen with cyan pixels.
+    if hatch_feature.HOME_ANCHOR not in types and FOREST_RECENTER not in types:
+        return False
+    if not _is_bright_outdoor_map(frame):
         return False
     offset = home_pile_offset(frame)
     if offset is None:
@@ -1233,6 +1249,7 @@ class CaveCullPlanner:
         bottom_exclusion_px: int = 180,
         selection_size: int = DEFAULT_CULL_BATCH_SIZE,
         allow_cull: bool = True,
+        capacity_limit: int = EXPECTED_CAPACITY,
         capacity_read_retries: int = 2,
         capacity_consistent_reads: int = DEFAULT_CAPACITY_CONSISTENT_READS,
         cave_recenter_checks: int = 3,
@@ -1246,6 +1263,9 @@ class CaveCullPlanner:
         self.bottom_exclusion_px = max(0, bottom_exclusion_px)
         self.selection_size = max(1, selection_size)
         self.allow_cull = bool(allow_cull)
+        if capacity_limit <= 0:
+            raise ValueError("capacity_limit must be greater than zero")
+        self.capacity_limit = capacity_limit
         self.capacity_read_retries = max(1, capacity_read_retries)
         self.capacity_consistent_reads = max(1, capacity_consistent_reads)
         self.cave_recenter_checks = max(1, cave_recenter_checks)
@@ -1277,6 +1297,7 @@ class CaveCullPlanner:
             frame.image,
             self.reader,
             reference_width=self.reference_width,
+            expected_capacity=self.capacity_limit,
         )
 
     def _snapshot_capacity(self, frame: Frame, read: CapacityRead) -> None:
@@ -1291,7 +1312,7 @@ class CaveCullPlanner:
 
     @property
     def capacity_readable(self) -> bool:
-        """Whether this run proved the N/350 readout instead of skipping it."""
+        """Whether this run proved the configured population readout."""
 
         return self._capacity_readable is True
 
@@ -1303,7 +1324,7 @@ class CaveCullPlanner:
 
     @property
     def last_capacity(self) -> int | None:
-        """最後一次成功讀到的洞穴數量(N/350)。"""
+        """最後一次成功讀到的洞穴數量。"""
 
         return self._capacity_before
 
@@ -1336,9 +1357,10 @@ class CaveCullPlanner:
         elif target_type == hatch_feature.CLAIM_BUTTON and self._stage == "battle_result":
             if self._capacity_before is not None and self._selected_count:
                 self.logger.info(
-                    "Hatch cave | cull completed | before=%d/350 | selected=%d"
+                    "Hatch cave | cull completed | before=%d/%d | selected=%d"
                     " | expected_after=%d | result=claim_verified",
                     self._capacity_before,
+                    self.capacity_limit,
                     self._selected_count,
                     max(0, self._capacity_before - self._selected_count),
                 )
@@ -1367,7 +1389,7 @@ class CaveCullPlanner:
             if step.kind == RESCAN:
                 # The cave can be partially clipped at the left edge after a
                 # valid calibrated move. Its template then cannot match, but
-                # the structurally validated N/350 HUD remains readable. A
+                # the structurally validated N/M HUD remains readable. A
                 # below-threshold value is enough to safely skip entering the
                 # cave and return home.
                 count = self._read_capacity(frame).count
@@ -1376,9 +1398,10 @@ class CaveCullPlanner:
                         return None
                     cull = self._cull_required
                     self.logger.info(
-                        "Hatch cave | capacity=%d/350 | threshold=%d | cull=%s"
+                        "Hatch cave | capacity=%d/%d | threshold=%d | cull=%s"
                         " | cave_visible=False",
                         count,
+                        self.capacity_limit,
                         self.threshold,
                         cull,
                     )
@@ -1404,21 +1427,24 @@ class CaveCullPlanner:
                     if cull:
                         if self.allow_cull:
                             self.logger.error(
-                                "Hatch cave | capacity=%d/350 requires cull but cave"
+                                "Hatch cave | capacity=%d/%d requires cull but cave"
                                 " target is unavailable; recentering without hatching",
                                 count,
+                                self.capacity_limit,
                             )
                         else:
                             self.logger.info(
-                                "Hatch cave | capacity=%d/350 requires screening"
+                                "Hatch cave | capacity=%d/%d requires screening"
                                 " before cull | cave_visible=False",
                                 count,
+                                self.capacity_limit,
                             )
                     else:
                         self.logger.info(
-                            "Hatch cave | capacity=%d/350 | threshold=%d | cull=False"
+                            "Hatch cave | capacity=%d/%d | threshold=%d | cull=False"
                             " | cave_visible=False",
                             count,
+                            self.capacity_limit,
                             self.threshold,
                         )
                 else:
@@ -1457,8 +1483,9 @@ class CaveCullPlanner:
                 return None
             self._capacity_readable = True
             self.logger.info(
-                "Hatch cave | capacity=%d/350 | threshold=%d | cull=%s",
+                "Hatch cave | capacity=%d/%d | threshold=%d | cull=%s",
                 count,
+                self.capacity_limit,
                 self.threshold,
                 should_cull(count, self.threshold),
             )
@@ -1550,15 +1577,17 @@ class CaveCullPlanner:
         return None
 
     def _confirm_capacity(self, count: int) -> bool:
-        """Require consecutive identical N/350 reads before using the value."""
+        """Require consecutive identical reads before using the value."""
 
         if self._capacity_candidate != count:
             if self._capacity_candidate is not None:
                 self.logger.warning(
-                    "Hatch cave | capacity confirmation changed | previous=%d/350"
-                    " | current=%d/350",
+                    "Hatch cave | capacity confirmation changed | previous=%d/%d"
+                    " | current=%d/%d",
                     self._capacity_candidate,
+                    self.capacity_limit,
                     count,
+                    self.capacity_limit,
                 )
             self._capacity_candidate = count
             self._capacity_confirmations = 1
@@ -1566,8 +1595,9 @@ class CaveCullPlanner:
             self._capacity_confirmations += 1
         if self._capacity_confirmations < self.capacity_consistent_reads:
             self.logger.info(
-                "Hatch cave | capacity confirmation | value=%d/350 | sample=%d/%d",
+                "Hatch cave | capacity confirmation | value=%d/%d | sample=%d/%d",
                 count,
+                self.capacity_limit,
                 self._capacity_confirmations,
                 self.capacity_consistent_reads,
             )
@@ -1627,6 +1657,7 @@ class FullHatchPlanner:
         require_home_anchor: bool = True,
         home_failure_limit: int = 3,
         home_backoff_seconds: float = 30.0,
+        capacity_limit: int = EXPECTED_CAPACITY,
         cull_threshold: int = 330,
         screening_growth_interval: int = 20,
         cave_safe_margin: int = 80,
@@ -1646,12 +1677,15 @@ class FullHatchPlanner:
         self.reader = reader
         self.reference_width = reference_width
         self.logger = logger or logging.getLogger("dino_bot")
+        if capacity_limit <= 0:
+            raise ValueError("capacity_limit must be greater than zero")
+        self.capacity_limit = capacity_limit
         self.cull_threshold = cull_threshold
         self.stat_upgrade_guards = dict(stat_upgrade_guards)
         self.minimum_consistent_stat_reads = minimum_consistent_stat_reads
         self.stat_read_retries = stat_read_retries
         # Nest management is driven only by estimated total dinosaur growth.
-        # The cull threshold leaves headroom below the game's 350-capacity HUD.
+        # The cull threshold leaves headroom below the configured capacity HUD.
         self._capacity_management_trigger = self.cull_threshold
         self.screening_growth_interval = max(1, screening_growth_interval)
         self.boost_inventory = boost_inventory
@@ -1725,7 +1759,7 @@ class FullHatchPlanner:
         self._standalone_returning = False
         self._egg_pile_failures = 0
         self._egg_pile_blocked = False
-        # The first inert egg-pile tap can mean the cave reached 350/350,
+        # The first inert egg-pile tap can mean the cave reached its capacity,
         # not that the calibrated coordinate is wrong.  Recover home, run a
         # fresh two-frame capacity preflight, and only retry the pile after a
         # below-limit reading has been proved.
@@ -1891,6 +1925,13 @@ class FullHatchPlanner:
         self._start_hatch_cycle()
 
     def on_action_success(self, target_type: str) -> None:
+        if target_type == RECOVERY_NO:
+            self.logger.warning(
+                "Hatch full | cancelled unexpected auto-place confirmation"
+                " | auto-place is beginner-only"
+            )
+            self._begin_home_recovery("cancelled unexpected auto-place confirmation")
+            return
         if target_type == STARTUP_NEST_SHORTCUT:
             self.logger.info(
                 "Hatch full | startup nest shortcut opened | returning to hatch home"
@@ -1973,7 +2014,7 @@ class FullHatchPlanner:
                         "Hatch full | phase A complete | hatched=%d | cave≈%s"
                         " | growth=%s | trigger=%s",
                         hatched,
-                        "?" if estimate is None else f"{estimate}/350",
+                        "?" if estimate is None else f"{estimate}/{self.capacity_limit}",
                         "?" if growth is None else growth,
                         "capacity"
                         if capacity_trigger
@@ -2156,7 +2197,7 @@ class FullHatchPlanner:
                     self._egg_pile_capacity_check_pending = True
                     self.logger.warning(
                         "Hatch capacity | egg pile tap had no verified response"
-                        " | checking N/350 before retry"
+                        " | checking configured capacity before retry"
                     )
                     self._begin_home_recovery(
                         "egg pile tap failed; capacity recheck required"
@@ -2229,6 +2270,14 @@ class FullHatchPlanner:
         # detector's left-hand auto-battle shortcut; hunting is only allowed
         # after the no-ready-egg cooldown has actually begun.
         by_type = _group(detections)
+        if AUTOPLACE_PROMPT in by_type or AUTOPLACE_NOTICE in by_type:
+            no = _best(by_type.get(CONFIRM_NO))
+            if no is None:
+                self.logger.error(
+                    "Hatch full | unexpected auto-place confirmation has no No button"
+                )
+                return None
+            return _synthetic(RECOVERY_NO, no.x, no.y)
         for target_type in STARTUP_SIMPLE_INTERRUPTS:
             interruption = _best(by_type.get(target_type))
             if interruption is not None:
@@ -2474,7 +2523,7 @@ class FullHatchPlanner:
                 if not self._capacity_child.capacity_readable:
                     self._egg_pile_capacity_check_pending = False
                     self.logger.error(
-                        "Hatch capacity | preflight failed; N/350 unreadable; "
+                        "Hatch capacity | preflight failed; configured capacity unreadable; "
                         "hatching stopped safely"
                     )
                     self._complete = True
@@ -2491,8 +2540,9 @@ class FullHatchPlanner:
                 self._capacity_checked = True
                 if self._screening_baseline_population is None:
                     self.logger.info(
-                        "Hatch capacity | starting initial screening | capacity=%d/350",
+                        "Hatch capacity | starting initial screening | capacity=%d/%d",
                         self._cave_population,
+                        self.capacity_limit,
                     )
                     self._queue_management(
                         population=self._cave_population,
@@ -2646,7 +2696,7 @@ class FullHatchPlanner:
                     "Hatch full | completed management cycle %d | restarting Phase A"
                     " | cave≈%s",
                     self.completed_management_cycles,
-                    "?" if expected is None else f"{expected}/350",
+                    "?" if expected is None else f"{expected}/{self.capacity_limit}",
                 )
                 self._stage = "hatch"
                 self._child = self._new_hatch()
@@ -2736,11 +2786,12 @@ class FullHatchPlanner:
             reference_width=self.reference_width,
             safe_margin=self.cave_safe_margin,
             bottom_exclusion_px=self.cave_bottom_exclusion_px,
+            capacity_limit=self.capacity_limit,
             capacity_read_retries=self.capacity_read_retries,
             cave_recenter_checks=self.cave_recenter_checks,
             capacity_snapshots=self.capacity_snapshots,
             # Preflight may read capacity, but it must never delete dinosaurs
-            # before the four screening stages have completed.
+            # before the required parent-screening stages have completed.
             allow_cull=False,
             logger=self.logger,
         )
@@ -2761,6 +2812,7 @@ class FullHatchPlanner:
             reference_width=self.reference_width,
             safe_margin=self.cave_safe_margin,
             bottom_exclusion_px=self.cave_bottom_exclusion_px,
+            capacity_limit=self.capacity_limit,
             capacity_read_retries=self.capacity_read_retries,
             cave_recenter_checks=self.cave_recenter_checks,
             capacity_snapshots=self.capacity_snapshots,
@@ -2792,12 +2844,13 @@ class FullHatchPlanner:
         self._management_pending = False
         self._screening_completed.clear()
         self.logger.info(
-            "Hatch full | completed growth screening %d | baseline=%s/350"
+            "Hatch full | completed growth screening %d | baseline=%s/%d"
             " | restarting Phase A",
             self.completed_management_cycles,
             "?"
             if self._screening_baseline_population is None
             else self._screening_baseline_population,
+            self.capacity_limit,
         )
         self._stage = "hatch"
         self._child = self._new_hatch()
@@ -2868,6 +2921,7 @@ class FullHatchPlanner:
                 reference_width=self.reference_width,
                 safe_margin=self.cave_safe_margin,
                 bottom_exclusion_px=self.cave_bottom_exclusion_px,
+                capacity_limit=self.capacity_limit,
                 capacity_read_retries=self.capacity_read_retries,
                 cave_recenter_checks=self.cave_recenter_checks,
                 capacity_snapshots=self.capacity_snapshots,
@@ -3024,7 +3078,7 @@ class FullHatchPlanner:
         )
 
     def _start_next_screening_stage(self) -> None:
-        """Resume the first unproven stage; collect only after all four pass."""
+        """Resume the first unproven parent stage, then collect eggs."""
 
         missing = self._missing_screening_stages()
         if not missing:

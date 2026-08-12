@@ -28,7 +28,7 @@ from .full_hatch import (
     is_home_screen,
 )
 from .models import Detection, Frame, Target
-from .overlays import CONFIRM_YES, INCUBATOR_FULL_TOAST
+from .overlays import AUTOPLACE_UNAVAILABLE, CONFIRM_YES, INCUBATOR_FULL_TOAST
 from .parent_open import NEST_TITLE
 
 
@@ -62,7 +62,13 @@ DEFAULT_SUCCESS_TRANSITIONS: dict[str, tuple[str, ...]] = {
     **hatch_feature.DEFAULT_SUCCESS_TRANSITIONS,
     **nest_filter_feature.DEFAULT_SUCCESS_TRANSITIONS,
     OPEN_NEST: (NEST_TITLE,),
-    AUTOPLACE_BUTTON: (AUTOPLACE_PROMPT, AUTOPLACE_NOTICE, NEST_TITLE),
+    AUTOPLACE_BUTTON: (
+        AUTOPLACE_PROMPT,
+        AUTOPLACE_NOTICE,
+        AUTOPLACE_UNAVAILABLE,
+        CONFIRM_YES,
+        NEST_TITLE,
+    ),
     "hatch_beginner_autoplace_yes": (NEST_TITLE,),
     # ``孵化器已滿`` is a successful, non-destructive collection attempt.
     # It must leave the nest instead of repeatedly tapping collect.
@@ -98,6 +104,7 @@ NEST_DETECTION_TYPES: frozenset[str] = frozenset(
         AUTOPLACE_BUTTON,
         AUTOPLACE_PROMPT,
         AUTOPLACE_NOTICE,
+        AUTOPLACE_UNAVAILABLE,
         CONFIRM_YES,
         COLLECT_EGGS_BUTTON,
         INCUBATOR_FULL_TOAST,
@@ -266,6 +273,11 @@ class BeginnerHatchPlanner:
             self._autoplace_requested = True
             return _target(button)
         if self._stage == "autoplace_result":
+            # This is a transient result toast, not a confirmation dialog.
+            # Keep the workflow parked until it disappears; otherwise the
+            # collect button behind it could be tapped while the toast is up.
+            if AUTOPLACE_UNAVAILABLE in by_type:
+                return None
             # The game has multiple confirmation wordings (best attributes,
             # level order, and localized variants).  Once the one allowed
             # auto-place tap has completed, a visible explicit "是" button is

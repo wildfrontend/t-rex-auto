@@ -6,7 +6,7 @@ the detector matched, which during such an episode is nothing useful. One run
 held this state for 519 seconds and the events left behind cannot say what was
 on screen - only that 17 dinosaur labels and no map control were matched, which
 fits a background overlay, a zoomed-out view and a screen with no template
-alike. An unreadable N/350 capacity HUD is the same problem one crop smaller.
+alike. An unreadable N/M capacity HUD is the same problem one crop smaller.
 
 The frame itself settles both. These files stay beside the log for the full
 local evidence set, while the diagnostic bundle carries a bounded recent
@@ -509,7 +509,7 @@ HUD_ZOOM = 6
 
 
 class CapacitySnapshotWriter(_SnapshotWriter):
-    """Write the frame behind an unreadable N/350 capacity HUD.
+    """Write the frame behind an unreadable capacity HUD.
 
     The event stream cannot distinguish a HUD that is absent, obscured, or
     present but too small for the glyph templates: all three log the same

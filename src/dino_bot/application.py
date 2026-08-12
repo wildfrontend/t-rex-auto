@@ -18,6 +18,9 @@ from .capture import AdbScreencapCapture, MssEmulatorCapture
 from .config import AppConfig
 from .detection import (
     CompositeDetector,
+    HatchAutoplaceConfirmYesDetector,
+    HatchAutoplaceDialogDetector,
+    HatchAutoplaceUnavailableDetector,
     HuntCapacityDetector,
     HuntTeamAvailabilityDetector,
     OpenCvDetector,
@@ -356,8 +359,8 @@ def _create_hatch_engine(
         )
     elif full:
         logger.info(
-            "Feature | hatch-full | hatch -> Attack -> HP -> Top -> Mass"
-            " -> collect -> cave | cull>%d",
+            "Feature | hatch-full | hatch -> Attack -> HP"
+            " -> collect -> cave | auto-place=disabled | cull>%d",
             hatch.cull_threshold,
         )
     elif hp_test:
@@ -429,6 +432,9 @@ def _create_hatch_engine(
         detector = CompositeDetector(
             open_cv_detector,
             hunt_cv_detector,
+            *([HatchAutoplaceDialogDetector()] if beginner or full else []),
+            *([HatchAutoplaceUnavailableDetector()] if beginner else []),
+            *([HatchAutoplaceConfirmYesDetector()] if beginner else []),
             HuntTeamAvailabilityDetector(),
             HuntCapacityDetector(),
             TargetTooStrongDetector(),
@@ -525,6 +531,7 @@ def _create_hatch_engine(
             require_home_anchor=hatch.require_home_anchor,
             home_failure_limit=hatch.home_failure_limit,
             home_backoff_seconds=hatch.home_backoff_seconds,
+            capacity_limit=hatch.capacity_limit,
             cull_threshold=hatch.cull_threshold,
             screening_growth_interval=hatch.screening_growth_interval,
             cave_safe_margin=80,

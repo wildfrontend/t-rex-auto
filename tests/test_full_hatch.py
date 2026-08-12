@@ -11,6 +11,7 @@ from dino_bot.digits import DigitReader
 from dino_bot.full_hatch import (
     AUTOPLACE_BUTTON,
     AUTOPLACE_MASK_CLOSE,
+    AUTOPLACE_NOTICE,
     AUTOPLACE_PROMPT,
     AUTOPLACE_SORT_HEADER,
     AUTOPLACE_TITLE,
@@ -40,6 +41,8 @@ from dino_bot.full_hatch import (
     RECOVERY_UNDO,
     SELECT_CHOOSE_BUTTON,
     SELECT_WEAKEST_BUTTON,
+    SCREENING_STAGES,
+    STANDALONE_STAGES,
     STARTUP_AUTO_BATTLE_CLOSE,
     STARTUP_GROWTH_RESULT,
     STARTUP_NEST_SHORTCUT,
@@ -224,6 +227,35 @@ def test_autoplace_sort_dropdown_is_opened_when_target_is_not_visible() -> None:
     target = planner.choose(frame(), [detection(AUTOPLACE_TITLE, 450, 490)])
     assert target is not None and target.type == AUTOPLACE_SORT_HEADER
     assert (target.x, target.y) == (450, 576)
+
+
+def test_full_hatch_never_schedules_autoplace_stages() -> None:
+    assert SCREENING_STAGES == ("attack", "hp")
+    assert "top" not in STANDALONE_STAGES
+    assert "mass" not in STANDALONE_STAGES
+
+    planner = make_full_planner()
+    planner._management_pending = True
+    planner._screening_completed = {"attack", "hp"}
+    planner._start_next_screening_stage()
+
+    assert planner._stage == "collect"
+
+
+def test_full_hatch_cancels_unexpected_autoplace_confirmation() -> None:
+    planner = make_full_planner()
+    target = planner.choose(
+        frame(),
+        [
+            detection(AUTOPLACE_NOTICE, 450, 720),
+            detection(CONFIRM_NO, 535, 890),
+        ],
+    )
+
+    assert target is not None and target.type == RECOVERY_NO
+    assert (target.x, target.y) == (535, 890)
+    planner.on_action_success(target.type)
+    assert planner._stage == "recover_home"
 
 
 def test_cave_below_threshold_recenters_without_entering() -> None:
@@ -740,14 +772,14 @@ def test_cleanup_gate_reopens_nest_when_one_screening_stage_is_missing() -> None
     planner._child = object()
     planner._management_pending = True
     planner._collect_only_after_empty = False
-    planner._screening_completed = {"attack", "hp", "top"}
+    planner._screening_completed = {"attack"}
     home = [detection(hatch.HOME_ANCHOR, 59, 561)]
 
     target = planner.choose(frame(), home)
 
     assert target is not None and target.type == OPEN_NEST
     assert target.type != CAVE_SWIPE
-    assert planner._missing_screening_stages() == ("mass",)
+    assert planner._missing_screening_stages() == ("hp",)
 
 
 def test_cleanup_gate_allows_cave_only_after_every_screening_stage() -> None:
@@ -757,7 +789,7 @@ def test_cleanup_gate_allows_cave_only_after_every_screening_stage() -> None:
     planner._management_pending = True
     planner._cave_cleanup_after_management = True
     planner._collect_only_after_empty = False
-    planner._screening_completed = {"attack", "hp", "top", "mass"}
+    planner._screening_completed = {"attack", "hp"}
     home = [detection(hatch.HOME_ANCHOR, 59, 561)]
 
     target = planner.choose(frame(), home)
@@ -1009,6 +1041,16 @@ def test_home_screen_requires_bright_unobscured_map_and_no_foreground() -> None:
     )
     dimmed = frame(np.zeros((1600, 900, 3), dtype=np.uint8))
     assert not is_home_screen(dimmed, home)
+
+
+def test_centered_home_accepts_clipped_anchor_with_forest_landmark() -> None:
+    # A centered pile can remain measurable after the left home anchor is
+    # clipped. The second outdoor-map landmark keeps this fallback screen-gated.
+    assert is_centered_home_screen(
+        frame(),
+        [detection("forest_recenter_button", 841, 1296)],
+    )
+    assert not is_centered_home_screen(frame(), [])
 
 
 def test_home_recovery_unwinds_prompt_select_nest_then_confirms_two_frames() -> None:
@@ -1437,7 +1479,7 @@ def test_open_nest_retry_exhaustion_blocks_hatch() -> None:
 def test_failed_home_recovery_action_retries_without_completing_workflow() -> None:
     planner = make_full_planner()
     planner._management_pending = True
-    planner._screening_completed = {"attack", "hp", "top", "mass"}
+    planner._screening_completed = {"attack", "hp"}
     planner._begin_home_recovery("cave recenter failed")
     shifted_home = [
         detection(hatch.HOME_ANCHOR, 59, 561),
@@ -1453,7 +1495,7 @@ def test_failed_home_recovery_action_retries_without_completing_workflow() -> No
     assert planner.choose(dimmed, shifted_home) is None
     assert planner._recovery_rounds == 1
     assert planner._management_pending
-    assert planner._screening_completed == {"attack", "hp", "top", "mass"}
+    assert planner._screening_completed == {"attack", "hp"}
 
     retry = planner.choose(dimmed, shifted_home)
     assert retry is not None and retry.type == RECOVERY_FOREST
@@ -1474,24 +1516,6 @@ def test_last_claim_can_finish_on_unready_egg_detail_and_close_safely() -> None:
     assert 650 <= target.x <= 723
     assert 1146 <= target.y <= 1213
     assert planner._hatch_child.hatched == 1
-
-
-def test_mass_filter_dropped_tap_retries_without_abandoning_round() -> None:
-    planner = make_full_planner()
-    planner._stage = "mass"
-    planner._child = AutoPlaceRoundPlanner(MASS_RULE)
-    nest = [
-        detection(NEST_TITLE, 450, 260),
-        detection(nest_filter.TAG_HDR_TOP, 217, 166),
-    ]
-
-    target = planner.choose(frame(), nest)
-    assert target is not None and target.type == nest_filter.FILTER_HEADER
-    planner.on_action_failure(target.type)
-
-    retry = planner.choose(frame(), nest)
-    assert retry is not None and retry.type == nest_filter.FILTER_HEADER
-    assert planner._stage == "mass"
 
 
 def test_home_recovery_uses_named_cave_close_before_falling_back_to_back() -> None:

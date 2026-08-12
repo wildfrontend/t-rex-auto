@@ -100,6 +100,18 @@ def test_probe_names_the_reject_branch(text: str, reason: str) -> None:
     assert read.text == text
 
 
+def test_probe_accepts_configured_capacity_limit() -> None:
+    frame = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    read = probe_dino_count(
+        frame,
+        StubReader("369/380"),
+        expected_capacity=380,
+    )
+    assert read.ok
+    assert read.count == 369
+    assert read.fraction == (369, 380)
+
+
 def test_probe_rejects_a_count_above_its_own_capacity() -> None:
     frame = np.full((1600, 900, 3), 255, dtype=np.uint8)
     read = probe_dino_count(frame, StubReader("999/350"))
@@ -138,8 +150,14 @@ def test_cull_threshold_config(tmp_path) -> None:
     config_path = tmp_path / "config.json"
     config_path.write_text("{}", encoding="utf-8")
     assert load_config(config_path).hatch.cull_threshold == 330
+    assert load_config(config_path).hatch.capacity_limit == 350
     config_path.write_text('{"hatch": {"cull_threshold": 325}}', encoding="utf-8")
     assert load_config(config_path).hatch.cull_threshold == 325
+    config_path.write_text('{"hatch": {"capacity_limit": 380}}', encoding="utf-8")
+    assert load_config(config_path).hatch.capacity_limit == 380
+    config_path.write_text('{"hatch": {"capacity_limit": 0}}', encoding="utf-8")
+    with pytest.raises(ConfigError):
+        load_config(config_path)
     config_path.write_text('{"hatch": {"cull_threshold": -1}}', encoding="utf-8")
     with pytest.raises(ConfigError):
         load_config(config_path)

@@ -21,7 +21,11 @@ from dino_bot.full_hatch import (
     STARTUP_NEST_SHORTCUT,
 )
 from dino_bot.models import BoundingBox, Detection, Frame
-from dino_bot.overlays import CONFIRM_YES, INCUBATOR_FULL_TOAST
+from dino_bot.overlays import (
+    AUTOPLACE_UNAVAILABLE,
+    CONFIRM_YES,
+    INCUBATOR_FULL_TOAST,
+)
 from dino_bot.parent_open import NEST_TITLE
 
 
@@ -117,6 +121,26 @@ def test_beginner_confirms_autoplace_wording_variants_by_yes_button() -> None:
 
     assert yes is not None and yes.type == AUTOPLACE_YES
     assert (yes.x, yes.y) == (365, 890)
+
+
+def test_beginner_does_not_repeat_autoplace_when_no_nest_is_available() -> None:
+    current = planner()
+    reach_autoplace(current)
+    current.on_action_success(AUTOPLACE_BUTTON)
+
+    toast = nest_screen(
+        detection(AUTOPLACE_UNAVAILABLE, 450, 420),
+        detection(AUTOPLACE_BUTTON, 450, 1315),
+        detection(COLLECT_EGGS_BUTTON, 640, 1315),
+    )
+    assert current.choose(frame(), toast) is None
+
+    # Once the transient toast is gone, the normal one-time collect step can
+    # proceed; the auto-place button is never emitted again.
+    collect = current.choose(
+        frame(), nest_screen(detection(COLLECT_EGGS_BUTTON, 640, 1315))
+    )
+    assert collect is not None and collect.type == COLLECT_EGGS_BUTTON
 
 
 def test_beginner_full_incubator_toast_closes_nest_without_recollecting() -> None:

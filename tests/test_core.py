@@ -22,6 +22,9 @@ from dino_bot.config import AppConfig, ConfigError, load_config
 from dino_bot.cull import CapacityRead
 from dino_bot.detection import (
     DetectorAssetError,
+    HatchAutoplaceConfirmYesDetector,
+    HatchAutoplaceDialogDetector,
+    HatchAutoplaceUnavailableDetector,
     HuntCapacityDetector,
     HuntTeamAvailabilityDetector,
     OpenCvDetector,
@@ -1397,6 +1400,65 @@ def test_hunt_team_availability_detector_only_matches_zero_of_eleven() -> None:
     assert unavailable[0].type == "no_available_dinosaurs"
     assert (unavailable[0].x, unavailable[0].y) == (628, 1409)
     assert detector.detect(team_screen("11 / 11")) == []
+
+
+def test_hatch_autoplace_unavailable_detector_matches_centered_toast() -> None:
+    detector = HatchAutoplaceUnavailableDetector()
+    image = np.full((1600, 900, 3), 170, dtype=np.uint8)
+    cv2.rectangle(image, (195, 350), (705, 495), (8, 8, 8), -1)
+    cv2.rectangle(image, (202, 357), (698, 488), (42, 45, 44), -1)
+    cv2.putText(
+        image,
+        "no available nest",
+        (310, 430),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        1.0,
+        (235, 235, 235),
+        2,
+    )
+
+    found = detector.detect(Frame(image))
+
+    assert len(found) == 1
+    assert found[0].type == "hatch_autoplace_unavailable"
+    assert (found[0].x, found[0].y) == (450, 422)
+
+
+def test_hatch_autoplace_confirm_detector_matches_cyan_yes_button() -> None:
+    detector = HatchAutoplaceConfirmYesDetector()
+    image = np.full((1600, 900, 3), 20, dtype=np.uint8)
+    cv2.rectangle(image, (290, 853), (446, 934), (220, 220, 130), -1)
+    cv2.rectangle(image, (296, 859), (440, 928), (210, 210, 120), -1)
+
+    found = detector.detect(Frame(image))
+
+    assert len(found) == 1
+    assert found[0].type == "hatch_confirm_yes"
+    assert (found[0].x, found[0].y) == (368, 894)
+
+
+def test_hatch_autoplace_dialog_detector_matches_level_order_variant() -> None:
+    detector = HatchAutoplaceDialogDetector()
+    image = np.full((1600, 900, 3), 20, dtype=np.uint8)
+    cv2.rectangle(image, (240, 600), (660, 985), (245, 245, 245), -1)
+    cv2.rectangle(image, (330, 675), (430, 695), (70, 115, 235), -1)
+    cv2.rectangle(image, (455, 730), (580, 750), (70, 115, 235), -1)
+    cv2.rectangle(image, (290, 853), (446, 934), (220, 220, 130), -1)
+    cv2.rectangle(image, (460, 853), (612, 934), (110, 120, 255), -1)
+
+    found = detector.detect(Frame(image))
+
+    assert len(found) == 1
+    assert found[0].type == "hatch_autoplace_notice"
+
+
+def test_hatch_autoplace_dialog_detector_rejects_unpaired_cyan_control() -> None:
+    detector = HatchAutoplaceDialogDetector()
+    image = np.full((1600, 900, 3), 20, dtype=np.uint8)
+    cv2.rectangle(image, (330, 675), (430, 695), (70, 115, 235), -1)
+    cv2.rectangle(image, (290, 853), (446, 934), (220, 220, 130), -1)
+
+    assert detector.detect(Frame(image)) == []
 
 
 def test_hunt_capacity_detector_only_matches_ten_at_egg_nest() -> None:
