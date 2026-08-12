@@ -181,6 +181,55 @@ def test_s13_config_uses_adb_capture() -> None:
     assert config.adb.serial == "127.0.0.1:16416"
     assert config.capture.backend == "adb"
     assert config.hatch.beginner_population_limit == 200
+    assert "forest_recenter_button" in config.planner.target_types
+    assert "dinosaur" in config.planner.target_types
+    assert config.planner.blocking_types == ("duplicate_hunt_alert",)
+    assert config.planner.deduplicate_types == ("dinosaur",)
+
+
+def test_packaged_instance_config_inherits_shared_app_config(tmp_path: Path) -> None:
+    app_root = tmp_path / "app"
+    app_root.mkdir()
+    (app_root / "config.json").write_text(
+        json.dumps(
+            {
+                "adb": {"timeout": 30},
+                "detector": {"manifest": "assets/manifest.json"},
+                "planner": {
+                    "target_types": ["forest_recenter_button", "dinosaur"],
+                    "blocking_types": ["duplicate_hunt_alert"],
+                },
+                "hatch": {"capacity_limit": 350},
+            }
+        ),
+        encoding="utf-8",
+    )
+    instance_root = tmp_path / "instances" / "s13"
+    instance_root.mkdir(parents=True)
+    instance_config = instance_root / "config.json"
+    instance_config.write_text(
+        json.dumps(
+            {
+                "emulator": "custom",
+                "adb": {"serial": "127.0.0.1:16416"},
+                "hatch": {"capacity_limit": 380},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_config(instance_config)
+
+    assert config.root == instance_root
+    assert config.adb.serial == "127.0.0.1:16416"
+    assert config.adb.timeout == 30
+    assert config.detector.manifest == instance_root / "assets" / "manifest.json"
+    assert config.planner.target_types == (
+        "forest_recenter_button",
+        "dinosaur",
+    )
+    assert config.planner.blocking_types == ("duplicate_hunt_alert",)
+    assert config.hatch.capacity_limit == 380
 
 
 def test_cli_explicit_timing_overrides_profile() -> None:

@@ -57,6 +57,53 @@ def _default_speed_profiles() -> dict[str, dict[str, int]]:
     return {name: dict(values) for name, values in DEFAULT_SPEED_PROFILES.items()}
 
 
+def _merge_config_data(
+    base: dict[str, Any], overrides: dict[str, Any]
+) -> dict[str, Any]:
+    """Recursively overlay an instance config without sharing nested objects."""
+
+    merged: dict[str, Any] = {}
+    for key, value in base.items():
+        merged[key] = (
+            _merge_config_data(value, {}) if isinstance(value, dict) else value
+        )
+    for key, value in overrides.items():
+        current = merged.get(key)
+        if isinstance(current, dict) and isinstance(value, dict):
+            merged[key] = _merge_config_data(current, value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _instance_base_config(config_path: Path) -> Path | None:
+    """Find the shared config for ``instances/<id>/config.json`` layouts."""
+
+    instances_root = config_path.parent.parent
+    if instances_root.name.casefold() != "instances":
+        return None
+    runtime_root = instances_root.parent
+    for candidate in (
+        runtime_root / "app" / "config.json",
+        runtime_root / "config.json",
+    ):
+        if candidate.is_file() and candidate.resolve() != config_path:
+            return candidate.resolve()
+    return None
+
+
+def _read_config_object(config_path: Path, *, label: str = "Config") -> dict[str, Any]:
+    try:
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise ConfigError(f"{label} file not found: {config_path}") from exc
+    except json.JSONDecodeError as exc:
+        raise ConfigError(f"Invalid JSON in {config_path}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ConfigError(f"{label} root must be a JSON object")
+    return data
+
+
 @dataclass(frozen=True, slots=True)
 class CaptureConfig:
     backend: Literal["mss", "adb"] = "mss"
@@ -514,14 +561,13 @@ def _exclusion_zones(data: dict[str, Any]) -> tuple[ExclusionZone, ...]:
 
 def load_config(path: str | Path = "config.json") -> AppConfig:
     config_path = Path(path).expanduser().resolve()
-    try:
-        data = json.loads(config_path.read_text(encoding="utf-8"))
-    except FileNotFoundError as exc:
-        raise ConfigError(f"Config file not found: {config_path}") from exc
-    except json.JSONDecodeError as exc:
-        raise ConfigError(f"Invalid JSON in {config_path}: {exc}") from exc
-    if not isinstance(data, dict):
-        raise ConfigError("Config root must be a JSON object")
+    data = _read_config_object(config_path)
+    base_config = _instance_base_config(config_path)
+    if base_config is not None:
+        data = _merge_config_data(
+            _read_config_object(base_config, label="Base config"),
+            data,
+        )
 
     root = config_path.parent
     emulator = str(data.get("emulator", "bluestacks")).lower()
