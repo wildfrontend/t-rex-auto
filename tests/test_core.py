@@ -171,6 +171,15 @@ def test_cli_accepts_beginner_hatch_hunt_feature() -> None:
     assert args.feature == "hatch-beginner-hunt"
 
 
+def test_s13_config_uses_adb_capture() -> None:
+    config_path = Path(__file__).resolve().parents[1] / "config-s13.json"
+    config = load_config(config_path)
+
+    assert config.adb.serial == "127.0.0.1:16416"
+    assert config.capture.backend == "adb"
+    assert config.hatch.beginner_population_limit == 200
+
+
 def test_cli_explicit_timing_overrides_profile() -> None:
     result = apply_run_timing(
         AppConfig(root=Path(".")),

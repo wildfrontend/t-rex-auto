@@ -1,5 +1,10 @@
 # 版本紀錄
 
+## v0.0.23 — 2026-08-13
+
+- 修正 S13 獨立設定未指定 ADB 擷取，造成啟動後錯誤使用桌面視窗擷取、立即回報
+  `No visible emulator window found` 的問題。現在 S13 固定使用 `capture.backend: "adb"`。
+
 ## v0.0.22 — 2026-08-12
 
 - 新增 `hatch-beginner-hunt`：新手帳號照固定流程「孵化 → 所有 → 自動放置一次 →

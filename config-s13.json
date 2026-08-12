@@ -3,6 +3,9 @@
   "adb": {
     "serial": "127.0.0.1:16416"
   },
+  "capture": {
+    "backend": "adb"
+  },
   "hatch": {
     "beginner_population_limit": 200,
     "beginner_stat_upgrade_guards": {}
