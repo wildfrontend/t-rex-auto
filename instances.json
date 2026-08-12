@@ -5,6 +5,12 @@
       "name": "主力模擬器",
       "config": "app/config.json",
       "status_port": 8765
+    },
+    {
+      "id": "s13",
+      "name": "新手 S13",
+      "config": "app/config-s13.json",
+      "status_port": 8775
     }
   ]
 }

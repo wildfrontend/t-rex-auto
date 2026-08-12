@@ -27,6 +27,7 @@ cp -a \
   "${project_root}/verify.py" \
   "${project_root}/config.py" \
   "${project_root}/config.json" \
+  "${project_root}/config-s13.json" \
   "${project_root}/pyproject.toml" \
   "${project_root}/src" \
   "${project_root}/assets" \
