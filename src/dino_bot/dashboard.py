@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import threading
@@ -17,7 +18,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlparse
 from urllib.request import Request, urlopen
 
@@ -115,8 +116,102 @@ def _post_json(url: str, timeout: float = 3.0) -> dict[str, Any]:
     try:
         with urlopen(request, timeout=timeout) as response:  # noqa: S310 - loopback URL only
             return json.load(response)
+    except HTTPError as exc:
+        try:
+            payload = json.load(exc)
+        except (OSError, ValueError):
+            payload = {}
+        reason = payload.get("error") if isinstance(payload, dict) else None
+        raise RuntimeError(f"Bot 拒絕控制指令：{reason or exc.reason}") from exc
     except (OSError, ValueError, URLError) as exc:
         raise RuntimeError(f"Bot control unavailable: {exc}") from exc
+
+
+def _port_is_bindable(port: int) -> bool:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.bind(("127.0.0.1", port))
+    except OSError:
+        return False
+    finally:
+        sock.close()
+    return True
+
+
+def _process_exists(process_id: int | None) -> bool:
+    if process_id is None:
+        return False
+    try:
+        os.kill(process_id, 0)
+    except ProcessLookupError:
+        return False
+    except (PermissionError, OSError):
+        return True
+    return True
+
+
+def _windows_port_owner(port: int) -> dict[str, Any] | None:
+    script = (
+        f"$c=Get-NetTCPConnection -LocalPort {int(port)} -State Listen "
+        "-ErrorAction SilentlyContinue | Select-Object -First 1;"
+        "if($null -ne $c){"
+        "$p=Get-CimInstance Win32_Process "
+        "-Filter ('ProcessId='+$c.OwningProcess) -ErrorAction SilentlyContinue;"
+        "[pscustomobject]@{pid=$c.OwningProcess;name=$p.Name;command=$p.CommandLine}"
+        "| ConvertTo-Json -Compress}"
+    )
+    completed = subprocess.run(
+        ["powershell.exe", "-NoLogo", "-NoProfile", "-Command", script],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    try:
+        owner = json.loads(completed.stdout)
+    except (TypeError, ValueError):
+        return None
+    return owner if isinstance(owner, dict) else None
+
+
+def _port_occupant_detail(port: int) -> str:
+    """Return read-only owner detail where the host can provide it."""
+    if os.name == "nt":
+        owner = _windows_port_owner(port)
+        if owner is not None and owner.get("pid") is not None:
+            return (
+                f"PID {owner['pid']}（{owner.get('name') or 'unknown'} / "
+                f"{owner.get('command') or '命令列無法讀取'}）"
+            )
+        return "Windows 無法取得占用程序的 PID 或命令列"
+    lsof = Path("/usr/sbin/lsof")
+    executable = str(lsof) if lsof.is_file() else shutil.which("lsof")
+    if not executable:
+        return "無法從目前系統取得占用程序的 PID"
+    completed = subprocess.run(
+        [executable, "-nP", "-a", f"-iTCP:{port}", "-sTCP:LISTEN", "-Fp"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    pids = sorted(
+        {
+            int(line[1:])
+            for line in completed.stdout.splitlines()
+            if line.startswith("p") and line[1:].isdigit()
+        }
+    )
+    if not pids:
+        return "沒有可辨識的 LISTEN PID，但 port 目前仍無法綁定"
+    owners: list[str] = []
+    for pid in pids:
+        command = subprocess.run(
+            ["/bin/ps", "-p", str(pid), "-o", "command="],
+            capture_output=True,
+            text=True,
+            check=False,
+        ).stdout.strip()
+        owners.append(f"PID {pid}（{command or '命令列無法讀取'}）")
+    return "、".join(owners)
 
 
 def _latest_log_lines(logs_dir: Path, limit: int = 4000) -> list[str]:
@@ -264,8 +359,10 @@ class DashboardController:
         self.instances_path = (instances_path or runtime_root / "instances.json").resolve()
         self._instances = self._load_instances()
         self._start_lock = threading.Lock()
+        self._operation_lock = threading.Lock()
         self._last_start: dict[str, float] = {}
         self._explicit_stop_at: dict[str, float] = {}
+        self._operations: dict[str, dict[str, Any]] = {}
 
     @property
     def instances(self) -> tuple[BotInstance, ...]:
@@ -405,6 +502,177 @@ class DashboardController:
             return "hatch-stage", "單階段孵化"
         return None, "執行中"
 
+    @staticmethod
+    def _expected_feature(mode: str, stage: str | None = None) -> str:
+        if mode == "hatch-stage" and stage:
+            return f"hatch-stage-{stage}"
+        return mode
+
+    def _set_operation(
+        self,
+        instance: BotInstance,
+        *,
+        action: str,
+        state: str,
+        code: str,
+        message: str,
+    ) -> dict[str, Any]:
+        operation = {
+            "action": action,
+            "state": state,
+            "code": code,
+            "message": message,
+            "updated_at": datetime.now().astimezone().isoformat(timespec="milliseconds"),
+        }
+        with self._operation_lock:
+            self._operations[instance.instance_id] = operation
+        return dict(operation)
+
+    def operation(self, instance_id: str | None = None) -> dict[str, Any] | None:
+        instance = self._instance(instance_id)
+        with self._operation_lock:
+            operation = self._operations.get(instance.instance_id)
+            return dict(operation) if operation is not None else None
+
+    @staticmethod
+    def _launch_log_tail(instance: BotInstance, mode: str, lines: int = 10) -> str:
+        failure_file = instance.logs_dir / "dashboard-launch-failure.json"
+        try:
+            failure = json.loads(failure_file.read_text(encoding="utf-8-sig"))
+        except (OSError, ValueError):
+            failure = None
+        if isinstance(failure, dict) and failure.get("message"):
+            return f"Windows runner：{failure['message']}"
+        path = instance.logs_dir / f"dashboard-launch-{mode}.log"
+        try:
+            entries = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            return "啟動 log 不存在或無法讀取"
+        tail = [entry.strip() for entry in entries[-lines:] if entry.strip()]
+        return " | ".join(tail) if tail else "啟動 log 沒有內容"
+
+    @staticmethod
+    def _port_block_reason(instance: BotInstance) -> str:
+        health = _get_json(f"http://127.0.0.1:{instance.status_port}/health")
+        if health and health.get("service") == "dino-mutant-bot-status":
+            pid = health.get("process_id", "未知")
+            feature = health.get("feature", "未知模式")
+            return (
+                f"Port {instance.status_port} 仍由 Dino Bot PID {pid} 使用"
+                f"（feature={feature}），舊程序尚未完成退出"
+            )
+        if health:
+            return (
+                f"Port {instance.status_port} 有 API 回應，但 service={health.get('service')!r}，"
+                "不是 Dino Bot status API"
+            )
+        return f"Port {instance.status_port} 被占用：{_port_occupant_detail(instance.status_port)}"
+
+    def _require_clean_port(self, instance: BotInstance) -> None:
+        if not _port_is_bindable(instance.status_port):
+            raise RuntimeError(self._port_block_reason(instance))
+
+    def _wait_for_clean_port(
+        self,
+        instance: BotInstance,
+        expected_process_id: int | None,
+        timeout_seconds: float = MODE_SWITCH_PROCESS_WAIT_SECONDS,
+    ) -> None:
+        deadline = time.monotonic() + timeout_seconds
+        while time.monotonic() < deadline:
+            if (
+                not _process_exists(expected_process_id)
+                and _port_is_bindable(instance.status_port)
+            ):
+                return
+            time.sleep(0.25)
+        if _process_exists(expected_process_id):
+            raise RuntimeError(
+                f"等待 {timeout_seconds:g} 秒後仍不能乾淨重啟：舊 Bot PID "
+                f"{expected_process_id} 尚未退出；{self._port_block_reason(instance)}"
+            )
+        raise RuntimeError(
+            f"等待 {timeout_seconds:g} 秒後仍不能乾淨重啟："
+            f"{self._port_block_reason(instance)}"
+        )
+
+    def _wait_for_ready(
+        self,
+        instance: BotInstance,
+        mode: str,
+        stage: str | None,
+        launcher_process: subprocess.Popen[Any] | None = None,
+        timeout_seconds: float = 60,
+    ) -> None:
+        expected_feature = self._expected_feature(mode, stage)
+        deadline = time.monotonic() + timeout_seconds
+        last_reason = "新程序尚未監聽 status port"
+        while time.monotonic() < deadline:
+            if launcher_process is not None and launcher_process.poll() is not None:
+                raise RuntimeError(
+                    f"Bot runner PID {launcher_process.pid} 在 API 就緒前退出"
+                    f"（exit code {launcher_process.returncode}）。"
+                    f"原因：{self._launch_log_tail(instance, mode)}"
+                )
+            health = _get_json(f"http://127.0.0.1:{instance.status_port}/health")
+            if health:
+                if health.get("service") != "dino-mutant-bot-status":
+                    last_reason = f"service={health.get('service')!r}，不是 Dino Bot status API"
+                elif health.get("feature") != expected_feature:
+                    last_reason = (
+                        f"API 模式不符：預期 {expected_feature}，"
+                        f"實際 {health.get('feature')!r}"
+                    )
+                else:
+                    status = _get_json(
+                        f"http://127.0.0.1:{instance.status_port}/status"
+                    )
+                    if status and status.get("running") is not False:
+                        return
+                    last_reason = "status API 已回應，但 running=false 或狀態無法讀取"
+            elif not _port_is_bindable(instance.status_port):
+                last_reason = self._port_block_reason(instance)
+            time.sleep(0.25)
+        raise RuntimeError(
+            f"新 Bot 在 {timeout_seconds:g} 秒內未就緒：{last_reason}。"
+            f"最近啟動 log：{self._launch_log_tail(instance, mode)}"
+        )
+
+    def _monitor_started(
+        self,
+        instance: BotInstance,
+        mode: str,
+        stage: str | None,
+        action: str,
+        launcher_process: subprocess.Popen[Any] | None = None,
+    ) -> None:
+        try:
+            self._wait_for_ready(
+                instance,
+                mode,
+                stage,
+                launcher_process=launcher_process,
+            )
+        except RuntimeError as exc:
+            self._set_operation(
+                instance,
+                action=action,
+                state="failed",
+                code="start_failed",
+                message=str(exc),
+            )
+            return
+        self._set_operation(
+            instance,
+            action=action,
+            state="succeeded",
+            code="bot_ready",
+            message=(
+                f"Bot 已完成啟動驗證：{self._expected_feature(mode, stage)}，"
+                f"Port {instance.status_port}"
+            ),
+        )
+
     def _discover_instance(self, instance: BotInstance) -> dict[str, Any]:
         health = _get_json(f"http://127.0.0.1:{instance.status_port}/health")
         status = _get_json(f"http://127.0.0.1:{instance.status_port}/status") or {}
@@ -417,6 +685,7 @@ class DashboardController:
                 "running": bool(status.get("running", True)),
                 "mode": mode,
                 "feature": health.get("feature"),
+                "process_id": health.get("process_id"),
                 "mode_label": mode_label,
                 "port": instance.status_port,
                 "status": status,
@@ -429,6 +698,7 @@ class DashboardController:
             "running": False,
             "mode": None,
             "feature": None,
+            "process_id": None,
             "mode_label": "未啟動",
             "port": instance.status_port,
             "status": {},
@@ -622,38 +892,93 @@ class DashboardController:
         with self._start_lock:
             now = time.monotonic()
             if now - self._last_start.get(instance.instance_id, 0) < 5:
-                raise RuntimeError("Bot start already requested")
-            self._last_start[instance.instance_id] = now
+                operation = self.operation(instance.instance_id)
+                detail = operation.get("message") if operation else "尚無詳細狀態"
+                raise RuntimeError(f"Bot 啟動要求仍在處理中：{detail}")
             active = self.discover(instance.instance_id)
             if not active["running"]:
-                self._launch(mode, stage=stage, instance_id=instance.instance_id)
+                self._require_clean_port(instance)
+                self._last_start[instance.instance_id] = now
+                operation = self._set_operation(
+                    instance,
+                    action="start",
+                    state="pending",
+                    code="launching",
+                    message=(
+                        f"正在啟動 {self._expected_feature(mode, stage)}；"
+                        f"等待 Port {instance.status_port} status API 驗證"
+                    ),
+                )
+                try:
+                    launcher_process = self._launch(
+                        mode,
+                        stage=stage,
+                        instance_id=instance.instance_id,
+                    )
+                except RuntimeError as exc:
+                    self._set_operation(
+                        instance,
+                        action="start",
+                        state="failed",
+                        code="launcher_create_failed",
+                        message=str(exc),
+                    )
+                    raise
+                threading.Thread(
+                    target=self._monitor_started,
+                    args=(instance, mode, stage, "start", launcher_process),
+                    daemon=True,
+                ).start()
                 return {
                     "accepted": True,
                     "action": "start",
                     "instance_id": instance.instance_id,
                     "mode": mode,
                     "stage": stage,
+                    "message": operation["message"],
+                    "operation": operation,
                 }
             previous_label = str(active["mode_label"])
-            with suppress(RuntimeError):
-                self.stop(instance.instance_id)
+            previous_process_id = active.get("process_id")
+            self.stop(instance.instance_id)
+            self._last_start[instance.instance_id] = now
+            operation = self._set_operation(
+                instance,
+                action="switch",
+                state="pending",
+                code="stopping_old_bot",
+                message=(
+                    f"正在停止{previous_label}；確認舊程序退出及 Port "
+                    f"{instance.status_port} 釋放後，將啟動 {self._expected_feature(mode, stage)}"
+                ),
+            )
 
         def start_after_stop() -> None:
-            deadline = time.monotonic() + 25
-            while time.monotonic() < deadline:
-                if not self.discover(instance.instance_id)["running"]:
-                    time.sleep(1)
-                    with suppress(RuntimeError), self._start_lock:
-                        self._launch(
-                            mode,
-                            stage=stage,
-                            instance_id=instance.instance_id,
-                            wait_for_existing_seconds=(
-                                MODE_SWITCH_PROCESS_WAIT_SECONDS
-                            ),
-                        )
-                    return
-                time.sleep(0.5)
+            try:
+                self._wait_for_clean_port(instance, previous_process_id)
+                with self._start_lock:
+                    self._require_clean_port(instance)
+                    launcher_process = self._launch(
+                        mode,
+                        stage=stage,
+                        instance_id=instance.instance_id,
+                        wait_for_existing_seconds=MODE_SWITCH_PROCESS_WAIT_SECONDS,
+                    )
+                self._monitor_started(
+                    instance,
+                    mode,
+                    stage,
+                    "switch",
+                    launcher_process,
+                )
+            except RuntimeError as exc:
+                self._set_operation(
+                    instance,
+                    action="switch",
+                    state="failed",
+                    code="clean_restart_failed",
+                    message=str(exc),
+                )
 
         threading.Thread(target=start_after_stop, daemon=True).start()
         return {
@@ -662,7 +987,8 @@ class DashboardController:
             "instance_id": instance.instance_id,
             "mode": mode,
             "stage": stage,
-            "message": f"正在停止{previous_label}，隨後自動啟動新模式",
+            "message": operation["message"],
+            "operation": operation,
         }
 
     def _launch(
@@ -672,33 +998,43 @@ class DashboardController:
         stage: str | None = None,
         instance_id: str | None = None,
         wait_for_existing_seconds: int = 0,
-    ) -> None:
+    ) -> subprocess.Popen[Any]:
         instance = self._instance(instance_id)
-        if os.name == "nt":
-            creation_flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0) | getattr(
-                subprocess, "CREATE_NEW_PROCESS_GROUP", 0
-            )
-            subprocess.Popen(  # noqa: S603 - fixed local PowerShell runner and allowlist
-                self._runner_command(
+        try:
+            if os.name == "nt":
+                creation_flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0) | getattr(
+                    subprocess, "CREATE_NEW_PROCESS_GROUP", 0
+                )
+                failure_file = instance.logs_dir / "dashboard-launch-failure.json"
+                instance.logs_dir.mkdir(parents=True, exist_ok=True)
+                with suppress(OSError):
+                    failure_file.unlink()
+                command = self._runner_command(
                     mode,
                     stage=stage,
                     instance_id=instance.instance_id,
                     wait_for_existing_seconds=wait_for_existing_seconds,
-                ),
-                cwd=self.runtime_root,
-                creationflags=creation_flags,
-            )
-        else:
+                )
+                command += ["-FailureFile", str(failure_file)]
+                return subprocess.Popen(  # noqa: S603 - fixed local runner and allowlist
+                    command,
+                    cwd=self.runtime_root,
+                    creationflags=creation_flags,
+                )
             instance.logs_dir.mkdir(parents=True, exist_ok=True)
             launch_log = instance.logs_dir / f"dashboard-launch-{mode}.log"
             with launch_log.open("ab") as stream:
-                subprocess.Popen(  # noqa: S603 - fixed local Python entrypoint and allowlist
+                return subprocess.Popen(  # noqa: S603 - fixed local entrypoint and allowlist
                     self._bot_command(mode, stage=stage, instance_id=instance.instance_id),
                     cwd=instance.root,
                     stdout=stream,
                     stderr=subprocess.STDOUT,
                     start_new_session=True,
                 )
+        except OSError as exc:
+            raise RuntimeError(
+                f"無法建立 Bot runner 程序：{type(exc).__name__}: {exc}"
+            ) from exc
 
     def _active_control(
         self,
@@ -709,7 +1045,33 @@ class DashboardController:
         active = self.discover(instance.instance_id)
         if not active["running"] or active["port"] is None:
             raise RuntimeError(f"Bot instance '{instance.name}' is not running")
-        return _post_json(f"http://127.0.0.1:{active['port']}/control/{action}")
+        if os.name == "nt":
+            owner = _windows_port_owner(instance.status_port)
+            command = str((owner or {}).get("command") or "")
+            owner_pid = (owner or {}).get("pid")
+            api_pid = active.get("process_id")
+            main_script = str((self.app_root / "main.py").resolve())
+            port_pattern = rf"--status-port\s+{instance.status_port}(?:\s|$)"
+            if (
+                owner is None
+                or owner_pid != api_pid
+                or str((owner or {}).get("name", "")).lower() != "python.exe"
+                or main_script.lower() not in command.lower()
+                or str(instance.config_path).lower() not in command.lower()
+                or " run " not in command
+                or re.search(port_pattern, command, re.IGNORECASE) is None
+            ):
+                raise RuntimeError(
+                    f"拒絕控制 Port {instance.status_port}：API PID={api_pid}，"
+                    f"實際占用程序={_port_occupant_detail(instance.status_port)}；"
+                    "PID、main.py、config 或 status-port 身分不一致"
+                )
+        response = _post_json(f"http://127.0.0.1:{active['port']}/control/{action}")
+        if response.get("accepted") is not True or response.get("action") != action:
+            raise RuntimeError(
+                f"Bot 未接受 {action} 指令：{json.dumps(response, ensure_ascii=False)}"
+            )
+        return response
 
     def stop(self, instance_id: str | None = None) -> dict[str, Any]:
         instance = self._instance(instance_id)
@@ -725,19 +1087,47 @@ class DashboardController:
         if not active["running"] or not active["mode"]:
             raise RuntimeError(f"Bot instance '{instance.name}' is not running")
         mode = str(active["mode"])
+        previous_process_id = active.get("process_id")
         if mode == "hatch-stage":
             raise RuntimeError("單階段工作不支援重啟；請停止後重新選擇階段")
         self.stop(instance.instance_id)
+        self._last_start[instance.instance_id] = time.monotonic()
+        operation = self._set_operation(
+            instance,
+            action="restart",
+            state="pending",
+            code="stopping_old_bot",
+            message=(
+                f"正在乾淨重啟：等待舊 PID 退出與 Port {instance.status_port} 釋放，"
+                f"再重新啟動 {mode}"
+            ),
+        )
 
         def restart_after_stop() -> None:
-            deadline = time.monotonic() + 25
-            while time.monotonic() < deadline:
-                if not self.discover(instance.instance_id)["running"]:
-                    time.sleep(1)
-                    with suppress(RuntimeError):
-                        self.start(mode, instance_id=instance.instance_id)
-                    return
-                time.sleep(0.5)
+            try:
+                self._wait_for_clean_port(instance, previous_process_id)
+                with self._start_lock:
+                    self._require_clean_port(instance)
+                    launcher_process = self._launch(
+                        mode,
+                        instance_id=instance.instance_id,
+                        wait_for_existing_seconds=MODE_SWITCH_PROCESS_WAIT_SECONDS,
+                    )
+                self._monitor_started(
+                    instance,
+                    mode,
+                    None,
+                    "restart",
+                    launcher_process,
+                )
+            except RuntimeError as exc:
+                self._set_operation(
+                    instance,
+                    action="restart",
+                    state="failed",
+                    code="clean_restart_failed",
+                    message=str(exc),
+                )
 
         threading.Thread(target=restart_after_stop, daemon=True).start()
         return {
@@ -745,6 +1135,8 @@ class DashboardController:
             "action": "restart",
             "instance_id": instance.instance_id,
             "mode": mode,
+            "message": operation["message"],
+            "operation": operation,
         }
 
     def run_tool(self, action: str, instance_id: str | None = None) -> dict[str, Any]:
@@ -1224,6 +1616,7 @@ class DashboardServer:
                     "serial": active.get("serial"),
                     "status_port": definition.status_port,
                     "active": active,
+                    "operation": self.controller.operation(definition.instance_id),
                     "metrics": metrics,
                     "hatch_boost_inventory": inventory.as_dict(),
                 }
@@ -1238,6 +1631,7 @@ class DashboardServer:
             "selected_instance": selected["id"],
             "instances": instances,
             "active": selected["active"],
+            "operation": selected["operation"],
             "metrics": selected["metrics"],
             "hatch_boost_inventory": selected["hatch_boost_inventory"],
         }

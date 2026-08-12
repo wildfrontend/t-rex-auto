@@ -9,7 +9,12 @@ from urllib.request import Request, urlopen
 
 import pytest
 
-from dino_bot.dashboard import DashboardController, DashboardServer, _workflow_status
+import dino_bot.dashboard as dashboard_module
+from dino_bot.dashboard import (
+    DashboardController,
+    DashboardServer,
+    _workflow_status,
+)
 
 
 def write_assets(root: Path) -> None:
@@ -189,13 +194,103 @@ def test_dashboard_builds_noninteractive_runner_commands(tmp_path: Path) -> None
 
 def test_windows_launch_keeps_live_output_in_the_bot_console() -> None:
     source = inspect.getsource(DashboardController._launch)
-    windows_branch, non_windows_branch = source.split("        else:\n", 1)
+    windows_branch, non_windows_branch = source.split("            launch_log =", 1)
 
     assert 'if os.name == "nt"' in windows_branch
     assert "stdout=" not in windows_branch
     assert "stderr=" not in windows_branch
     assert "stdout=stream" in non_windows_branch
     assert "stderr=subprocess.STDOUT" in non_windows_branch
+
+
+def test_dashboard_records_a_concrete_clean_restart_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller = DashboardController(tmp_path, tmp_path / "logs")
+    instance = controller.instances[0]
+    monkeypatch.setattr(
+        controller,
+        "_port_block_reason",
+        lambda current: f"Port {current.status_port} 被 PID 4321 / unknown.exe 占用",
+    )
+    monkeypatch.setattr("dino_bot.dashboard._port_is_bindable", lambda port: False)
+    monkeypatch.setattr("dino_bot.dashboard._process_exists", lambda pid: False)
+
+    with pytest.raises(RuntimeError, match=r"PID 4321 / unknown\.exe"):
+        controller._wait_for_clean_port(instance, 1234, timeout_seconds=0)
+
+
+def test_dashboard_clean_restart_waits_for_old_pid_even_after_port_release(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller = DashboardController(tmp_path, tmp_path / "logs")
+    instance = controller.instances[0]
+    monkeypatch.setattr("dino_bot.dashboard._port_is_bindable", lambda port: True)
+    monkeypatch.setattr("dino_bot.dashboard._process_exists", lambda pid: True)
+    monkeypatch.setattr(
+        controller,
+        "_port_block_reason",
+        lambda current: f"Port {current.status_port} 已釋放",
+    )
+
+    with pytest.raises(RuntimeError, match=r"舊 Bot PID 1234 尚未退出"):
+        controller._wait_for_clean_port(instance, 1234, timeout_seconds=0)
+
+
+def test_dashboard_operation_preserves_failure_reason_in_overview(tmp_path: Path) -> None:
+    assets = tmp_path / "assets"
+    write_assets(assets)
+    server = DashboardServer(
+        tmp_path,
+        tmp_path / "logs",
+        tmp_path / "data" / "stats.sqlite3",
+        port=0,
+        assets=assets,
+    )
+    instance = server.controller.instances[0]
+    server.controller._set_operation(
+        instance,
+        action="restart",
+        state="failed",
+        code="clean_restart_failed",
+        message="Port 8765 被 PID 4321 / unknown.exe 占用",
+    )
+
+    overview = server._overview()
+
+    assert overview["operation"]["code"] == "clean_restart_failed"
+    assert "PID 4321" in overview["operation"]["message"]
+
+
+def test_windows_dashboard_refuses_control_when_port_owner_identity_differs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller = DashboardController(tmp_path, tmp_path / "logs")
+    monkeypatch.setattr(dashboard_module.os, "name", "nt")
+    monkeypatch.setattr(
+        controller,
+        "discover",
+        lambda instance_id=None: {
+            "running": True,
+            "port": 8765,
+            "process_id": 1234,
+        },
+    )
+    monkeypatch.setattr(
+        dashboard_module,
+        "_windows_port_owner",
+        lambda port: {
+            "pid": 9999,
+            "name": "unknown.exe",
+            "command": "unknown.exe --listen 8765",
+        },
+    )
+
+    with pytest.raises(RuntimeError, match=r"PID、main\.py、config 或 status-port"):
+        controller.stop()
 
 
 def test_dashboard_builds_commands_for_the_selected_instance(tmp_path: Path) -> None:

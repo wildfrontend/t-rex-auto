@@ -14,10 +14,32 @@ param(
     [int]$StatusPort = 8766,
     [ValidateRange(0, 120)]
     [int]$WaitForExistingSeconds = 0,
+    [string]$FailureFile = "",
     [string]$ConfigPath = ""
 )
 
 $ErrorActionPreference = "Stop"
+trap {
+    $FailureMessage = $_.Exception.Message
+    if (-not [string]::IsNullOrWhiteSpace($FailureFile)) {
+        try {
+            $FailureDirectory = Split-Path -Parent $FailureFile
+            if (-not [string]::IsNullOrWhiteSpace($FailureDirectory)) {
+                New-Item -ItemType Directory -Path $FailureDirectory -Force | Out-Null
+            }
+            @{
+                ok = $false
+                error = "runner_failed"
+                message = $FailureMessage
+                occurred_at = (Get-Date).ToString("o")
+            } | ConvertTo-Json -Compress | Set-Content -LiteralPath $FailureFile -Encoding UTF8
+        } catch {
+            Write-Warning "Unable to write Bot failure detail: $($_.Exception.Message)"
+        }
+    }
+    [Console]::Error.WriteLine("Bot startup failed: $FailureMessage")
+    exit 1
+}
 $AppRoot = Split-Path -Parent $PSScriptRoot
 $RuntimeRoot = Split-Path -Parent $AppRoot
 $PythonExecutable = Join-Path $RuntimeRoot "python\python.exe"

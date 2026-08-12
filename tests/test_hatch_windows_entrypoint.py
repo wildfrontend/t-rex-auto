@@ -55,6 +55,41 @@ def test_windows_runners_wait_for_a_previous_bot_during_mode_switch() -> None:
         assert "function Get-ExistingBots" in runner
         assert "Waiting up to $WaitForExistingSeconds seconds" in runner
         assert "$WaitTimer.Elapsed.TotalSeconds" in runner
+        assert '$FailureFile = ""' in runner
+        assert 'error = "runner_failed"' in runner
+        assert "Set-Content -LiteralPath $FailureFile" in runner
+
+
+def test_windows_control_requires_a_clean_verified_restart() -> None:
+    controller = (REPO / "scripts/windows/control-windows.ps1").read_text(
+        encoding="utf-8-sig"
+    )
+
+    assert "function Assert-StatusPortStartable" in controller
+    assert "function Wait-ForCleanStop" in controller
+    assert "function Wait-ForBotReady" in controller
+    assert "Test-ProcessExists $ExpectedProcessId" in controller
+    assert "Test-StatusPortAvailable $StatusPort" in controller
+    assert "Assert-DinoBotApiIdentity -RequireProcessIdentity" in controller
+    assert '"port_occupied_unverified"' in controller
+    assert '"port_reoccupied"' in controller
+    assert '"stop_timeout"' in controller
+    assert '"status_api_start_timeout"' in controller
+    assert 'result = "started"' in controller
+    assert "Wait-ForCleanStop -ExpectedProcessId $ProcessId" in controller
+    assert "Wait-ForBotReady -LauncherProcess $Process" in controller
+
+
+def test_windows_control_returns_error_code_and_concrete_message() -> None:
+    controller = (REPO / "scripts/windows/control-windows.ps1").read_text(
+        encoding="utf-8-sig"
+    )
+
+    assert '$Exception.Data["DinoErrorCode"] = $Code' in controller
+    assert "Format-StatusPortOwner" in controller
+    assert "CommandLine" in controller
+    assert "message = $_.Exception.Message" in controller
+    assert "status_port = $StatusPort" in controller
 
 
 def test_hunt_entrypoint_name_matches_its_feature() -> None:

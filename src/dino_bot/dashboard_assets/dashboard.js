@@ -40,6 +40,7 @@ function escapeHtml(value) {
 
 let selectedInstanceId = null;
 let knownInstances = [];
+let lastOperationUpdatedAt = null;
 
 function renderInstances(items) {
   knownInstances = items || [];
@@ -135,6 +136,16 @@ function render(data) {
   }
   renderInstances(data.instances || []);
   renderActive(data.active || {});
+  const operation = data.operation;
+  if (operation?.updated_at && operation.updated_at !== lastOperationUpdatedAt) {
+    lastOperationUpdatedAt = operation.updated_at;
+    const result = $("commandResult");
+    result.classList.toggle("error", operation.state === "failed");
+    const prefix = operation.state === "pending"
+      ? "處理中"
+      : operation.state === "succeeded" ? "完成" : "失敗";
+    result.textContent = `${prefix} [${operation.code}]：${operation.message}`;
+  }
   const inventory = data.hatch_boost_inventory || {};
   const stock = Number(inventory.remaining ?? 100);
   $("boostStockValue").textContent = stock;
