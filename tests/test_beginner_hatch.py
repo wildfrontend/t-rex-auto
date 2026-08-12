@@ -1,19 +1,26 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 
 from dino_bot import hatch, nest_filter
 from dino_bot.beginner_hatch import (
     AUTOPLACE_BUTTON,
     AUTOPLACE_YES,
+    CAVE_CLAIM,
     COLLECT_EGGS_BUTTON,
+    DEFAULT_CYCLE_COMPLETE_TARGETS,
     DEFAULT_SUCCESS_TRANSITIONS,
     HATCH_DETECTION_TYPES,
     NEST_DETECTION_TYPES,
     BeginnerHatchPlanner,
 )
+from dino_bot.digits import DigitReader
 from dino_bot.full_hatch import (
     AUTOPLACE_PROMPT,
+    CAVE_DETECTION_TYPES,
+    CAVE_SWIPE,
     NEST_MASK_CLOSE,
     OPEN_NEST,
     STARTUP_AUTO_BATTLE_CLOSE,
@@ -27,6 +34,9 @@ from dino_bot.overlays import (
     INCUBATOR_FULL_TOAST,
 )
 from dino_bot.parent_open import NEST_TITLE
+
+REPO = Path(__file__).resolve().parent.parent
+GLYPHS = REPO / "assets" / "hatch" / "digits"
 
 
 def frame() -> Frame:
@@ -52,8 +62,10 @@ def detection(
 
 def planner() -> BeginnerHatchPlanner:
     return BeginnerHatchPlanner(
+        DigitReader(GLYPHS),
         egg_pile_point=(450.0, 1330.0),
         max_scrolls=0,
+        capacity_limit=200,
     )
 
 
@@ -144,7 +156,7 @@ def test_beginner_collects_immediately_when_no_nest_is_available() -> None:
     ) is None
 
 
-def test_beginner_full_incubator_toast_closes_nest_without_recollecting() -> None:
+def test_beginner_full_incubator_still_autoplaces_then_checks_cave() -> None:
     current = planner()
     reach_autoplace(current)
     current.on_action_success(AUTOPLACE_BUTTON)
@@ -161,14 +173,42 @@ def test_beginner_full_incubator_toast_closes_nest_without_recollecting() -> Non
     assert close is not None and close.type == NEST_MASK_CLOSE
     current.on_action_success(close.type)
 
+    cave = current.choose(frame(), [detection(hatch.HOME_ANCHOR, 59, 561)])
+    assert cave is not None and cave.type == CAVE_SWIPE
+    assert current._cave_child.capacity_limit == 200
+    assert current._cave_child.threshold == 200
+    assert current.management_rounds == 0
+
+
+def test_beginner_waits_for_incubator_after_cave_returns_home() -> None:
+    current = planner()
+    current._stage = "cave"
+    current._child = current._new_cave()
+    current._cave_child._complete = True
+    current._cave_child._stage = "done"
+
     assert current.choose(frame(), [detection(hatch.HOME_ANCHOR, 59, 561)]) is None
-    assert current.next_ready_delay_ms() > 0
     assert current.management_rounds == 1
+    assert current.next_ready_delay_ms() > 0
+
+
+def test_beginner_cave_claim_does_not_count_as_hatched_dinosaur() -> None:
+    current = planner()
+    current._stage = "cave"
+    current._child = current._new_cave()
+    current._cave_child._stage = "battle_result"
+
+    claim = current.choose(frame(), [detection(hatch.CLAIM_BUTTON, 450, 1170)])
+
+    assert claim is not None and claim.type == CAVE_CLAIM
+    assert CAVE_CLAIM not in DEFAULT_CYCLE_COMPLETE_TARGETS
+    assert hatch.CLAIM_BUTTON in DEFAULT_CYCLE_COMPLETE_TARGETS
 
 
 def test_beginner_exposes_only_the_incubator_wait_for_hunting() -> None:
     now = [0.0]
     current = BeginnerHatchPlanner(
+        DigitReader(GLYPHS),
         egg_pile_point=(450.0, 1330.0),
         clock=lambda: now[0],
     )
@@ -184,6 +224,7 @@ def test_beginner_exposes_only_the_incubator_wait_for_hunting() -> None:
 def test_beginner_collects_once_after_returning_home_without_resetting_wait() -> None:
     now = [0.0]
     current = BeginnerHatchPlanner(
+        DigitReader(GLYPHS),
         egg_pile_point=(450.0, 1330.0),
         clock=lambda: now[0],
     )
@@ -283,9 +324,11 @@ def test_beginner_hatch_result_beats_auto_battle_layout_false_positive() -> None
     assert target is not None and target.type == hatch.CLAIM_BUTTON
 
 
-def test_beginner_detection_scope_excludes_parent_and_cave_controls() -> None:
+def test_beginner_detection_scope_separates_cave_from_parent_controls() -> None:
     assert hatch.HATCH_BUTTON in HATCH_DETECTION_TYPES
     assert hatch.INCUBATOR_TITLE in HATCH_DETECTION_TYPES
     assert AUTOPLACE_BUTTON in NEST_DETECTION_TYPES
     assert "hatch_cave" not in HATCH_DETECTION_TYPES | NEST_DETECTION_TYPES
+    assert "hatch_cave" in CAVE_DETECTION_TYPES
     assert "hatch_parent_left" not in HATCH_DETECTION_TYPES | NEST_DETECTION_TYPES
+    assert "hatch_parent_left" not in CAVE_DETECTION_TYPES

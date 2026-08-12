@@ -1,10 +1,12 @@
 """Beginner auto-hatch workflow.
 
 This mode keeps the normal incubator loop, then performs one simple
-nest-management pass: switch to ``所有``, auto-place once, and collect once.
+nest-management pass: switch to ``所有``, auto-place once, collect once, and
+check cave capacity.  A full cave is cleaned by selecting ``所有`` and the
+weakest dinosaurs; parent-stat and top/mass screening remain disabled.
 When combined with hunting, every verified return to the home screen also
 runs one collect-only nest pass.  It deliberately never reads parent stats,
-sorts nests, opens the cave, or removes dinosaurs.
+or sorts nests.
 """
 
 from __future__ import annotations
@@ -12,12 +14,16 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Sequence
 
+from . import full_hatch as full_hatch_feature
 from . import hatch as hatch_feature
 from . import nest_filter as nest_filter_feature
+from .digits import DigitReader
 from .full_hatch import (
     AUTOPLACE_BUTTON,
     AUTOPLACE_NOTICE,
     AUTOPLACE_PROMPT,
+    CAVE_DETECTION_TYPES,
+    CAVE_SWIPE,
     COLLECT_EGGS_BUTTON,
     NEST_MASK_CLOSE,
     OPEN_NEST,
@@ -26,11 +32,28 @@ from .full_hatch import (
     STARTUP_GROWTH_RESULT,
     STARTUP_NEST_SHORTCUT,
     STARTUP_SIMPLE_INTERRUPTS,
+    CapacitySnapshot,
+    CaveCullPlanner,
     is_home_screen,
 )
 from .models import Detection, Frame, Target
 from .overlays import AUTOPLACE_UNAVAILABLE, CONFIRM_YES, INCUBATOR_FULL_TOAST
 from .parent_open import NEST_TITLE
+
+CAVE_WORKFLOW_TARGETS: frozenset[str] = frozenset(
+    {
+        full_hatch_feature.CAVE_SWIPE,
+        full_hatch_feature.CAVE_RECENTER,
+        full_hatch_feature.CAVE,
+        full_hatch_feature.CAVE_SELECT_BUTTON,
+        full_hatch_feature.SELECT_TAG_HEADER,
+        nest_filter_feature.TAG_ALL,
+        full_hatch_feature.SELECT_WEAKEST_BUTTON,
+        full_hatch_feature.SELECT_CHOOSE_BUTTON,
+        full_hatch_feature.CAVE_CONTINUOUS_BUTTON,
+    }
+)
+CAVE_CLAIM = "hatch_beginner_cave_claim"
 
 DEFAULT_TARGET_ACTIONS: dict[str, str] = {
     **hatch_feature.DEFAULT_TARGET_ACTIONS,
@@ -43,6 +66,12 @@ DEFAULT_TARGET_ACTIONS: dict[str, str] = {
     STARTUP_AUTO_BATTLE_CLOSE: "tap",
     STARTUP_NEST_SHORTCUT: "tap",
     **{target_type: "tap" for target_type in STARTUP_SIMPLE_INTERRUPTS},
+    **{
+        target_type: action
+        for target_type, action in full_hatch_feature.DEFAULT_TARGET_ACTIONS.items()
+        if target_type in CAVE_WORKFLOW_TARGETS
+    },
+    CAVE_CLAIM: "tap",
 }
 
 DEFAULT_POST_ACTION_DELAYS_MS: dict[str, int] = {
@@ -56,6 +85,14 @@ DEFAULT_POST_ACTION_DELAYS_MS: dict[str, int] = {
     STARTUP_AUTO_BATTLE_CLOSE: 3000,
     STARTUP_NEST_SHORTCUT: 4000,
     **{target_type: 5000 for target_type in STARTUP_SIMPLE_INTERRUPTS},
+    **{
+        target_type: delay
+        for target_type, delay in full_hatch_feature.DEFAULT_POST_ACTION_DELAYS_MS.items()
+        if target_type in CAVE_WORKFLOW_TARGETS
+    },
+    CAVE_CLAIM: full_hatch_feature.DEFAULT_POST_ACTION_DELAYS_MS[
+        hatch_feature.CLAIM_BUTTON
+    ],
 }
 
 DEFAULT_SUCCESS_TRANSITIONS: dict[str, tuple[str, ...]] = {
@@ -76,6 +113,14 @@ DEFAULT_SUCCESS_TRANSITIONS: dict[str, tuple[str, ...]] = {
     NEST_MASK_CLOSE: (hatch_feature.HOME_ANCHOR,),
     STARTUP_AUTO_BATTLE_CLOSE: (hatch_feature.HOME_ANCHOR,),
     STARTUP_NEST_SHORTCUT: (NEST_TITLE,),
+    **{
+        target_type: transitions
+        for target_type, transitions in full_hatch_feature.DEFAULT_SUCCESS_TRANSITIONS.items()
+        if target_type in CAVE_WORKFLOW_TARGETS
+    },
+    CAVE_CLAIM: full_hatch_feature.DEFAULT_SUCCESS_TRANSITIONS[
+        hatch_feature.CLAIM_BUTTON
+    ],
 }
 
 # A hatched dinosaur is the only productive cycle the shared engine counts.
@@ -117,6 +162,7 @@ class BeginnerHatchPlanner:
 
     def __init__(
         self,
+        reader: DigitReader,
         *,
         egg_pile_point: tuple[float, float],
         reference_width: float = 900.0,
@@ -127,9 +173,17 @@ class BeginnerHatchPlanner:
         require_home_anchor: bool = True,
         home_failure_limit: int = 3,
         home_backoff_seconds: float = 30.0,
+        capacity_limit: int = 200,
+        cave_safe_margin: int = 80,
+        cave_bottom_exclusion_px: int = 180,
+        capacity_read_retries: int = 2,
+        cave_recenter_checks: int = 3,
+        capacity_snapshots: CapacitySnapshot | None = None,
         logger: logging.Logger | None = None,
         clock: Callable[[], float] | None = None,
     ) -> None:
+        if capacity_limit <= 0:
+            raise ValueError("capacity_limit must be greater than zero")
         self.reference_width = reference_width
         self.logger = logger or logging.getLogger("dino_bot")
         self._hatch_kwargs = dict(
@@ -146,6 +200,20 @@ class BeginnerHatchPlanner:
         )
         if clock is not None:
             self._hatch_kwargs["clock"] = clock
+        self.capacity_limit = capacity_limit
+        self._cave_kwargs = dict(
+            reader=reader,
+            threshold=capacity_limit,
+            reference_width=reference_width,
+            safe_margin=cave_safe_margin,
+            bottom_exclusion_px=cave_bottom_exclusion_px,
+            allow_cull=True,
+            capacity_limit=capacity_limit,
+            capacity_read_retries=capacity_read_retries,
+            cave_recenter_checks=cave_recenter_checks,
+            capacity_snapshots=capacity_snapshots,
+            logger=self.logger,
+        )
         self._stage = "hatch"
         self._child: object = self._new_hatch()
         self._filter: nest_filter_feature.NestTagFilterTestPlanner | None = None
@@ -211,6 +279,8 @@ class BeginnerHatchPlanner:
     def planning_detection_types(self) -> frozenset[str] | None:
         if self._stage == "hatch":
             return HATCH_DETECTION_TYPES
+        if self._stage == "cave":
+            return CAVE_DETECTION_TYPES
         return NEST_DETECTION_TYPES
 
     def reset_workflow(self) -> None:
@@ -235,6 +305,11 @@ class BeginnerHatchPlanner:
                 self._stage = "open_nest"
                 self._child = object()
             return
+        if self._stage == "cave":
+            self._cave_child.on_action_success(
+                hatch_feature.CLAIM_BUTTON if target_type == CAVE_CLAIM else target_type
+            )
+            return
         if self._stage == "select_all" and self._filter is not None:
             self._filter.on_action_success(target_type)
             return
@@ -254,6 +329,18 @@ class BeginnerHatchPlanner:
         if self._stage == "hatch":
             self._hatch_child.on_action_failure(target_type)
             return
+        if self._stage == "cave":
+            cave_target = (
+                hatch_feature.CLAIM_BUTTON if target_type == CAVE_CLAIM else target_type
+            )
+            self._cave_child.on_action_failure(cave_target)
+            if target_type != CAVE_SWIPE:
+                self._blocked_reason = f"unverified {target_type}"
+                self._stage = "blocked"
+                self.logger.error(
+                    "Beginner hatch | stopped safely | %s", self._blocked_reason
+                )
+            return
         # Auto-place and collect can both mutate the game even if the visual
         # transition was missed. Do not guess or send either action twice.
         if target_type in {AUTOPLACE_BUTTON, AUTOPLACE_YES, COLLECT_EGGS_BUTTON}:
@@ -271,6 +358,23 @@ class BeginnerHatchPlanner:
 
         if self._stage == "hatch":
             return self._hatch_child.choose(frame, detections)
+        if self._stage == "cave":
+            target = self._cave_child.choose(frame, detections)
+            if target is not None and target.type == hatch_feature.CLAIM_BUTTON:
+                return _synthetic(CAVE_CLAIM, target.x, target.y)
+            if target is None and self._cave_child.is_complete():
+                self.management_rounds += 1
+                self.logger.info(
+                    "Beginner hatch | management round %d complete | waiting for incubator",
+                    self.management_rounds,
+                )
+                self._stage = "hatch"
+                self._child = self._new_hatch()
+                self._hatch_child.begin_rescan_wait("beginner cave round complete")
+                self._filter = None
+                self._autoplace_requested = False
+                self._collect_requested = False
+            return target
         if self._stage == "open_nest":
             if NEST_TITLE in by_type:
                 self._start_all_filter()
@@ -354,18 +458,16 @@ class BeginnerHatchPlanner:
                 self._home_collection = False
                 self._collect_requested = False
                 return self._hatch_child.choose(frame, detections)
-            self.management_rounds += 1
             self.logger.info(
-                "Beginner hatch | management round %d complete | waiting for incubator",
-                self.management_rounds,
+                "Beginner hatch | nest pass complete | checking cave capacity=%d",
+                self.capacity_limit,
             )
-            self._stage = "hatch"
-            self._child = self._new_hatch()
-            self._hatch_child.begin_rescan_wait("beginner nest round complete")
+            self._stage = "cave"
+            self._child = self._new_cave()
             self._filter = None
             self._autoplace_requested = False
             self._collect_requested = False
-            return None
+            return self._cave_child.choose(frame, detections)
         return None
 
     def _choose_startup(
@@ -422,9 +524,17 @@ class BeginnerHatchPlanner:
     def _new_hatch(self) -> hatch_feature.HatchPlanner:
         return hatch_feature.HatchPlanner(**self._hatch_kwargs)
 
+    def _new_cave(self) -> CaveCullPlanner:
+        return CaveCullPlanner(**self._cave_kwargs)
+
     @property
     def _hatch_child(self) -> hatch_feature.HatchPlanner:
         assert isinstance(self._child, hatch_feature.HatchPlanner)
+        return self._child
+
+    @property
+    def _cave_child(self) -> CaveCullPlanner:
+        assert isinstance(self._child, CaveCullPlanner)
         return self._child
 
 

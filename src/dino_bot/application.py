@@ -339,12 +339,15 @@ def _create_hatch_engine(
     if beginner and hunt_during_cooldown:
         logger.info(
             "Feature | hatch-beginner-hunt | beginner hatch -> all -> auto-place"
-            " once -> collect once; hunt during cooldown | handoff=30s"
+            " once -> collect once -> cave capacity/cull; hunt during cooldown"
+            " | handoff=30s | capacity=%d",
+            hatch.capacity_limit,
         )
     elif beginner:
         logger.info(
             "Feature | hatch-beginner | hatch -> all -> auto-place once -> collect once"
-            " | population/stat guards reserved per config"
+            " -> cave capacity/cull | weakest-only | capacity=%d",
+            hatch.capacity_limit,
         )
     elif standalone_stage is not None:
         logger.info(
@@ -360,7 +363,7 @@ def _create_hatch_engine(
     elif full:
         logger.info(
             "Feature | hatch-full | hatch -> Attack -> HP"
-            " -> collect -> cave | auto-place=disabled | cull>%d",
+            " -> Top(best) -> Mass(level) -> collect -> cave | cull>%d",
             hatch.cull_threshold,
         )
     elif hp_test:
@@ -477,8 +480,19 @@ def _create_hatch_engine(
         if config.stalls.snapshots_enabled
         else None
     )
+    capacity_snapshots = (
+        CapacitySnapshotWriter(
+            config.stalls_dir,
+            logger,
+            limit=config.stalls.snapshot_limit,
+            min_interval_seconds=config.stalls.snapshot_min_interval_seconds,
+        )
+        if config.stalls.snapshots_enabled and (beginner or full)
+        else None
+    )
     if beginner:
         beginner_planner = BeginnerHatchPlanner(
+            DigitReader(hatch.manifest.parent / "digits"),
             egg_pile_point=(hatch.egg_pile[0], hatch.egg_pile[1]),
             reference_width=hatch.reference_width,
             scroll_vector=hatch.scroll_vector,
@@ -488,6 +502,12 @@ def _create_hatch_engine(
             require_home_anchor=hatch.require_home_anchor,
             home_failure_limit=hatch.home_failure_limit,
             home_backoff_seconds=hatch.home_backoff_seconds,
+            capacity_limit=hatch.capacity_limit,
+            cave_safe_margin=80,
+            cave_bottom_exclusion_px=config.planner.bottom_exclusion_px,
+            capacity_read_retries=hatch.capacity_read_retries,
+            cave_recenter_checks=hatch.cave_recenter_checks,
+            capacity_snapshots=capacity_snapshots,
             logger=logger,
         )
         planner = (
@@ -503,18 +523,6 @@ def _create_hatch_engine(
     elif full:
         hatch_inventory = HatchBoostInventoryStore(
             config.root / "data" / "stats.sqlite3"
-        )
-        # Shares the stall switches: to a user these are one feature - the
-        # screenshots the bot keeps when it cannot explain itself.
-        capacity_snapshots = (
-            CapacitySnapshotWriter(
-                config.stalls_dir,
-                logger,
-                limit=config.stalls.snapshot_limit,
-                min_interval_seconds=config.stalls.snapshot_min_interval_seconds,
-            )
-            if config.stalls.snapshots_enabled
-            else None
         )
         full_planner = FullHatchPlanner(
             DigitReader(hatch.manifest.parent / "digits"),
