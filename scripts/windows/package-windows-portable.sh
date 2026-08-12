@@ -108,6 +108,14 @@ cp -a \
   "${project_root}/tools" \
   "${package_app}/"
 
+# Keep additional instance roots aligned with the Lite package.  Each
+# instance needs its own config and assets so its runtime logs/data remain
+# isolated and its detector can resolve templates from that root.
+package_s13="${package_root}/instances/s13"
+mkdir -p "${package_s13}"
+cp -a "${project_root}/instances/s13/config.json" "${package_s13}/config.json"
+cp -a "${project_root}/assets" "${package_s13}/assets"
+
 cp -a \
   "${project_root}/scripts/windows/run-windows.ps1" \
   "${project_root}/scripts/windows/run-hatch-windows.ps1" \
