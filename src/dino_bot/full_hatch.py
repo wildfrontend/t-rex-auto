@@ -2270,6 +2270,16 @@ class FullHatchPlanner:
         # detector's left-hand auto-battle shortcut; hunting is only allowed
         # after the no-ready-egg cooldown has actually begun.
         by_type = _group(detections)
+        # Exact startup/login button templates outrank the intentionally broad
+        # auto-place dialog layout detector. The device-history prompt also
+        # has cyan Yes and red No buttons, so its layout can look like an
+        # auto-place notice even though this explicit button proves which
+        # startup dialog is actually in front.
+        for target_type in STARTUP_SIMPLE_INTERRUPTS:
+            interruption = _best(by_type.get(target_type))
+            if interruption is not None:
+                self._no_target_since = None
+                return _target(interruption)
         if AUTOPLACE_PROMPT in by_type or AUTOPLACE_NOTICE in by_type:
             no = _best(by_type.get(CONFIRM_NO))
             if no is None:
@@ -2278,11 +2288,6 @@ class FullHatchPlanner:
                 )
                 return None
             return _synthetic(RECOVERY_NO, no.x, no.y)
-        for target_type in STARTUP_SIMPLE_INTERRUPTS:
-            interruption = _best(by_type.get(target_type))
-            if interruption is not None:
-                self._no_target_since = None
-                return _target(interruption)
         hatch_result_visible = bool(
             by_type.get(hatch_feature.CLAIM_BUTTON)
             or by_type.get(hatch_feature.EXPEL_BUTTON)

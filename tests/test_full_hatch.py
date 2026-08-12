@@ -258,6 +258,20 @@ def test_full_hatch_cancels_unexpected_autoplace_confirmation() -> None:
     assert planner._stage == "recover_home"
 
 
+def test_full_hatch_device_history_prompt_beats_false_autoplace_notice() -> None:
+    planner = make_full_planner()
+    target = planner.choose(
+        frame(),
+        [
+            detection("device_history_confirm_button", 368, 861),
+            detection(AUTOPLACE_NOTICE, 450, 720),
+        ],
+    )
+
+    assert target is not None and target.type == "device_history_confirm_button"
+    assert (target.x, target.y) == (368, 861)
+
+
 def test_cave_below_threshold_recenters_without_entering() -> None:
     planner = CaveCullPlanner(DigitReader(GLYPHS), threshold=300)
     first = planner.choose(capacity_frame(), [])
