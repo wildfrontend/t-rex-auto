@@ -358,7 +358,11 @@ class BeginnerHatchPlanner:
             return _target(auto_battle)
         growth = (
             None
-            if hatch_result_visible
+            # My Nest has the same tall white card and centred green control
+            # as the launch growth-result layout.  The green control is
+            # auto-place, so never synthesize the startup shortcut once the
+            # explicit nest title proves that the nest is already open.
+            if hatch_result_visible or NEST_TITLE in by_type
             else _best(by_type.get(STARTUP_GROWTH_RESULT))
         )
         if growth is None:

@@ -209,6 +209,30 @@ def test_beginner_uses_centred_startup_nest_shortcut() -> None:
     assert (target.x, target.y) == (450, 1270)
 
 
+def test_beginner_does_not_tap_false_startup_shortcut_on_nest_screen() -> None:
+    current = planner()
+    current.on_action_success(hatch.CLOSE_BUTTON)
+
+    target = current.choose(
+        frame(),
+        nest_screen(
+            detection(AUTOPLACE_BUTTON, 450, 1315),
+            detection(
+                STARTUP_GROWTH_RESULT,
+                450,
+                1270,
+                metadata={"shortcut_layout": "centered_nest"},
+            ),
+        ),
+    )
+
+    assert target is not None and target.type == AUTOPLACE_BUTTON
+    assert (target.x, target.y) == (450, 1315)
+    assert current.choose(
+        frame(), nest_screen(detection(AUTOPLACE_BUTTON, 450, 1315))
+    ) is None
+
+
 def test_beginner_hatch_result_beats_auto_battle_layout_false_positive() -> None:
     current = planner()
     target = current.choose(
