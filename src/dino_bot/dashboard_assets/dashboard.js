@@ -54,6 +54,10 @@ function renderInstances(items) {
     const running = Boolean(active.running);
     const selected = item.id === selectedInstanceId;
     const serial = item.serial || "未設定 ADB";
+    const allowed = new Set(item.allowed_modes || []);
+    const startButton = (mode, label) => allowed.has(mode)
+      ? `<button type="button" data-instance-action="start-${mode}" data-instance-id="${escapeHtml(item.id)}">${label}</button>`
+      : "";
     return `<article class="instance-card${running ? " running" : ""}${selected ? " selected" : ""}" data-instance-select="${escapeHtml(item.id)}">
       <div class="instance-card-head">
         <strong>${escapeHtml(item.name)}</strong>
@@ -63,10 +67,10 @@ function renderInstances(items) {
       <div class="instance-card-meta"><span>${escapeHtml(active.mode_label || "未啟動")}</span><span>${escapeHtml((active.status || {}).current_stage || "—")}</span></div>
       <div class="instance-card-actions">
         <button type="button" data-instance-action="select" data-instance-id="${escapeHtml(item.id)}">檢視</button>
-        <button type="button" data-instance-action="start-hatch-beginner" data-instance-id="${escapeHtml(item.id)}">新手孵蛋</button>
-        <button type="button" data-instance-action="start-hatch-beginner-hunt" data-instance-id="${escapeHtml(item.id)}">新手孵蛋＋狩獵</button>
-        <button type="button" data-instance-action="start-hatch-hunt" data-instance-id="${escapeHtml(item.id)}">孵蛋＋狩獵</button>
-        <button type="button" data-instance-action="start-hunt" data-instance-id="${escapeHtml(item.id)}">純狩獵</button>
+        ${startButton("hatch-beginner", "新手孵蛋")}
+        ${startButton("hatch-beginner-hunt", "新手孵蛋＋狩獵")}
+        ${startButton("hatch-hunt", "孵蛋＋狩獵")}
+        ${startButton("hunt", "純狩獵")}
         <button type="button" data-instance-action="edit" data-instance-id="${escapeHtml(item.id)}">設定</button>
         <button type="button" class="danger" data-instance-action="stop" data-instance-id="${escapeHtml(item.id)}">停止</button>
       </div>
@@ -137,6 +141,11 @@ function render(data) {
     selectedInstanceId = data.selected_instance || data.instances?.[0]?.id || null;
   }
   renderInstances(data.instances || []);
+  const selected = (data.instances || []).find((item) => item.id === selectedInstanceId);
+  const allowed = new Set(selected?.allowed_modes || []);
+  document.querySelectorAll("button[data-mode]").forEach((button) => {
+    button.hidden = !allowed.has(button.dataset.mode);
+  });
   renderActive(data.active || {});
   const operation = data.operation;
   if (operation?.updated_at && operation.updated_at !== lastOperationUpdatedAt) {

@@ -27,6 +27,9 @@ from .metrics import MetricsStore
 
 DASHBOARD_VERSION = 1
 DEFAULT_BOT_PORTS = {"hatch-hunt": 8773, "hunt": 8765, "hatch-stage": 8774}
+SUPPORTED_BOT_MODES = frozenset(
+    {"hunt", "hatch-beginner", "hatch-beginner-hunt", "hatch-hunt", "hatch-stage"}
+)
 MODE_SWITCH_PROCESS_WAIT_SECONDS = 20
 DEFAULT_INSTANCE_ID = "main"
 DEFAULT_INSTANCE_NAME = "主力模擬器"
@@ -78,6 +81,7 @@ class BotInstance:
     name: str
     config_path: Path
     status_port: int
+    allowed_modes: frozenset[str] = SUPPORTED_BOT_MODES
 
     @property
     def root(self) -> Path:
@@ -402,16 +406,33 @@ class DashboardController:
                 status_port = int(raw.get("status_port", 0))
             except (TypeError, ValueError):
                 continue
+            raw_modes = raw.get("allowed_modes")
+            if raw_modes is None:
+                allowed_modes = SUPPORTED_BOT_MODES
+            elif isinstance(raw_modes, list):
+                allowed_modes = frozenset(str(mode) for mode in raw_modes)
+            else:
+                continue
             if (
                 instance_id in seen_ids
                 or not 1 <= status_port <= 65535
                 or status_port in seen_ports
                 or not config_path.is_file()
+                or not allowed_modes
+                or not allowed_modes <= SUPPORTED_BOT_MODES
             ):
                 continue
             seen_ids.add(instance_id)
             seen_ports.add(status_port)
-            instances.append(BotInstance(instance_id, name, config_path.resolve(), status_port))
+            instances.append(
+                BotInstance(
+                    instance_id,
+                    name,
+                    config_path.resolve(),
+                    status_port,
+                    allowed_modes,
+                )
+            )
         return instances or [fallback]
 
     def _save_instances(self) -> None:
@@ -428,6 +449,7 @@ class DashboardController:
                     "name": instance.name,
                     "config": config_reference(instance),
                     "status_port": instance.status_port,
+                    "allowed_modes": sorted(instance.allowed_modes),
                 }
                 for instance in self._instances
             ]
@@ -897,6 +919,8 @@ class DashboardController:
             "hatch-stage",
         }:
             raise RuntimeError("Unsupported Bot mode")
+        if mode not in instance.allowed_modes:
+            raise RuntimeError(f"{instance.name} 不允許啟動 {mode}")
         if mode == "hatch-stage" and stage not in HATCH_STAGE_LABELS:
             raise RuntimeError("Unsupported hatch stage")
         with self._start_lock:
@@ -1325,7 +1349,13 @@ class DashboardController:
         )
         temporary.replace(instance.config_path)
 
-        updated = BotInstance(instance_id, name, instance.config_path, status_port)
+        updated = BotInstance(
+            instance_id,
+            name,
+            instance.config_path,
+            status_port,
+            instance.allowed_modes,
+        )
         index = self._instances.index(instance)
         self._instances[index] = updated
         self._save_instances()
@@ -1633,6 +1663,7 @@ class DashboardServer:
                     "name": definition.name,
                     "serial": active.get("serial"),
                     "status_port": definition.status_port,
+                    "allowed_modes": sorted(definition.allowed_modes),
                     "active": active,
                     "operation": self.controller.operation(definition.instance_id),
                     "metrics": metrics,

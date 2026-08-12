@@ -172,7 +172,7 @@ def test_cli_accepts_beginner_hatch_hunt_feature() -> None:
 
 
 def test_s13_config_uses_adb_capture() -> None:
-    config_path = Path(__file__).resolve().parents[1] / "config-s13.json"
+    config_path = Path(__file__).resolve().parents[1] / "instances" / "s13" / "config.json"
     config = load_config(config_path)
 
     assert config.adb.serial == "127.0.0.1:16416"

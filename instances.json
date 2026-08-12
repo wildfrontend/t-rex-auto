@@ -4,13 +4,15 @@
       "id": "main",
       "name": "主力模擬器",
       "config": "app/config.json",
-      "status_port": 8765
+      "status_port": 8765,
+      "allowed_modes": ["hunt", "hatch-hunt"]
     },
     {
       "id": "s13",
       "name": "新手 S13",
-      "config": "app/config-s13.json",
-      "status_port": 8775
+      "config": "instances/s13/config.json",
+      "status_port": 8775,
+      "allowed_modes": ["hunt", "hatch-beginner", "hatch-beginner-hunt"]
     }
   ]
 }

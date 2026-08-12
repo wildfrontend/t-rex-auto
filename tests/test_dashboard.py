@@ -319,12 +319,14 @@ def test_dashboard_builds_commands_for_the_selected_instance(tmp_path: Path) -> 
                         "name": "主力",
                         "config": "app/config.json",
                         "status_port": 8765,
+                        "allowed_modes": ["hunt", "hatch-hunt"],
                     },
                     {
                         "id": "second",
                         "name": "第二台",
                         "config": "instances/second/config.json",
                         "status_port": 8775,
+                        "allowed_modes": ["hunt", "hatch-beginner", "hatch-beginner-hunt"],
                     },
                 ]
             }
@@ -339,6 +341,10 @@ def test_dashboard_builds_commands_for_the_selected_instance(tmp_path: Path) -> 
     assert str(second) in command
     assert command[-2:] == ["-StatusPort", "8775"]
     assert [item.instance_id for item in controller.instances] == ["main", "second"]
+    assert controller.instances[0].logs_dir == app / "logs"
+    assert controller.instances[1].logs_dir == tmp_path / "instances" / "second" / "logs"
+    with pytest.raises(RuntimeError, match="主力 不允許啟動 hatch-beginner"):
+        controller.start("hatch-beginner", instance_id="main")
 
 
 def test_dashboard_can_create_an_isolated_instance(tmp_path: Path) -> None:
@@ -400,6 +406,13 @@ def test_dashboard_can_update_instance_settings_without_manual_file_edits(
         "name": "主力新名稱",
         "config": "app/config.json",
         "status_port": 8786,
+        "allowed_modes": [
+            "hatch-beginner",
+            "hatch-beginner-hunt",
+            "hatch-hunt",
+            "hatch-stage",
+            "hunt",
+        ],
     }
 
 

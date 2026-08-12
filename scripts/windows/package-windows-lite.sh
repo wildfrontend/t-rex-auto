@@ -27,12 +27,18 @@ cp -a \
   "${project_root}/verify.py" \
   "${project_root}/config.py" \
   "${project_root}/config.json" \
-  "${project_root}/config-s13.json" \
   "${project_root}/pyproject.toml" \
   "${project_root}/src" \
   "${project_root}/assets" \
   "${project_root}/tools" \
   "${package_app}/"
+
+# Every extra instance owns its config root.  Logs, data, screenshots and
+# templates then remain isolated instead of interleaving in app/logs.
+package_s13="${package_root}/instances/s13"
+mkdir -p "${package_s13}"
+cp -a "${project_root}/instances/s13/config.json" "${package_s13}/config.json"
+cp -a "${project_root}/assets" "${package_s13}/assets"
 
 cp -a \
   "${project_root}/scripts/windows/run-windows.ps1" \
