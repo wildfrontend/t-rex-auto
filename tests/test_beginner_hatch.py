@@ -123,7 +123,7 @@ def test_beginner_confirms_autoplace_wording_variants_by_yes_button() -> None:
     assert (yes.x, yes.y) == (365, 890)
 
 
-def test_beginner_does_not_repeat_autoplace_when_no_nest_is_available() -> None:
+def test_beginner_collects_immediately_when_no_nest_is_available() -> None:
     current = planner()
     reach_autoplace(current)
     current.on_action_success(AUTOPLACE_BUTTON)
@@ -133,14 +133,15 @@ def test_beginner_does_not_repeat_autoplace_when_no_nest_is_available() -> None:
         detection(AUTOPLACE_BUTTON, 450, 1315),
         detection(COLLECT_EGGS_BUTTON, 640, 1315),
     )
-    assert current.choose(frame(), toast) is None
-
-    # Once the transient toast is gone, the normal one-time collect step can
-    # proceed; the auto-place button is never emitted again.
-    collect = current.choose(
-        frame(), nest_screen(detection(COLLECT_EGGS_BUTTON, 640, 1315))
-    )
+    collect = current.choose(frame(), toast)
     assert collect is not None and collect.type == COLLECT_EGGS_BUTTON
+
+    # The toast and auto-place button can remain visible on the next frame;
+    # neither collection nor auto-place may be emitted a second time.
+    assert current.choose(frame(), toast) is None
+    assert current.choose(
+        frame(), nest_screen(detection(COLLECT_EGGS_BUTTON, 640, 1315))
+    ) is None
 
 
 def test_beginner_full_incubator_toast_closes_nest_without_recollecting() -> None:

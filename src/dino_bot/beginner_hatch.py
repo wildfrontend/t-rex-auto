@@ -273,11 +273,16 @@ class BeginnerHatchPlanner:
             self._autoplace_requested = True
             return _target(button)
         if self._stage == "autoplace_result":
-            # This is a transient result toast, not a confirmation dialog.
-            # Keep the workflow parked until it disappears; otherwise the
-            # collect button behind it could be tapped while the toast is up.
+            # This toast proves auto-place has nothing left to do.  The
+            # collection button remains visible and usable behind it, so move
+            # straight to the one guarded collect action instead of waiting
+            # for the toast to disappear or trying auto-place again.
             if AUTOPLACE_UNAVAILABLE in by_type:
-                return None
+                self.logger.info(
+                    "Beginner hatch | no nest available for auto-place | collecting all eggs"
+                )
+                self._stage = "collect"
+                return self.choose(frame, detections)
             # The game has multiple confirmation wordings (best attributes,
             # level order, and localized variants).  Once the one allowed
             # auto-place tap has completed, a visible explicit "是" button is
