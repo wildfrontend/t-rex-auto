@@ -163,6 +163,14 @@ def test_cli_leaves_speed_unset_for_config_default() -> None:
     assert args.speed is None
 
 
+def test_cli_accepts_beginner_hatch_hunt_feature() -> None:
+    args = build_parser().parse_args(
+        ["run", "--feature", "hatch-beginner-hunt"]
+    )
+
+    assert args.feature == "hatch-beginner-hunt"
+
+
 def test_cli_explicit_timing_overrides_profile() -> None:
     result = apply_run_timing(
         AppConfig(root=Path(".")),

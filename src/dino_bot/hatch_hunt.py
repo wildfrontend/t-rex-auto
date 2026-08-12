@@ -1,4 +1,4 @@
-"""Alternate full hatch management with hunting during egg cooldowns."""
+"""Hatch management with hunting during egg cooldowns."""
 
 from __future__ import annotations
 
@@ -8,17 +8,13 @@ from collections.abc import Sequence
 from math import hypot
 from typing import Any
 
-from .full_hatch import (
-    STARTUP_DETECTION_TYPES,
-    FullHatchPlanner,
-    is_centered_home_screen,
-)
+from .full_hatch import STARTUP_DETECTION_TYPES, is_centered_home_screen
 from .models import Detection, Frame, Target, VerificationResult
 from .planning import HuntPlanner
 
 
 class HatchHuntPlanner:
-    """Run hunts while Full Hatch is in its no-ready-egg rescan wait.
+    """Run hunts while a hatch workflow is in its no-ready-egg rescan wait.
 
     The final handoff window is reserved for finishing the current hunt and
     returning the collection map to its measured centre.  Full Hatch receives
@@ -28,7 +24,7 @@ class HatchHuntPlanner:
 
     def __init__(
         self,
-        hatch: FullHatchPlanner,
+        hatch: Any,
         hunt: HuntPlanner,
         *,
         handoff_seconds: float = 30.0,
@@ -59,7 +55,7 @@ class HatchHuntPlanner:
         # Egg-pile calibration is a recoverable hatch failure in combined
         # mode: keep the hunt side alive while the hatch side is fused off.
         if self._hatch_is_blocked():
-            return False
+            return not self._continue_hunting_when_blocked()
         is_complete = getattr(self.hatch, "is_complete", None)
         return bool(is_complete()) if callable(is_complete) else False
 
@@ -88,6 +84,8 @@ class HatchHuntPlanner:
             self._centered_frames = 0
 
         if self._hatch_is_blocked():
+            if not self._continue_hunting_when_blocked():
+                return None
             if self._mode != "hunt":
                 self._mode = "hunt"
                 self._centered_frames = 0
@@ -325,6 +323,10 @@ class HatchHuntPlanner:
     def _hatch_is_blocked(self) -> bool:
         method = getattr(self.hatch, "is_hatch_blocked", None)
         return bool(method()) if callable(method) else False
+
+    def _continue_hunting_when_blocked(self) -> bool:
+        method = getattr(self.hatch, "continue_hunting_when_blocked", None)
+        return bool(method()) if callable(method) else True
 
     def _choose_handoff(
         self,

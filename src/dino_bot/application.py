@@ -70,6 +70,13 @@ def create_engine(
         return _create_hatch_engine(config, verbose=verbose)
     if feature == "hatch-beginner":
         return _create_hatch_engine(config, verbose=verbose, beginner=True)
+    if feature == "hatch-beginner-hunt":
+        return _create_hatch_engine(
+            config,
+            verbose=verbose,
+            beginner=True,
+            hunt_during_cooldown=True,
+        )
     if feature == "hatch-full":
         return _create_hatch_engine(config, verbose=verbose, full=True)
     if feature == "hatch-hunt":
@@ -326,7 +333,12 @@ def _create_hatch_engine(
         backup_count=config.log_backup_count,
     )
     hatch = config.hatch
-    if beginner:
+    if beginner and hunt_during_cooldown:
+        logger.info(
+            "Feature | hatch-beginner-hunt | beginner hatch -> all -> auto-place"
+            " once -> collect once; hunt during cooldown | handoff=30s"
+        )
+    elif beginner:
         logger.info(
             "Feature | hatch-beginner | hatch -> all -> auto-place once -> collect once"
             " | population/stat guards reserved per config"
@@ -460,7 +472,7 @@ def _create_hatch_engine(
         else None
     )
     if beginner:
-        planner = BeginnerHatchPlanner(
+        beginner_planner = BeginnerHatchPlanner(
             egg_pile_point=(hatch.egg_pile[0], hatch.egg_pile[1]),
             reference_width=hatch.reference_width,
             scroll_vector=hatch.scroll_vector,
@@ -471,6 +483,16 @@ def _create_hatch_engine(
             home_failure_limit=hatch.home_failure_limit,
             home_backoff_seconds=hatch.home_backoff_seconds,
             logger=logger,
+        )
+        planner = (
+            HatchHuntPlanner(
+                beginner_planner,
+                _build_hunt_planner(config),
+                handoff_seconds=30,
+                logger=logger,
+            )
+            if hunt_during_cooldown
+            else beginner_planner
         )
     elif full:
         hatch_inventory = HatchBoostInventoryStore(

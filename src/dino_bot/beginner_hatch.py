@@ -158,9 +158,29 @@ class BeginnerHatchPlanner:
     def is_hatch_blocked(self) -> bool:
         return self._blocked_reason is not None
 
+    def continue_hunting_when_blocked(self) -> bool:
+        """An unverified beginner management action must stop the whole run."""
+
+        return False
+
     def next_ready_delay_ms(self) -> int:
         method = getattr(self._child, "next_ready_delay_ms", None)
         return int(method()) if callable(method) else 0
+
+    def is_hunt_cooldown_active(self) -> bool:
+        """Whether the post-management incubator wait can be spent hunting."""
+
+        return self._stage == "hatch" and self.next_ready_delay_ms() > 0
+
+    def begin_interim_collection(self) -> bool:
+        """Keep beginner hunt mode to one management round per hatch cycle.
+
+        Full hatch can use an idle hunting window for an extra collect-only
+        errand.  Beginner mode intentionally stays at its documented single
+        ``所有 → 自動放置 → 收集`` pass, so it declines that optional errand.
+        """
+
+        return False
 
     def planning_detection_types(self) -> frozenset[str] | None:
         if self._stage == "hatch":

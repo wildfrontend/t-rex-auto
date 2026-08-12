@@ -33,6 +33,7 @@ class StubHatch:
         self.next_target: Target | None = None
         self.successes: list[str] = []
         self.blocked = False
+        self.continue_hunting = True
 
     def choose(self, frame: Frame, detections: list[Detection]) -> Target | None:
         return self.next_target
@@ -48,6 +49,9 @@ class StubHatch:
 
     def is_hatch_blocked(self) -> bool:
         return self.blocked
+
+    def continue_hunting_when_blocked(self) -> bool:
+        return self.continue_hunting
 
     def on_action_success(self, target_type: str) -> None:
         self.successes.append(target_type)
@@ -191,6 +195,16 @@ def test_blocked_hatch_falls_back_to_hunting_in_combined_mode() -> None:
     assert chosen is not None and chosen.type == "dinosaur"
     assert combined.planning_detection_types() == frozenset({"dinosaur"})
     assert not combined.is_complete()
+
+
+def test_safety_blocked_hatch_stops_the_combined_workflow() -> None:
+    combined, hatch_planner, hunt_planner = planner(cooldown_ms=0)
+    hatch_planner.blocked = True
+    hatch_planner.continue_hunting = False
+    hunt_planner.next_target = target("dinosaur", 300, 700)
+
+    assert combined.is_complete()
+    assert combined.choose(frame(), []) is None
 
 
 def test_short_cooldown_is_reserved_for_handoff_without_starting_hunt() -> None:

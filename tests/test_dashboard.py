@@ -174,6 +174,7 @@ def test_dashboard_builds_noninteractive_runner_commands(tmp_path: Path) -> None
 
     hunt = controller._runner_command("hunt")
     beginner = controller._runner_command("hatch-beginner")
+    beginner_hunt = controller._runner_command("hatch-beginner-hunt")
     combined = controller._runner_command("hatch-hunt")
     cave = controller._runner_command("hatch-stage", stage="cave")
     cave_after_switch = controller._runner_command(
@@ -188,6 +189,8 @@ def test_dashboard_builds_noninteractive_runner_commands(tmp_path: Path) -> None
     assert "run-hatch-windows.ps1" in combined[6]
     assert "run-hatch-windows.ps1" in beginner[6]
     assert "hatch-beginner" in beginner
+    assert "run-hatch-windows.ps1" in beginner_hunt[6]
+    assert "hatch-beginner-hunt" in beginner_hunt
     assert combined[-4:] == ["-MaxActions", "0", "-MaxCycles", "0"]
     assert "run-hatch-windows.ps1" in cave[6]
     assert "hatch-stage-cave" in cave

@@ -127,6 +127,21 @@ def test_beginner_full_incubator_toast_closes_nest_without_recollecting() -> Non
     assert current.management_rounds == 1
 
 
+def test_beginner_exposes_only_the_incubator_wait_for_hunting() -> None:
+    now = [0.0]
+    current = BeginnerHatchPlanner(
+        egg_pile_point=(450.0, 1330.0),
+        clock=lambda: now[0],
+    )
+    current._hatch_child.begin_rescan_wait("test", seconds=60)
+
+    assert current.is_hunt_cooldown_active()
+    assert current.begin_interim_collection() is False
+
+    now[0] = 61.0
+    assert not current.is_hunt_cooldown_active()
+
+
 def test_beginner_stops_instead_of_repeating_an_unverified_mutation() -> None:
     current = planner()
     reach_autoplace(current)

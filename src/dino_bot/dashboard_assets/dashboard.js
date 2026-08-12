@@ -64,6 +64,7 @@ function renderInstances(items) {
       <div class="instance-card-actions">
         <button type="button" data-instance-action="select" data-instance-id="${escapeHtml(item.id)}">檢視</button>
         <button type="button" data-instance-action="start-hatch-beginner" data-instance-id="${escapeHtml(item.id)}">新手孵蛋</button>
+        <button type="button" data-instance-action="start-hatch-beginner-hunt" data-instance-id="${escapeHtml(item.id)}">新手孵蛋＋狩獵</button>
         <button type="button" data-instance-action="start-hatch-hunt" data-instance-id="${escapeHtml(item.id)}">孵蛋＋狩獵</button>
         <button type="button" data-instance-action="start-hunt" data-instance-id="${escapeHtml(item.id)}">純狩獵</button>
         <button type="button" data-instance-action="edit" data-instance-id="${escapeHtml(item.id)}">設定</button>

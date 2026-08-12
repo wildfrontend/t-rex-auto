@@ -498,6 +498,8 @@ class DashboardController:
             return "hunt", "純狩獵"
         if feature == "hatch-beginner":
             return "hatch-beginner", "新手自動孵蛋"
+        if feature == "hatch-beginner-hunt":
+            return "hatch-beginner-hunt", "新手孵蛋＋狩獵"
         if feature == "hatch-hunt":
             return "hatch-hunt", "自動孵蛋＋狩獵"
         if feature and feature.startswith("hatch-stage-"):
@@ -754,7 +756,7 @@ class DashboardController:
                 str(instance.status_port),
                 "--verbose",
             ]
-        elif mode in {"hatch-beginner", "hatch-hunt"}:
+        elif mode in {"hatch-beginner", "hatch-beginner-hunt", "hatch-hunt"}:
             command += [
                 "run",
                 "--feature",
@@ -822,7 +824,7 @@ class DashboardController:
                 "-StatusPort",
                 str(instance.status_port),
             ]
-        elif mode in {"hatch-beginner", "hatch-hunt"}:
+        elif mode in {"hatch-beginner", "hatch-beginner-hunt", "hatch-hunt"}:
             runner = scripts / "run-hatch-windows.ps1"
             arguments = [
                 "-Feature",
@@ -887,7 +889,13 @@ class DashboardController:
         instance_id: str | None = None,
     ) -> dict[str, Any]:
         instance = self._instance(instance_id)
-        if mode not in {"hunt", "hatch-beginner", "hatch-hunt", "hatch-stage"}:
+        if mode not in {
+            "hunt",
+            "hatch-beginner",
+            "hatch-beginner-hunt",
+            "hatch-hunt",
+            "hatch-stage",
+        }:
             raise RuntimeError("Unsupported Bot mode")
         if mode == "hatch-stage" and stage not in HATCH_STAGE_LABELS:
             raise RuntimeError("Unsupported hatch stage")
@@ -1330,7 +1338,7 @@ class DashboardController:
                 if stage not in HATCH_STAGE_LABELS:
                     stage = "hatch"
                 self.start("hatch-stage", stage=stage, instance_id=instance_id)
-            elif mode in {"hunt", "hatch-beginner", "hatch-hunt"}:
+            elif mode in {"hunt", "hatch-beginner", "hatch-beginner-hunt", "hatch-hunt"}:
                 self.start(str(mode), instance_id=instance_id)
             restarted = True
         return {
@@ -1445,6 +1453,10 @@ class _DashboardHandler(BaseHTTPRequestHandler):
             elif action == "start-hatch-beginner":
                 result = self.server.controller.start(
                     "hatch-beginner", instance_id=instance_id
+                )
+            elif action == "start-hatch-beginner-hunt":
+                result = self.server.controller.start(
+                    "hatch-beginner-hunt", instance_id=instance_id
                 )
             elif action == "start-hatch-hunt":
                 result = self.server.controller.start("hatch-hunt", instance_id=instance_id)

@@ -34,6 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
             "hunt",
             "hatch",
             "hatch-beginner",
+            "hatch-beginner-hunt",
             "hatch-full",
             "hatch-hunt",
             "hatch-filter-test",
