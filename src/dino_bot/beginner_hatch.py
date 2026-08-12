@@ -1,9 +1,10 @@
 """Beginner auto-hatch workflow.
 
-This mode keeps the normal incubator loop, then performs exactly one simple
+This mode keeps the normal incubator loop, then performs one simple
 nest-management pass: switch to ``所有``, auto-place once, and collect once.
-It deliberately never reads parent stats, sorts nests, opens the cave, or
-removes dinosaurs.
+When combined with hunting, every verified return to the home screen also
+runs one collect-only nest pass.  It deliberately never reads parent stats,
+sorts nests, opens the cave, or removes dinosaurs.
 """
 
 from __future__ import annotations
@@ -30,7 +31,6 @@ from .full_hatch import (
 from .models import Detection, Frame, Target
 from .overlays import AUTOPLACE_UNAVAILABLE, CONFIRM_YES, INCUBATOR_FULL_TOAST
 from .parent_open import NEST_TITLE
-
 
 DEFAULT_TARGET_ACTIONS: dict[str, str] = {
     **hatch_feature.DEFAULT_TARGET_ACTIONS,
@@ -151,8 +151,10 @@ class BeginnerHatchPlanner:
         self._filter: nest_filter_feature.NestTagFilterTestPlanner | None = None
         self._autoplace_requested = False
         self._collect_requested = False
+        self._home_collection = False
         self._blocked_reason: str | None = None
         self.management_rounds = 0
+        self.home_collection_rounds = 0
 
     def last_stage(self) -> str:
         child_stage = getattr(self._child, "last_stage", None)
@@ -189,6 +191,23 @@ class BeginnerHatchPlanner:
 
         return False
 
+    def begin_home_collection(self) -> bool:
+        """Collect once after hatch-hunt has verified a return home.
+
+        Keep the existing incubator child so completing this short errand
+        resumes the original cooldown (or its now-ready incubator) instead of
+        starting a fresh wait.  The dedicated flag also prevents a second
+        handoff frame from arming the same collection twice.
+        """
+
+        if self._stage != "hatch" or self._home_collection:
+            return False
+        self.logger.info("Beginner hatch | returned home | collecting all eggs")
+        self._stage = "open_nest_collect"
+        self._home_collection = True
+        self._collect_requested = False
+        return True
+
     def planning_detection_types(self) -> frozenset[str] | None:
         if self._stage == "hatch":
             return HATCH_DETECTION_TYPES
@@ -200,6 +219,7 @@ class BeginnerHatchPlanner:
         self._filter = None
         self._autoplace_requested = False
         self._collect_requested = False
+        self._home_collection = False
         self._blocked_reason = None
 
     def on_action_success(self, target_type: str) -> None:
@@ -254,6 +274,12 @@ class BeginnerHatchPlanner:
         if self._stage == "open_nest":
             if NEST_TITLE in by_type:
                 self._start_all_filter()
+                return self.choose(frame, detections)
+            anchor = _best(by_type.get(hatch_feature.HOME_ANCHOR))
+            return _synthetic(OPEN_NEST, anchor.x, anchor.y) if anchor else None
+        if self._stage == "open_nest_collect":
+            if NEST_TITLE in by_type:
+                self._stage = "collect"
                 return self.choose(frame, detections)
             anchor = _best(by_type.get(hatch_feature.HOME_ANCHOR))
             return _synthetic(OPEN_NEST, anchor.x, anchor.y) if anchor else None
@@ -318,6 +344,16 @@ class BeginnerHatchPlanner:
                 return self.choose(frame, detections)
             if not is_home_screen(frame, detections):
                 return None
+            if self._home_collection:
+                self.home_collection_rounds += 1
+                self.logger.info(
+                    "Beginner hatch | home collection round %d complete",
+                    self.home_collection_rounds,
+                )
+                self._stage = "hatch"
+                self._home_collection = False
+                self._collect_requested = False
+                return self._hatch_child.choose(frame, detections)
             self.management_rounds += 1
             self.logger.info(
                 "Beginner hatch | management round %d complete | waiting for incubator",

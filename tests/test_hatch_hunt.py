@@ -251,6 +251,22 @@ def test_handoff_requires_two_centered_frames_before_resuming_hatch() -> None:
     assert hunt_planner.reset_count == 1
 
 
+def test_handoff_arms_optional_home_collection_before_resuming_hatch() -> None:
+    combined, hatch_planner, _ = planner()
+    assert combined.choose(frame(), []) is None
+    hatch_planner.cooldown_ms = 0
+    hatch_planner.next_target = target("collect_after_home", 640, 1315)
+    calls: list[bool] = []
+    hatch_planner.begin_home_collection = lambda: calls.append(True) or True
+    centered = [detection(hatch.HOME_ANCHOR, 59, 561)]
+
+    assert combined.choose(frame(), centered) is None
+    chosen = combined.choose(frame(), centered)
+
+    assert calls == [True]
+    assert chosen is not None and chosen.type == "collect_after_home"
+
+
 def test_startup_interruption_during_hunt_restarts_hatch_first() -> None:
     combined, hatch_planner, hunt_planner = planner()
     hunt_planner.next_target = target("dinosaur", 300, 700)

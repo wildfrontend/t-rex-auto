@@ -356,6 +356,13 @@ class HatchHuntPlanner:
             self.hunt.reset_workflow()
             self._mode = "hatch"
             self._centered_frames = 0
+            begin_home_collection = getattr(
+                self.hatch,
+                "begin_home_collection",
+                None,
+            )
+            if callable(begin_home_collection):
+                begin_home_collection()
             return self._choose_owned(self.hatch, frame, detections)
 
         self._centered_frames = 0

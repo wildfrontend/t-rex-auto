@@ -4,8 +4,8 @@ import numpy as np
 
 from dino_bot import hatch, nest_filter
 from dino_bot.beginner_hatch import (
-    AUTOPLACE_YES,
     AUTOPLACE_BUTTON,
+    AUTOPLACE_YES,
     COLLECT_EGGS_BUTTON,
     DEFAULT_SUCCESS_TRANSITIONS,
     HATCH_DETECTION_TYPES,
@@ -179,6 +179,42 @@ def test_beginner_exposes_only_the_incubator_wait_for_hunting() -> None:
 
     now[0] = 61.0
     assert not current.is_hunt_cooldown_active()
+
+
+def test_beginner_collects_once_after_returning_home_without_resetting_wait() -> None:
+    now = [0.0]
+    current = BeginnerHatchPlanner(
+        egg_pile_point=(450.0, 1330.0),
+        clock=lambda: now[0],
+    )
+    current._hatch_child.begin_rescan_wait("test", seconds=60)
+
+    assert current.begin_home_collection()
+    assert not current.begin_home_collection()
+    assert not current.is_hunt_cooldown_active()
+
+    open_nest = current.choose(frame(), [detection(hatch.HOME_ANCHOR, 59, 561)])
+    assert open_nest is not None and open_nest.type == OPEN_NEST
+
+    collect = current.choose(
+        frame(),
+        nest_screen(
+            detection(AUTOPLACE_BUTTON, 450, 1315),
+            detection(COLLECT_EGGS_BUTTON, 640, 1315),
+        ),
+    )
+    assert collect is not None and collect.type == COLLECT_EGGS_BUTTON
+    current.on_action_success(collect.type)
+
+    close = current.choose(frame(), nest_screen())
+    assert close is not None and close.type == NEST_MASK_CLOSE
+    current.on_action_success(close.type)
+
+    assert current.choose(frame(), [detection(hatch.HOME_ANCHOR, 59, 561)]) is None
+    assert current.home_collection_rounds == 1
+    assert current.management_rounds == 0
+    assert current.next_ready_delay_ms() == 60_000
+    assert current.is_hunt_cooldown_active()
 
 
 def test_beginner_stops_instead_of_repeating_an_unverified_mutation() -> None:
