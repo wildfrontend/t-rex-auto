@@ -1,5 +1,19 @@
 # 版本紀錄
 
+## v0.0.17 — 2026-08-12
+
+- 修正 Windows 控制器啟動或重啟後過早回報成功。現在只有新 Bot 的 `/health`
+  身分、監聽 PID、`main.py`／設定檔／status port 命令列與 `/status` 全部驗證通過，
+  才會回報 `started`；runner 提前退出或 60 秒內未就緒都會回傳明確錯誤。
+- Windows 乾淨重啟會先確認舊 Bot 的確切 PID 已退出，並實際測試 status port 已可
+  重新綁定後才啟動新程序。停止逾時、port 被其他程序接手、或沒有 LISTEN PID
+  但仍無法綁定時，都不會繼續啟動第二個 Bot。
+- Port 被占用時顯示占用程序的 PID、名稱與命令列；只允許控制通過 Dino Bot API、
+  PID、`main.py`、config 與 status-port 全部一致的程序，未知程序不會被自動終止。
+- Dashboard 不再吞掉背景啟動與模式切換例外。控制區會持續顯示處理中、成功或失敗
+  狀態及錯誤代碼；Windows runner 也會把 Python runtime、設定檔與重複程序等啟動
+  失敗原因保存到實例 log，供 Dashboard 直接顯示。
+
 ## v0.0.16 — 2026-08-12
 
 - 修正模擬器重連後仍被 `adb devices` 列為 `device`、但第一個

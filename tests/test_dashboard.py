@@ -364,6 +364,7 @@ def test_dashboard_can_create_an_isolated_instance(tmp_path: Path) -> None:
 
 def test_dashboard_can_update_instance_settings_without_manual_file_edits(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     app = tmp_path / "app"
     app.mkdir()
@@ -373,6 +374,7 @@ def test_dashboard_can_update_instance_settings_without_manual_file_edits(
         encoding="utf-8",
     )
     controller = DashboardController(tmp_path, app / "logs", config_path=config_path)
+    monkeypatch.setattr(dashboard_module, "_get_json", lambda url, timeout=1.0: None)
 
     result = controller.update_instance(
         instance_id="main",
