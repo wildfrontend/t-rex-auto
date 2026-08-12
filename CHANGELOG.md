@@ -1,5 +1,20 @@
 # 版本紀錄
 
+## 未發布
+
+- 修正 Windows 批次檔全部是 LF 換行:`start-dashboard.cmd` 同時使用 `^` 續行與
+  跨行 `if (...)` 區塊,這兩種語法在 LF 下會被 cmd.exe 解析錯誤,症狀就是雙擊後
+  視窗一閃就關、沒有任何訊息。新增 `.gitattributes` 強制 `*.cmd`/`*.bat`/`*.ps1`
+  為 CRLF、`*.sh`/`*.command` 為 LF,不再依賴編輯器習慣。
+- 新增 Windows 可攜版打包 `scripts/windows/package-windows-portable.sh`:Python
+  runtime 與相依套件隨包附上,解壓縮後雙擊即可執行,不需要網路也不需要安裝。
+  Lite 版首次啟動要下載約 60MB 並執行 pip,任何一步失敗都會讓啟動中斷。
+- 可攜版啟動器 `start-dashboard-portable.cmd` 的每一條失敗路徑都會顯示原因、
+  暫停視窗並寫入 `logs\launcher.log`,並會辨識「直接從 ZIP 裡執行」這個最常見的
+  誤用。關鍵訊息中英並陳,以免字碼頁問題讓錯誤訊息本身變成亂碼。
+- 可攜版剔除用不到的 opencv 影片編解碼 DLL、haarcascade 資料與 pywin32 的
+  COM/IDE/文件(合計約 53MB);打包前檢查 runtime 檔案齊全且批次檔為 CRLF。
+
 ## v0.0.15 — 2026-08-12
 
 - 修正孵蛋回主畫面的復原流程反覆進出狩獵地圖:「進森林再退出」不會移動鏡頭,

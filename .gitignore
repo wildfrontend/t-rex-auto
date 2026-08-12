@@ -16,3 +16,4 @@ capture/*
 !debug/.gitkeep
 !capture/.gitkeep
 start-dashboard.command
+.runtime-windows/
