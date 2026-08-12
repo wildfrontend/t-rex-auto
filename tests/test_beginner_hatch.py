@@ -156,6 +156,7 @@ def test_beginner_uses_centred_startup_nest_shortcut() -> None:
 
 def test_beginner_detection_scope_excludes_parent_and_cave_controls() -> None:
     assert hatch.HATCH_BUTTON in HATCH_DETECTION_TYPES
+    assert hatch.INCUBATOR_TITLE in HATCH_DETECTION_TYPES
     assert AUTOPLACE_BUTTON in NEST_DETECTION_TYPES
     assert "hatch_cave" not in HATCH_DETECTION_TYPES | NEST_DETECTION_TYPES
     assert "hatch_parent_left" not in HATCH_DETECTION_TYPES | NEST_DETECTION_TYPES

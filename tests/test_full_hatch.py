@@ -560,6 +560,7 @@ def test_full_hatch_scopes_detection_by_workflow_phase() -> None:
     planner._stage = "hatch"
     hatch_types = planner.planning_detection_types()
     assert hatch.HATCH_BUTTON in hatch_types
+    assert hatch.INCUBATOR_TITLE in hatch_types
     assert hatch.HOME_ANCHOR in hatch_types
     assert STARTUP_AUTO_BATTLE_CLOSE in hatch_types
     assert "dinosaur" not in hatch_types

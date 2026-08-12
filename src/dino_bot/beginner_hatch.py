@@ -81,6 +81,9 @@ HATCH_DETECTION_TYPES: frozenset[str] = frozenset(
     {
         *STARTUP_DETECTION_TYPES,
         *hatch_feature.DEFAULT_TARGET_ACTIONS,
+        # The incubator title is state evidence, not an action.  HatchPlanner
+        # requires it before it may tap a ready egg or close the grid.
+        hatch_feature.INCUBATOR_TITLE,
         hatch_feature.HOME_ANCHOR,
         hatch_feature.EXPEL_BUTTON,
     }

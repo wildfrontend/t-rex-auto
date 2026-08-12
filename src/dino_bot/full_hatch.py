@@ -340,6 +340,9 @@ HATCH_DETECTION_TYPES: frozenset[str] = frozenset(
     {
         *STARTUP_DETECTION_TYPES,
         *hatch_feature.DEFAULT_TARGET_ACTIONS,
+        # Required state evidence for HatchPlanner; without it a grid can
+        # show ready "孵化" labels but still have no actionable target.
+        hatch_feature.INCUBATOR_TITLE,
         hatch_feature.HOME_ANCHOR,
         hatch_feature.EXPEL_BUTTON,
         CONFIRM_YES,
