@@ -105,6 +105,20 @@ def test_beginner_confirms_autoplace_then_collects_once() -> None:
     ) is None
 
 
+def test_beginner_confirms_autoplace_wording_variants_by_yes_button() -> None:
+    current = planner()
+    reach_autoplace(current)
+    current.on_action_success(AUTOPLACE_BUTTON)
+
+    yes = current.choose(
+        frame(),
+        nest_screen(detection(CONFIRM_YES, 365, 890)),
+    )
+
+    assert yes is not None and yes.type == AUTOPLACE_YES
+    assert (yes.x, yes.y) == (365, 890)
+
+
 def test_beginner_full_incubator_toast_closes_nest_without_recollecting() -> None:
     current = planner()
     reach_autoplace(current)

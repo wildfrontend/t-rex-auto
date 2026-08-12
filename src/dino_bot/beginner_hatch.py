@@ -266,9 +266,15 @@ class BeginnerHatchPlanner:
             self._autoplace_requested = True
             return _target(button)
         if self._stage == "autoplace_result":
+            # The game has multiple confirmation wordings (best attributes,
+            # level order, and localized variants).  Once the one allowed
+            # auto-place tap has completed, a visible explicit "是" button is
+            # sufficient proof of this modal; do not depend on its body text.
+            yes = _best(by_type.get(CONFIRM_YES))
+            if yes is not None:
+                return _synthetic(AUTOPLACE_YES, yes.x, yes.y)
             if AUTOPLACE_PROMPT in by_type or AUTOPLACE_NOTICE in by_type:
-                yes = _best(by_type.get(CONFIRM_YES))
-                return _synthetic(AUTOPLACE_YES, yes.x, yes.y) if yes else None
+                return None
             if NEST_TITLE in by_type:
                 self._stage = "collect"
                 return self.choose(frame, detections)
