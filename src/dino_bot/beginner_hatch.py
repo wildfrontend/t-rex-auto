@@ -298,10 +298,26 @@ class BeginnerHatchPlanner:
             interrupt = _best(by_type.get(target_type))
             if interrupt is not None:
                 return _target(interrupt)
-        auto_battle = _best(by_type.get(STARTUP_AUTO_BATTLE_CLOSE))
+        # The lightweight auto-battle modal detector is colour/layout based.
+        # A hatch-result card can share those colours, but the explicit claim
+        # or expel controls prove this is not a startup overlay.  Do not let
+        # the heuristic steal priority from the actual hatch result.
+        hatch_result_visible = bool(
+            by_type.get(hatch_feature.CLAIM_BUTTON)
+            or by_type.get(hatch_feature.EXPEL_BUTTON)
+        )
+        auto_battle = (
+            None
+            if hatch_result_visible
+            else _best(by_type.get(STARTUP_AUTO_BATTLE_CLOSE))
+        )
         if auto_battle is not None:
             return _target(auto_battle)
-        growth = _best(by_type.get(STARTUP_GROWTH_RESULT))
+        growth = (
+            None
+            if hatch_result_visible
+            else _best(by_type.get(STARTUP_GROWTH_RESULT))
+        )
         if growth is None:
             return None
         point = (

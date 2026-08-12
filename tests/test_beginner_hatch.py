@@ -16,6 +16,7 @@ from dino_bot.full_hatch import (
     AUTOPLACE_PROMPT,
     NEST_MASK_CLOSE,
     OPEN_NEST,
+    STARTUP_AUTO_BATTLE_CLOSE,
     STARTUP_GROWTH_RESULT,
     STARTUP_NEST_SHORTCUT,
 )
@@ -152,6 +153,20 @@ def test_beginner_uses_centred_startup_nest_shortcut() -> None:
 
     assert target is not None and target.type == STARTUP_NEST_SHORTCUT
     assert (target.x, target.y) == (450, 1270)
+
+
+def test_beginner_hatch_result_beats_auto_battle_layout_false_positive() -> None:
+    current = planner()
+    target = current.choose(
+        frame(),
+        [
+            detection(hatch.CLAIM_BUTTON, 330, 1242),
+            detection(hatch.EXPEL_BUTTON, 570, 1242),
+            detection(STARTUP_AUTO_BATTLE_CLOSE, 50, 800),
+        ],
+    )
+
+    assert target is not None and target.type == hatch.CLAIM_BUTTON
 
 
 def test_beginner_detection_scope_excludes_parent_and_cave_controls() -> None:
