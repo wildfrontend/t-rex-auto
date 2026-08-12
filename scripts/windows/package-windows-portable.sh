@@ -25,9 +25,21 @@ package_app="${package_root}/app"
 package_python="${package_root}/python"
 cache_root="${project_root}/.runtime-windows"
 
-host_python="${project_root}/.venv/bin/python"
-if [[ ! -x "${host_python}" ]]; then
-  host_python="$(command -v python3)"
+# 這裡只把 host python 當成「下載 win_amd64 輪子的 pip 宿主」,跨平台下載的
+# 產物與哪一個直譯器跑無關。uv 建的 .venv 沒有 pip 也沒有 ensurepip,所以光檢查
+# 可執行不夠,要連 pip 一起確認,否則會停在「No module named pip」。
+host_python=""
+for candidate in "${project_root}/.venv/bin/python" "$(command -v python3 || true)"; do
+  if [[ -n "${candidate}" ]] && [[ -x "${candidate}" ]] \
+     && "${candidate}" -m pip --version >/dev/null 2>&1; then
+    host_python="${candidate}"
+    break
+  fi
+done
+if [[ -z "${host_python}" ]]; then
+  echo "找不到帶 pip 的 python:.venv/bin/python 與 python3 都不可用" >&2
+  echo "請安裝 pip(例如 python3 -m ensurepip 或發行版套件)後重試。" >&2
+  exit 1
 fi
 
 mkdir -p "${cache_root}"
@@ -157,11 +169,16 @@ for required in \
   fi
 done
 # 批次檔以 LF 換行時,cmd.exe 會在 `^` 續行與跨行 if 區塊上解析錯誤,
-# 使用者看到的就是雙擊後視窗一閃就關。這一項不能只靠 .gitattributes 保證。
-if ! LC_ALL=C tr -dc '\r' < "${package_root}/start-dashboard.cmd" | grep -q .; then
-  echo "出貨前檢查失敗:start-dashboard.cmd 不是 CRLF 換行" >&2
-  missing=1
-fi
+# 使用者看到的就是雙擊後視窗一閃就關。這一項不能只靠 .gitattributes 保證:
+# 屬性是後來才加的,早於它 checkout 的檔案會在工作目錄留著舊的 LF。
+# 隨包出貨的 .ps1 同理,所以整包一起檢查而不是只看啟動器。
+while IFS= read -r script; do
+  if ! LC_ALL=C tr -dc '\r' < "${script}" | grep -q .; then
+    echo "出貨前檢查失敗,不是 CRLF 換行:${script#${package_root}/}" >&2
+    echo "  修法:rm '${script#${package_root}/}' 後在專案內 git checkout 同名檔案" >&2
+    missing=1
+  fi
+done < <(find "${package_root}" \( -name "*.cmd" -o -name "*.ps1" \) -type f)
 if [[ "${missing}" -ne 0 ]]; then
   exit 1
 fi

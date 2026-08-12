@@ -59,6 +59,23 @@ fi
 find "${package_root}" -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
 find "${package_root}" -name ".DS_Store" -delete 2>/dev/null || true
 
+# --- 出貨前檢查:Windows 腳本必須是 CRLF -------------------------------------
+# 批次檔以 LF 換行時,cmd.exe 會在 `^` 續行與跨行 if 區塊上解析錯誤,使用者看到
+# 的就是雙擊後視窗一閃就關。.gitattributes 已宣告 eol=crlf,但屬性是後來才加的,
+# 早於它 checkout 的檔案會在工作目錄留著舊的 LF,打包腳本原樣複製就把問題出貨。
+# 所以這裡檢查的是實際要打包的 bytes,而不是信任 git 設定。
+missing=0
+while IFS= read -r script; do
+  if ! LC_ALL=C tr -dc '\r' < "${script}" | grep -q .; then
+    echo "出貨前檢查失敗,不是 CRLF 換行:${script#${package_root}/}" >&2
+    echo "  修法:rm '${script#${package_root}/}' 後在專案內 git checkout 同名檔案" >&2
+    missing=1
+  fi
+done < <(find "${package_root}" \( -name "*.cmd" -o -name "*.ps1" \) -type f)
+if [[ "${missing}" -ne 0 ]]; then
+  exit 1
+fi
+
 if command -v zip >/dev/null 2>&1; then
   (cd "${output_root}" && zip -qr "${package_name}.zip" "${package_name}")
 elif command -v python3 >/dev/null 2>&1; then
