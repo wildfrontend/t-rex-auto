@@ -73,6 +73,28 @@ def build_parser() -> argparse.ArgumentParser:
 
     subcommands.add_parser("doctor", help="check configuration and runtime dependencies")
 
+    adb = subcommands.add_parser(
+        "adb",
+        help="scan for emulator ADB ports, and set the one this config uses",
+    )
+    adb.add_argument(
+        "--set",
+        dest="set_serial",
+        metavar="SERIAL",
+        help="write this serial into the config (e.g. 127.0.0.1:5555)",
+    )
+    adb.add_argument(
+        "--auto",
+        action="store_true",
+        help="write the found serial into the config when exactly one answers",
+    )
+    adb.add_argument(
+        "--clear",
+        action="store_true",
+        help="clear the serial so every start picks the only device that answers",
+    )
+    adb.add_argument("--json", action="store_true", help="print machine-readable JSON")
+
     status = subcommands.add_parser("status", help="show the latest Bot session status")
     status.add_argument("--json", action="store_true", help="print machine-readable JSON")
     status.add_argument("--actions", type=int, default=10, help="recent actions to include")
@@ -124,6 +146,94 @@ def _load(path: str) -> AppConfig:
         return load_config(path)
     except ConfigError as exc:
         raise SystemExit(f"Configuration error: {exc}") from exc
+
+
+def _write_adb_serial(config_path: Path, serial: str | None) -> None:
+    """Set ``adb.serial`` in config.json, leaving every other key untouched."""
+
+    try:
+        raw = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise SystemExit(f"Cannot read {config_path}: {exc}") from exc
+    if not isinstance(raw, dict):
+        raise SystemExit(f"{config_path} must contain a JSON object")
+    adb = raw.setdefault("adb", {})
+    if not isinstance(adb, dict):
+        raise SystemExit(f"{config_path}: the adb section must be an object")
+    adb["serial"] = serial
+    try:
+        config_path.write_text(
+            json.dumps(raw, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        raise SystemExit(f"Cannot write {config_path}: {exc}") from exc
+
+
+def _adb_command(args: argparse.Namespace, config: AppConfig) -> int:
+    config_path = Path(args.config).expanduser().resolve()
+    client = AdbClient(config.adb)
+
+    if args.clear:
+        _write_adb_serial(config_path, None)
+        print(f"adb.serial 已清空:{config_path}")
+        print("之後每次啟動都會自動挑「唯一回應的裝置」。")
+        return 0
+    if args.set_serial:
+        _write_adb_serial(config_path, args.set_serial.strip())
+        print(f"adb.serial 已設為 {args.set_serial.strip()}:{config_path}")
+        return 0
+
+    print(f"ADB 執行檔:{client.executable}")
+    print(f"目前設定:adb.serial = {config.adb.serial or '(空,自動選擇)'}")
+    print("掃描已知模擬器連接埠 ...")
+    devices = client.discover()
+
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "executable": client.executable,
+                    "configured_serial": config.adb.serial,
+                    "devices": [device.as_dict() for device in devices],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+    elif not devices:
+        print("沒有找到任何裝置。請確認模擬器已啟動,且它的設定裡開啟了 ADB。")
+    else:
+        print()
+        for device in devices:
+            mark = "*" if device.serial == config.adb.serial else " "
+            notes = [note for note in (device.hint, device.description) if note]
+            print(
+                f" {mark} {device.serial:<24} {device.state:<12}"
+                f" {' | '.join(notes)}"
+            )
+        print()
+        print("(* = 目前設定使用的裝置)")
+
+    ready = [device for device in devices if device.ready]
+    if args.auto:
+        if len(ready) != 1:
+            print()
+            print(
+                f"--auto 需要剛好一台就緒裝置,現在有 {len(ready)} 台;"
+                " 請改用 --set 指定。"
+            )
+            return 1
+        _write_adb_serial(config_path, ready[0].serial)
+        print()
+        print(f"adb.serial 已設為 {ready[0].serial}:{config_path}")
+    elif ready and config.adb.serial not in {device.serial for device in ready}:
+        print()
+        print(
+            "提醒:設定中的 serial 不在就緒清單裡。"
+            " 用 `--auto` 自動採用,或 `--set <serial>` 指定。"
+        )
+    return 0
 
 
 def _capture_once(config: AppConfig):
@@ -293,6 +403,8 @@ def main(argv: list[str] | None = None) -> int:
             icon = "PASS" if check.ok else ("WARN" if not check.required else "FAIL")
             print(f"[{icon}] {check.name}: {check.detail}")
         return 1 if any(not item.ok and item.required for item in checks) else 0
+    if args.command == "adb":
+        return _adb_command(args, config)
     if args.command == "status":
         status = build_runtime_status(config.logs_dir, max(0, args.actions))
         if args.json:

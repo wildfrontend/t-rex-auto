@@ -70,9 +70,13 @@ class CaptureConfig:
 @dataclass(frozen=True, slots=True)
 class AdbConfig:
     executable: str | None = None
+    # 留空(null)代表「自動找」:啟動時探測 discovery_ports,恰好找到一台就用它。
     serial: str | None = "127.0.0.1:5555"
     connect_on_start: bool = True
     timeout: float = 5.0
+    auto_discover: bool = True
+    # 空 tuple 代表沿用 adb_discovery.DEFAULT_DISCOVERY_PORTS。
+    discovery_ports: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -325,6 +329,24 @@ def _path_from(root: Path, raw: str) -> Path:
     return path if path.is_absolute() else root / path
 
 
+def _port_tuple(data: dict[str, Any], label: str) -> tuple[int, ...]:
+    """Parse an optional list of TCP ports, rejecting values that cannot be one."""
+
+    raw = data.get(label.rsplit(".", 1)[-1])
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise ConfigError(f"{label} must be a list of port numbers")
+    ports: list[int] = []
+    for value in raw:
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ConfigError(f"{label} must contain integers")
+        if not 1 <= value <= 65535:
+            raise ConfigError(f"{label} entries must be between 1 and 65535")
+        ports.append(value)
+    return tuple(dict.fromkeys(ports))
+
+
 def _number_tuple(
     data: dict[str, Any],
     label: str,
@@ -543,6 +565,8 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
             serial=adb_data.get("serial", emulator_profile["serial"]),
             connect_on_start=bool(adb_data.get("connect_on_start", True)),
             timeout=float(adb_data.get("timeout", 5.0)),
+            auto_discover=bool(adb_data.get("auto_discover", True)),
+            discovery_ports=_port_tuple(adb_data, "adb.discovery_ports"),
         ),
         detector=DetectorConfig(
             manifest=_path_from(root, detector_data.get("manifest", "assets/manifest.json")),

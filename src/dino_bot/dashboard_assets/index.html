@@ -34,7 +34,13 @@
         <div id="instanceList" class="instance-grid"><p class="empty">讀取實例中…</p></div>
         <form id="instanceForm" class="instance-form hidden">
           <label>名稱<input id="instanceName" required maxlength="40" placeholder="例如：主力二號"></label>
-          <label>ADB serial<input id="instanceSerial" required placeholder="127.0.0.1:16385"></label>
+          <label>ADB serial
+            <span class="field-row">
+              <input id="instanceSerial" required placeholder="127.0.0.1:16385">
+              <button id="scanAdb" type="button" title="掃描已知模擬器連接埠">掃描</button>
+            </span>
+          </label>
+          <div id="adbScanResult" class="scan-result hidden"></div>
           <label>狀態 Port<input id="instancePort" required type="number" min="1" max="65535" value="8775"></label>
           <button class="primary" type="submit">建立實例</button>
           <button id="addInstanceCancel" type="button">取消</button>

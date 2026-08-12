@@ -469,3 +469,45 @@ def test_dashboard_workflow_returns_to_hatch_after_management_cycle(
     workflow = _workflow_status(tmp_path, "hatch-hunt")
     assert workflow["stage"] == "hatch"
     assert workflow["label"] == "檢查孵蛋"
+
+
+def test_dashboard_scan_reports_devices_without_choosing_between_them(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dino_bot import adb_discovery
+    from dino_bot.actions import AdbClient
+
+    app = tmp_path / "app"
+    app.mkdir()
+    config_path = app / "config.json"
+    config_path.write_text(
+        json.dumps({"adb": {"serial": "127.0.0.1:16384"}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        AdbClient, "_resolve_executable", staticmethod(lambda _: "adb")
+    )
+    monkeypatch.setattr(
+        AdbClient,
+        "discover",
+        lambda self: [
+            adb_discovery.DiscoveredDevice("127.0.0.1:5555", "device", hint="BlueStacks"),
+            adb_discovery.DiscoveredDevice("127.0.0.1:62001", "device", hint="Nox"),
+        ],
+    )
+    controller = DashboardController(tmp_path, app / "logs", config_path=config_path)
+
+    result = controller.scan_adb()
+
+    assert [device["serial"] for device in result["devices"]] == [
+        "127.0.0.1:5555",
+        "127.0.0.1:62001",
+    ]
+    assert result["configured_serial"] == "127.0.0.1:16384"
+    # Two emulators answered; picking one here would silently drive the wrong
+    # one, so the dashboard has to hand the choice back to the user.
+    assert "2" in result["message"]
+    assert json.loads(config_path.read_text(encoding="utf-8"))["adb"]["serial"] == (
+        "127.0.0.1:16384"
+    )

@@ -12,6 +12,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import adb_discovery
 from .config import AdbConfig
 from .models import ActionCommand, ActionKind, Frame
 
@@ -126,6 +127,19 @@ class AdbClient:
             )
         return devices
 
+    def discover(self) -> list[adb_discovery.DiscoveredDevice]:
+        """Probe the known emulator ports and report every reachable device."""
+
+        ports = (
+            tuple((port, "") for port in self.config.discovery_ports)
+            if self.config.discovery_ports
+            else None
+        )
+        return adb_discovery.discover(
+            lambda args: str(self.run(args, use_serial=False)),
+            ports=ports,
+        )
+
     def ensure_ready(self) -> DeviceInfo:
         if self.config.connect_on_start and self.config.serial:
             self.connect()
@@ -133,13 +147,54 @@ class AdbClient:
         ready = [item for item in devices if item.state == "device"]
         if self.config.serial:
             ready = [item for item in ready if item.serial == self.config.serial]
-        if not ready:
-            wanted = self.config.serial or "any device"
-            raise AdbError(
-                f"No ready ADB device for {wanted}. "
-                "Enable ADB in the emulator and verify its configured port."
+        if ready:
+            return ready[0]
+
+        # Nothing matched. A configured serial that is simply wrong looks
+        # exactly like a closed emulator from here, so scan before failing:
+        # either the answer is one probe away, or the error can finally name
+        # what *is* connected instead of only what was asked for.
+        if not self.config.auto_discover:
+            raise AdbError(self._not_ready_message(()))
+        found = [device for device in self.discover() if device.ready]
+        chosen: adb_discovery.DiscoveredDevice | None = None
+        if self.config.serial:
+            # The configured port can be right while adb simply had not
+            # connected to it yet; the scan does that as a side effect.
+            chosen = next(
+                (device for device in found if device.serial == self.config.serial),
+                None,
             )
-        return ready[0]
+        elif len(found) == 1:
+            chosen = found[0]
+        if chosen is None:
+            raise AdbError(self._not_ready_message(found))
+        return DeviceInfo(chosen.serial, chosen.state, chosen.description)
+
+    def _not_ready_message(
+        self,
+        found: Sequence[adb_discovery.DiscoveredDevice],
+    ) -> str:
+        wanted = self.config.serial or "any device"
+        lines = [f"No ready ADB device for {wanted}."]
+        if found:
+            lines.append(f"Reachable now: {adb_discovery.describe(found)}.")
+            if self.config.serial:
+                lines.append(
+                    "Set adb.serial to one of those, or clear it to use the only"
+                    " one found. `dino-bot adb --auto` writes it for you."
+                )
+            else:
+                lines.append(
+                    "More than one device answered; set adb.serial to the one you"
+                    " want. `dino-bot adb` lists them."
+                )
+        else:
+            lines.append(
+                "No emulator answered on the known ADB ports. Start the emulator,"
+                " enable ADB in its settings, then run `dino-bot adb`."
+            )
+        return " ".join(lines)
 
     def display_size(self) -> tuple[int, int]:
         output = str(self.run(["shell", "wm", "size"]))

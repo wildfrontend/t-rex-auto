@@ -252,9 +252,71 @@ function openEditInstanceForm(instanceId) {
   renderInstances(knownInstances);
 }
 
+function renderAdbScan(payload) {
+  const box = $("adbScanResult");
+  const devices = payload.devices || [];
+  if (!devices.length) {
+    box.innerHTML = `<p class="muted">${escapeHtml(payload.message)}</p>`;
+    box.classList.remove("hidden");
+    return;
+  }
+  // 一台就直接填入;多台一定要使用者自己挑,替他選會連錯模擬器。
+  const ready = devices.filter((device) => device.ready);
+  if (ready.length === 1) $("instanceSerial").value = ready[0].serial;
+  const rows = devices
+    .map((device) => {
+      const notes = [device.hint, device.state === "device" ? "" : device.state]
+        .filter(Boolean)
+        .join(" · ");
+      return `<button type="button" class="scan-pick" data-serial="${escapeHtml(device.serial)}"
+        ${device.ready ? "" : "disabled"}>
+        <span>${escapeHtml(device.serial)}</span>
+        <span class="muted">${escapeHtml(notes)}</span>
+      </button>`;
+    })
+    .join("");
+  box.innerHTML = `<p class="muted">${escapeHtml(payload.message)}</p>${rows}`;
+  box.classList.remove("hidden");
+}
+
+$("scanAdb").addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = "掃描中…";
+  try {
+    const editingId = $("instanceForm").dataset.editingId || selectedInstanceId;
+    const suffix = editingId ? `?instance=${encodeURIComponent(editingId)}` : "";
+    const response = await fetch(`/api/control/scan-adb${suffix}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Dino-Dashboard": "1" },
+      body: "{}",
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+    renderAdbScan(payload);
+  } catch (error) {
+    const box = $("adbScanResult");
+    box.innerHTML = `<p class="muted">掃描失敗：${escapeHtml(String(error.message || error))}</p>`;
+    box.classList.remove("hidden");
+  } finally {
+    button.disabled = false;
+    button.textContent = original;
+  }
+});
+
+$("adbScanResult").addEventListener("click", (event) => {
+  const pick = event.target.closest(".scan-pick");
+  if (!pick) return;
+  $("instanceSerial").value = pick.dataset.serial;
+});
+
 function closeInstanceForm() {
   const form = $("instanceForm");
   delete form.dataset.editingId;
+  const box = $("adbScanResult");
+  box.classList.add("hidden");
+  box.innerHTML = "";
   form.reset();
   form.querySelector("button.primary").textContent = "建立實例";
   form.classList.add("hidden");

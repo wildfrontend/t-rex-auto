@@ -104,6 +104,20 @@ cp -a \
   "${project_root}/scripts/windows/watch-running-bot.ps1" \
   "${package_app}/scripts/"
 
+# 可攜版清空 adb.serial:收到這個包的人用哪一款模擬器、哪一個埠都不知道,
+# 寫死一個埠等於保證一部分人打開就是「No ready ADB device」。留空會在啟動時
+# 探測已知連接埠,恰好找到一台就用它;找到多台仍然要人選,不會替他猜。
+"${host_python}" - "${package_app}/config.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+with open(path, encoding="utf-8") as handle:
+    config = json.load(handle)
+config.setdefault("adb", {})["serial"] = None
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(config, handle, ensure_ascii=False, indent=2)
+    handle.write("\n")
+PY
+
 cp -a "${project_root}/scripts/windows/start-dashboard-portable.cmd" \
       "${package_root}/start-dashboard.cmd"
 cp -a "${project_root}/instances.json" "${package_root}/instances.json"

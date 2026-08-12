@@ -2,6 +2,16 @@
 
 ## 未發布
 
+- 新增 ADB 連接埠自動偵測。`adb.serial` 留空時,啟動會探測已知模擬器連接埠
+  (BlueStacks/MuMu/LDPlayer/夜神/MEmu 等),**恰好找到一台**才採用;找到多台會
+  列出來要求指定,不會替使用者猜。先用 TCP 確認埠有人在聽再 `adb connect`,
+  因為對死埠 `adb connect` 每個要阻塞約一秒。
+- `adb.serial` 設錯時的錯誤訊息會列出「現在實際連得到什麼」。舊訊息只重複那個
+  失敗的埠 —— 那正是使用者已經知道、且無從下手的唯一資訊。
+- 新增 `dino-bot adb` 指令:列出掃到的裝置、`--auto` 在只有一台時寫進設定、
+  `--set` 指定、`--clear` 改回自動選擇。儀表板的實例設定也加了「掃描」按鈕。
+- 新增設定 `adb.auto_discover`(預設 true)與 `adb.discovery_ports`(自訂掃描
+  範圍);Windows 可攜版預設 `serial: null`,拿到包的人不必先知道自己的埠。
 - 修正 Windows 批次檔全部是 LF 換行:`start-dashboard.cmd` 同時使用 `^` 續行與
   跨行 `if (...)` 區塊,這兩種語法在 LF 下會被 cmd.exe 解析錯誤,症狀就是雙擊後
   視窗一閃就關、沒有任何訊息。新增 `.gitattributes` 強制 `*.cmd`/`*.bat`/`*.ps1`

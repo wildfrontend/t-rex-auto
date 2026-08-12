@@ -64,6 +64,13 @@ h3 { font-size: 20px; }
 .instance-form { display: grid; grid-template-columns: 1fr 1.4fr 150px auto auto; gap: 9px; align-items: end; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
 .instance-form label { color: var(--muted); font-size: 10px; }
 .instance-form input { display: block; width: 100%; margin-top: 4px; border: 1px solid var(--line); border-radius: 8px; padding: 9px; color: var(--text); background: #12181e; font: inherit; }
+.instance-form .field-row { display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: center; }
+.instance-form .field-row button { margin-top: 4px; white-space: nowrap; }
+.scan-result { grid-column: 1 / -1; display: grid; gap: 6px; margin-top: 4px; }
+.scan-result .muted { margin: 0; font-size: 11px; }
+.scan-pick { display: grid; grid-template-columns: 1fr auto; gap: 10px; text-align: left; font: inherit; }
+.scan-pick:disabled { opacity: .45; cursor: not-allowed; }
+.scan-pick .muted { font-size: 10px; }
 .hero { position: relative; min-height: 218px; padding: 30px; overflow: hidden; display: grid; grid-template-columns: 1fr auto; align-items: start; }
 .hero::after { content: ""; position: absolute; width: 420px; height: 420px; right: -130px; top: -240px; border: 60px solid rgba(85,214,208,.055); border-radius: 50%; }
 .muted { margin-top: 8px; color: var(--muted); }

@@ -352,6 +352,40 @@ class DashboardController:
                 return instance
         raise RuntimeError(f"Unknown Bot instance: {instance_id}")
 
+    def scan_adb(self, instance_id: str | None = None) -> dict[str, Any]:
+        """Probe the known emulator ports on behalf of one instance.
+
+        The port is the one setting a user cannot read off the emulator's own
+        UI, so leaving it as free text with no way to check is what turns a
+        typo into "the bot does nothing".
+        """
+
+        from .actions import AdbClient
+        from .config import ConfigError, load_config
+
+        instance = self._instance(instance_id)
+        try:
+            config = load_config(instance.config_path)
+        except ConfigError as exc:
+            raise RuntimeError(f"設定檔讀取失敗:{exc}") from exc
+        client = AdbClient(config.adb)
+        devices = [device.as_dict() for device in client.discover()]
+        ready = [device for device in devices if device["ready"]]
+        if not devices:
+            message = "沒有找到任何裝置。請確認模擬器已啟動,且設定裡開啟了 ADB。"
+        elif len(ready) == 1:
+            message = f"找到 1 台:{ready[0]['serial']}"
+        else:
+            message = f"找到 {len(devices)} 台,請選擇要使用的那一台。"
+        return {
+            "accepted": True,
+            "action": "scan-adb",
+            "instance_id": instance.instance_id,
+            "configured_serial": self._instance_serial(instance),
+            "devices": devices,
+            "message": message,
+        }
+
     @staticmethod
     def _instance_serial(instance: BotInstance) -> str | None:
         try:
@@ -1113,6 +1147,8 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 )
             elif action == "stop":
                 result = self.server.controller.stop(instance_id)
+            elif action == "scan-adb":
+                result = self.server.controller.scan_adb(instance_id)
             elif action == "restart-game":
                 result = self.server.controller.restart_game(instance_id)
             elif action == "restart-bot":
