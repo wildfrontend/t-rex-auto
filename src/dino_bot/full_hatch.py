@@ -2297,6 +2297,12 @@ class FullHatchPlanner:
             return _target(auto_battle)
         if (
             not hatch_result_visible
+            # The My Nest card is also a tall white panel with a centred
+            # green button.  Its auto-place control therefore satisfies the
+            # launch growth-result colour heuristic.  Never use the startup
+            # shortcut while the nest title proves that this is already the
+            # nest screen, or the synthetic tap lands on auto-place.
+            and NEST_TITLE not in by_type
             and (growth_result := _best(by_type.get(STARTUP_GROWTH_RESULT))) is not None
         ):
             self._no_target_since = None

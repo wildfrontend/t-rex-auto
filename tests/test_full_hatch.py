@@ -1219,6 +1219,25 @@ def test_full_flow_uses_centred_nest_shortcut_on_new_growth_result_layout() -> N
     assert (target.x, target.y) == (450, 1270)
 
 
+def test_full_flow_does_not_tap_false_startup_shortcut_on_nest_screen() -> None:
+    planner = make_full_planner()
+    target = planner.choose(
+        frame(),
+        [
+            detection(hatch.HOME_ANCHOR, 49, 562),
+            detection(NEST_TITLE, 450, 261),
+            detection(
+                STARTUP_GROWTH_RESULT,
+                450,
+                1270,
+                metadata={"shortcut_layout": "centered_nest"},
+            ),
+        ],
+    )
+
+    assert target is None or target.type != STARTUP_NEST_SHORTCUT
+
+
 def test_full_flow_prefers_nested_auto_battle_overlay_during_startup() -> None:
     planner = make_full_planner()
     target = planner.choose(
