@@ -314,14 +314,9 @@
     "screening_growth_interval": 20,
     "stat_upgrade_guards": {
       "hp": {
-        "min_delta": 30,
-        "max_delta": 70,
         "multiple_of": 10
       },
-      "attack": {
-        "min_delta": 3,
-        "max_delta": 7
-      },
+      "attack": {},
       "speed": {
         "min_value": 1,
         "max_value": 150

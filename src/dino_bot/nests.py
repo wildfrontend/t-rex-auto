@@ -29,11 +29,16 @@ class Stats:
 
 @dataclass(frozen=True, slots=True)
 class StatUpgradeGuard:
-    """Bounds used to reject impossible OCR readings and upgrades.
+    """Bounds used to reject impossible OCR readings.
 
-    ``min_delta``/``max_delta`` apply only when the stat is the round's
-    primary stat. ``min_value``/``max_value`` and ``multiple_of`` apply to
-    every readout.
+    ``min_value``/``max_value`` and ``multiple_of`` apply to every readout.
+
+    ``min_delta``/``max_delta`` are accepted for backward compatibility and no
+    longer decide anything. They once required a replacement candidate to beat
+    its parent by a specific margin, which meant a parent on 389 attack
+    declined the 390 sitting next to it, and a candidate far ahead of the
+    parent was refused as an implausible reading. Any real increase is now a
+    reason to swap; see ``pick_replacement``.
     """
 
     min_delta: int | None = None
@@ -42,13 +47,17 @@ class StatUpgradeGuard:
     max_value: int | None = None
     multiple_of: int | None = None
 
+    @property
+    def has_delta_bounds(self) -> bool:
+        return self.min_delta is not None or self.max_delta is not None
+
 
 def default_stat_upgrade_guards() -> dict[str, StatUpgradeGuard]:
     """Return the conservative stat rules used by the game today."""
 
     return {
-        "hp": StatUpgradeGuard(min_delta=30, max_delta=70, multiple_of=10),
-        "attack": StatUpgradeGuard(min_delta=3, max_delta=7),
+        "hp": StatUpgradeGuard(multiple_of=10),
+        "attack": StatUpgradeGuard(),
         "speed": StatUpgradeGuard(min_value=1, max_value=150),
     }
 
@@ -75,23 +84,6 @@ def stat_value_is_valid(
         ):
             return False
     return True
-
-
-def upgrade_is_valid(
-    parent: Stats,
-    candidate: Stats,
-    rule: ReplacementRule,
-    guards: Mapping[str, StatUpgradeGuard] = DEFAULT_STAT_UPGRADE_GUARDS,
-) -> bool:
-    """Whether a candidate's primary-stat increase fits the configured guard."""
-
-    guard = guards.get(rule.primary)
-    if guard is None:
-        return True
-    delta = primary_of(candidate, rule) - primary_of(parent, rule)
-    if guard.min_delta is not None and delta < guard.min_delta:
-        return False
-    return guard.max_delta is None or delta <= guard.max_delta
 
 
 @dataclass(frozen=True, slots=True)
@@ -175,10 +167,16 @@ def pick_replacement(
     """Pick which list row should replace ``parent``, or None to keep it.
 
     ``rows`` are the visible list rows top-down, already sorted descending by
-    the rule's primary stat (the caller verifies via ``is_descending``). Only
-    a higher primary justifies a swap. An equal primary also justifies one
-    when its secondary load is lower than the parent's. Among all candidates
-    at the best primary value, the lowest secondary load wins.
+    the rule's primary stat (the caller verifies via ``is_descending``). Any
+    higher primary justifies a swap, by however little: a round whose whole
+    purpose is to raise one stat has no reason to decline a rise in it. An
+    equal primary also justifies one when its secondary load is lower than the
+    parent's. Among all candidates at the best primary value, the lowest
+    secondary load wins.
+
+    ``guards`` still rejects readouts that cannot be real (``min_value``,
+    ``max_value``, ``multiple_of``); it no longer requires the increase itself
+    to fall in a band.
     """
 
     if not rows or not stat_value_is_valid(parent, guards):
@@ -189,10 +187,7 @@ def pick_replacement(
         for index, row in enumerate(rows)
         if stat_value_is_valid(row, guards)
         and (
-            (
-                primary_of(row, rule) > parent_primary
-                and upgrade_is_valid(parent, row, rule, guards)
-            )
+            primary_of(row, rule) > parent_primary
             or (
                 primary_of(row, rule) == parent_primary
                 and secondary_load(row, rule) < secondary_load(parent, rule)

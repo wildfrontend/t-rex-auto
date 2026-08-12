@@ -89,8 +89,46 @@ class AdbClient:
         binary: bool = False,
         check: bool = True,
     ) -> bytes | str:
+        completed = self._invoke(args, use_serial=use_serial)
+        reconnect_attempted = False
+        if (
+            check
+            and completed.returncode != 0
+            and use_serial
+            and self.config.serial
+            and args
+            and args[0] in {"shell", "exec-out"}
+            and self._is_closed_transport(completed)
+        ):
+            # Some emulator ADB daemons remain listed as `device` while their
+            # shell transport has already been closed.  The next tap used to
+            # crash the Bot immediately in that state.  ADB's own `reconnect`
+            # command closes the selected host-side transport and forces a new
+            # connection; keep this recovery strictly bounded to one attempt.
+            reconnect_attempted = True
+            self._recover_closed_transport()
+            completed = self._invoke(args, use_serial=use_serial)
+
+        if check and completed.returncode != 0:
+            message = self._error_message(completed)
+            if reconnect_attempted:
+                message += (
+                    " (ADB reconnect was attempted once; restart the emulator"
+                    " if its shell remains closed)"
+                )
+            raise AdbError(f"ADB exited with {completed.returncode}: {message}")
+        if binary:
+            return completed.stdout
+        return completed.stdout.decode("utf-8", errors="replace").strip()
+
+    def _invoke(
+        self,
+        args: Sequence[str],
+        *,
+        use_serial: bool,
+    ) -> subprocess.CompletedProcess[bytes]:
         try:
-            completed = subprocess.run(
+            return subprocess.run(
                 self._command(args, use_serial),
                 capture_output=True,
                 timeout=self.config.timeout,
@@ -98,12 +136,31 @@ class AdbClient:
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise AdbError(f"ADB command failed to start: {exc}") from exc
-        if check and completed.returncode != 0:
-            message = completed.stderr.decode("utf-8", errors="replace").strip()
-            raise AdbError(f"ADB exited with {completed.returncode}: {message}")
-        if binary:
-            return completed.stdout
-        return completed.stdout.decode("utf-8", errors="replace").strip()
+
+    @staticmethod
+    def _error_message(completed: subprocess.CompletedProcess[bytes]) -> str:
+        stderr = completed.stderr.decode("utf-8", errors="replace").strip()
+        stdout = completed.stdout.decode("utf-8", errors="replace").strip()
+        return stderr or stdout or "unknown ADB error"
+
+    @classmethod
+    def _is_closed_transport(
+        cls,
+        completed: subprocess.CompletedProcess[bytes],
+    ) -> bool:
+        return cls._error_message(completed).lower() == "error: closed"
+
+    def _recover_closed_transport(self) -> None:
+        # Ignore the recovery command's own exit code: the original command is
+        # retried exactly once and remains the authoritative result.
+        self._invoke(["reconnect"], use_serial=True)
+        time.sleep(0.5)
+        if self.config.serial:
+            self._invoke(
+                ["connect", self.config.serial],
+                use_serial=False,
+            )
+            time.sleep(0.5)
 
     def connect(self) -> str:
         if not self.config.serial:

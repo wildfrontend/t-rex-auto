@@ -226,6 +226,8 @@ def test_adb_client_discovers_android_sdk_for_current_user(
     monkeypatch.delenv("ANDROID_SDK_ROOT", raising=False)
     monkeypatch.delenv("ANDROID_HOME", raising=False)
     monkeypatch.setattr("dino_bot.actions.shutil.which", lambda _: None)
+    monkeypatch.setattr("dino_bot.actions.sys.platform", "win32")
+    monkeypatch.setattr(Path, "is_file", lambda candidate: candidate == adb)
 
     assert AdbClient._resolve_executable(None) == str(adb)
 

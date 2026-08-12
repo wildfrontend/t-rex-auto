@@ -139,7 +139,11 @@ def _create_hunt_engine(config: AppConfig, *, verbose: bool = False) -> BotEngin
         reference_size=open_cv_detector.reference_size,
     )
     planner = _build_hunt_planner(config)
-    action = AdbActionDriver(adb)
+    # Probe the shell while the engine is being assembled.  `adb devices` can
+    # still report `device` after an emulator has closed its shell transport;
+    # discovering that here gives the bounded reconnect path a chance before
+    # the first planned tap and keeps a dead transport out of the run loop.
+    action = AdbActionDriver(adb, device_size=adb.display_size())
     verifier = TargetChangedVerifier(
         max_distance=config.verify.max_distance,
         pixel_change_threshold=config.verify.pixel_change_threshold,
@@ -355,6 +359,20 @@ def _create_hatch_engine(
             hatch.reference_width,
             hatch.max_scrolls,
         )
+    # A setting that quietly stops doing anything is how the 389-declines-390
+    # decision stayed invisible for a week. Say it out loud instead.
+    retired = sorted(
+        stat
+        for stat, guard in hatch.stat_upgrade_guards.items()
+        if guard.has_delta_bounds
+    )
+    if retired:
+        logger.warning(
+            "Hatch guards | min_delta/max_delta no longer affect parent"
+            " replacement | stats=%s | any increase now swaps;"
+            " absolute bounds (min_value/max_value/multiple_of) still apply",
+            ",".join(retired),
+        )
     adb = AdbClient(config.adb)
     device = adb.ensure_ready()
     logger.info("ADB | device=%s | %s", device.serial, device.description)
@@ -543,7 +561,7 @@ def _create_hatch_engine(
             home_backoff_seconds=hatch.home_backoff_seconds,
             logger=logger,
         )
-    action = AdbActionDriver(adb)
+    action = AdbActionDriver(adb, device_size=adb.display_size())
     defaults = (
         full_hatch_feature
         if full

@@ -136,12 +136,6 @@ h3 { font-size: 20px; }
 .inventory-control .toggle-control input:checked::after { left: 20px; background: #071014; }
 .inventory-control .toggle-control input:disabled { opacity: .55; cursor: wait; }
 .inventory-control button { padding-inline: 8px; }
-.mutation-guard-control { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 9px 14px; align-items: end; margin-top: 10px; padding: 12px; border: 1px solid rgba(169,149,255,.20); border-radius: 12px; background: rgba(169,149,255,.06); }
-.mutation-guard-control > div > span, .mutation-guard-control small, .mutation-guard-fields label { display: block; color: var(--muted); font-size: 10px; }
-.mutation-guard-control small { margin-top: 4px; }
-.mutation-guard-fields { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
-.mutation-guard-fields input { display: block; width: 100%; margin-top: 4px; border: 1px solid var(--line); border-radius: 8px; padding: 8px; color: var(--text); background: #12181e; font: inherit; }
-.mutation-guard-control button { padding-inline: 8px; }
 button { appearance: none; border: 1px solid var(--line); border-radius: 11px; padding: 11px 12px; color: var(--text); background: #1b222a; cursor: pointer; font: inherit; font-size: 12px; transition: .15s; }
 button:hover { transform: translateY(-1px); border-color: rgba(255,255,255,.18); background: #222b34; }
 button:disabled { opacity: .45; cursor: wait; transform: none; }
@@ -167,6 +161,5 @@ button.danger { color: #ffd6d5; border-color: rgba(255,107,104,.26); background:
   .control-grid { grid-template-columns: 1fr; }
   .inventory-control { grid-template-columns: 1fr 92px 58px; }
   .inventory-control .toggle-control { grid-column: 1 / -1; justify-content: flex-start; }
-  .mutation-guard-control, .mutation-guard-fields { grid-template-columns: 1fr; }
   .instance-form { grid-template-columns: 1fr; }
 }

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -44,6 +45,15 @@ def _client(config: AdbConfig, fake: FakeAdb) -> AdbClient:
     client.executable = "adb"
     client.run = fake.run  # type: ignore[method-assign]
     return client
+
+
+def _completed(
+    returncode: int,
+    *,
+    stdout: bytes = b"",
+    stderr: bytes = b"",
+) -> subprocess.CompletedProcess[bytes]:
+    return subprocess.CompletedProcess([], returncode, stdout=stdout, stderr=stderr)
 
 
 @pytest.fixture
@@ -172,6 +182,65 @@ def test_configured_discovery_ports_replace_the_defaults(
     client.discover()
 
     assert probed == [1234, 5678]
+
+
+def test_closed_shell_transport_reconnects_once_and_retries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+    responses = iter(
+        [
+            _completed(1, stderr=b"error: closed\n"),
+            _completed(0, stdout=b"reconnecting 127.0.0.1:5555\n"),
+            _completed(0, stdout=b"connected to 127.0.0.1:5555\n"),
+            _completed(0, stdout=b"Physical size: 900x1600\n"),
+        ]
+    )
+
+    def fake_run(command, **kwargs):  # noqa: ANN001, ARG001
+        calls.append(list(command))
+        return next(responses)
+
+    monkeypatch.setattr("dino_bot.actions.subprocess.run", fake_run)
+    monkeypatch.setattr("dino_bot.actions.time.sleep", lambda _: None)
+    monkeypatch.setattr(AdbClient, "_resolve_executable", staticmethod(lambda _: "adb"))
+    client = AdbClient(AdbConfig(serial="127.0.0.1:5555"))
+
+    assert client.display_size() == (900, 1600)
+    assert calls == [
+        ["adb", "-s", "127.0.0.1:5555", "shell", "wm", "size"],
+        ["adb", "-s", "127.0.0.1:5555", "reconnect"],
+        ["adb", "connect", "127.0.0.1:5555"],
+        ["adb", "-s", "127.0.0.1:5555", "shell", "wm", "size"],
+    ]
+
+
+def test_persistently_closed_shell_stops_after_one_reconnect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+    responses = iter(
+        [
+            _completed(1, stderr=b"error: closed\n"),
+            _completed(0),
+            _completed(0),
+            _completed(1, stderr=b"error: closed\n"),
+        ]
+    )
+
+    def fake_run(command, **kwargs):  # noqa: ANN001, ARG001
+        calls.append(list(command))
+        return next(responses)
+
+    monkeypatch.setattr("dino_bot.actions.subprocess.run", fake_run)
+    monkeypatch.setattr("dino_bot.actions.time.sleep", lambda _: None)
+    monkeypatch.setattr(AdbClient, "_resolve_executable", staticmethod(lambda _: "adb"))
+    client = AdbClient(AdbConfig(serial="127.0.0.1:5555"))
+
+    with pytest.raises(AdbError, match="reconnect was attempted once"):
+        client.display_size()
+
+    assert sum(command[-3:] == ["shell", "wm", "size"] for command in calls) == 2
 
 
 def test_config_rejects_a_discovery_port_that_cannot_be_one(tmp_path: Path) -> None:

@@ -92,28 +92,45 @@ def test_hp_rule_swaps_on_hp() -> None:
     assert pick_replacement(parent, rows, HP_RULE) == 1
 
 
-def test_stat_upgrade_guard_rejects_attack_jump_above_seven() -> None:
-    parent = Stats(30, 276, 1)
-    rows = [Stats(30, 284, 1)]
-    assert pick_replacement(parent, rows, ATTACK_RULE) is None
+def test_smallest_possible_increase_still_replaces_the_parent() -> None:
+    # Observed 2026-08-12: a parent on 389 attack sat next to a 390 and kept
+    # itself, because a replacement had to win by at least the mutation-sized
+    # margin. A round that exists to raise one stat cannot decline a rise.
+    parent = Stats(10, 389, 1)
+    rows = [
+        Stats(10, 390, 1),
+        Stats(10, 389, 1),
+        Stats(10, 389, 1),
+        Stats(10, 384, 4),
+        Stats(3360, 377, 1),
+    ]
 
-
-def test_stat_upgrade_guard_skips_invalid_top_row_for_valid_lower_row() -> None:
-    parent = Stats(30, 276, 1)
-    rows = [Stats(30, 284, 1), Stats(30, 283, 1)]
-    assert pick_replacement(parent, rows, ATTACK_RULE) == 1
-
-
-def test_stat_upgrade_guard_accepts_attack_boundaries() -> None:
-    parent = Stats(30, 276, 1)
-    rows = [Stats(30, 283, 1), Stats(30, 283, 1)]
     assert pick_replacement(parent, rows, ATTACK_RULE) == 0
 
 
-def test_stat_upgrade_guard_accepts_hp_boundaries() -> None:
-    parent = Stats(2230, 2, 1)
-    rows = [Stats(2300, 2, 1), Stats(2260, 2, 1)]
-    assert pick_replacement(parent, rows, HP_RULE) == 0
+def test_a_large_increase_is_not_treated_as_an_impossible_reading() -> None:
+    # The same band had an upper edge, so the better a candidate was the more
+    # likely it was skipped. Absolute bounds catch unreadable rows; the size
+    # of the improvement is not evidence against it.
+    parent = Stats(30, 276, 1)
+
+    assert pick_replacement(parent, [Stats(30, 284, 1)], ATTACK_RULE) == 0
+    assert pick_replacement(parent, [Stats(30, 400, 1)], ATTACK_RULE) == 0
+    assert pick_replacement(Stats(2230, 2, 1), [Stats(9000, 2, 1)], HP_RULE) == 0
+
+
+def test_best_increase_wins_over_a_smaller_one() -> None:
+    parent = Stats(30, 276, 1)
+    rows = [Stats(30, 284, 1), Stats(30, 283, 1)]
+
+    assert pick_replacement(parent, rows, ATTACK_RULE) == 0
+
+
+def test_equal_best_primary_falls_back_to_row_order() -> None:
+    parent = Stats(30, 276, 1)
+    rows = [Stats(30, 283, 1), Stats(30, 283, 1)]
+
+    assert pick_replacement(parent, rows, ATTACK_RULE) == 0
 
 
 def test_parent_outside_absolute_guard_keeps_parent_without_blocking_readout() -> None:

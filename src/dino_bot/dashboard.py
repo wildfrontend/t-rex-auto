@@ -23,7 +23,6 @@ from urllib.request import Request, urlopen
 
 from .hatch_inventory import HatchBoostInventoryStore
 from .metrics import MetricsStore
-from .nests import default_stat_upgrade_guards
 
 DASHBOARD_VERSION = 1
 DEFAULT_BOT_PORTS = {"hatch-hunt": 8773, "hunt": 8765, "hatch-stage": 8774}
@@ -951,95 +950,6 @@ class DashboardController:
             "message": "設定已儲存並重新啟動" if restarted else "設定已儲存",
         }
 
-    def mutation_guards(self, instance_id: str | None = None) -> dict[str, int]:
-        """Return the selected instance's persisted mutation safety ranges."""
-
-        defaults = default_stat_upgrade_guards()
-        values = {
-            "hp_min_delta": int(defaults["hp"].min_delta or 0),
-            "hp_max_delta": int(defaults["hp"].max_delta or 0),
-            "attack_min_delta": int(defaults["attack"].min_delta or 0),
-            "attack_max_delta": int(defaults["attack"].max_delta or 0),
-        }
-        instance = self._instance(instance_id)
-        try:
-            config = json.loads(instance.config_path.read_text(encoding="utf-8"))
-            hatch = config.get("hatch", {})
-            guards = hatch.get("stat_upgrade_guards", {})
-        except (OSError, ValueError, AttributeError):
-            return values
-        if not isinstance(guards, dict):
-            return values
-        for stat, bound in (("hp", "min"), ("hp", "max"), ("attack", "min"), ("attack", "max")):
-            entry = guards.get(stat)
-            key = f"{stat}_{bound}_delta"
-            candidate = entry.get(f"{bound}_delta") if isinstance(entry, dict) else None
-            if isinstance(candidate, int) and not isinstance(candidate, bool):
-                values[key] = candidate
-        return values
-
-    def update_mutation_guards(
-        self,
-        *,
-        instance_id: str | None,
-        hp_min_delta: int,
-        hp_max_delta: int,
-        attack_min_delta: int,
-        attack_max_delta: int,
-    ) -> dict[str, Any]:
-        """Persist validated mutation ranges for the next Bot launch."""
-
-        values = {
-            "hp_min_delta": hp_min_delta,
-            "hp_max_delta": hp_max_delta,
-            "attack_min_delta": attack_min_delta,
-            "attack_max_delta": attack_max_delta,
-        }
-        for name, value in values.items():
-            if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 10_000:
-                raise ValueError(f"{name} must be an integer between 0 and 10000")
-        if hp_min_delta > hp_max_delta or attack_min_delta > attack_max_delta:
-            raise ValueError("mutation minimum cannot exceed maximum")
-        if hp_min_delta % 10 or hp_max_delta % 10:
-            raise ValueError("HP mutation values must be multiples of 10")
-
-        instance = self._instance(instance_id)
-        try:
-            config = json.loads(instance.config_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as exc:
-            raise RuntimeError(f"cannot read instance config: {exc}") from exc
-        if not isinstance(config, dict):
-            raise RuntimeError("instance config must be a JSON object")
-        hatch = config.setdefault("hatch", {})
-        if not isinstance(hatch, dict):
-            raise RuntimeError("instance config hatch section must be an object")
-        guards = hatch.setdefault("stat_upgrade_guards", {})
-        if not isinstance(guards, dict):
-            raise RuntimeError("instance config stat_upgrade_guards must be an object")
-        hp = guards.setdefault("hp", {})
-        attack = guards.setdefault("attack", {})
-        if not isinstance(hp, dict) or not isinstance(attack, dict):
-            raise RuntimeError("instance config HP and attack guards must be objects")
-        hp["min_delta"] = hp_min_delta
-        hp["max_delta"] = hp_max_delta
-        hp.setdefault("multiple_of", 10)
-        attack["min_delta"] = attack_min_delta
-        attack["max_delta"] = attack_max_delta
-
-        temporary = instance.config_path.with_suffix(".tmp")
-        temporary.write_text(
-            json.dumps(config, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
-        temporary.replace(instance.config_path)
-        return {
-            "accepted": True,
-            "action": "set-mutation-guards",
-            "mutation_guards": values,
-            "message": "異變安全範圍已儲存，下一次啟動 Bot 時生效",
-        }
-
-
 class _DashboardHttpServer(ThreadingHTTPServer):
     daemon_threads = True
 
@@ -1199,23 +1109,6 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                         else "已關閉冷卻加速券使用"
                     ),
                 }
-            elif action == "set-mutation-guards":
-                payload = self._read_json()
-                values: dict[str, int] = {}
-                for name in (
-                    "hp_min_delta",
-                    "hp_max_delta",
-                    "attack_min_delta",
-                    "attack_max_delta",
-                ):
-                    value = payload.get(name)
-                    if isinstance(value, bool) or not isinstance(value, int):
-                        raise ValueError(f"{name} must be an integer")
-                    values[name] = value
-                result = self.server.controller.update_mutation_guards(
-                    instance_id=instance_id,
-                    **values,
-                )
             elif action in {"diagnostics", "snapshot", "open-logs"}:
                 result = self.server.controller.run_tool(action, instance_id)
             elif action == "add-instance":
@@ -1347,7 +1240,6 @@ class DashboardServer:
             "active": selected["active"],
             "metrics": selected["metrics"],
             "hatch_boost_inventory": selected["hatch_boost_inventory"],
-            "mutation_guards": self.controller.mutation_guards(selected["id"]),
         }
 
     def start(self) -> None:
