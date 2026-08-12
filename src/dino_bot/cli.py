@@ -33,6 +33,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=[
             "hunt",
             "hatch",
+            "hatch-beginner",
             "hatch-full",
             "hatch-hunt",
             "hatch-filter-test",

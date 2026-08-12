@@ -121,6 +121,31 @@ def test_close_starts_rescan_wait_and_resumes() -> None:
     assert target is not None and target.type == hatch.EGG_PILE
 
 
+def test_beginner_settings_are_per_config_and_reserved_for_later_management(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "hatch": {
+                    "beginner_population_limit": 180,
+                    "beginner_stat_upgrade_guards": {
+                        "attack": {"min_value": 10, "max_value": 120}
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config.hatch.beginner_population_limit == 180
+    guard = config.hatch.beginner_stat_upgrade_guards["attack"]
+    assert (guard.min_value, guard.max_value) == (10, 120)
+
+
 def test_hatch_timer_parser_accepts_compact_digits_and_rejects_bad_time() -> None:
     assert parse_hatch_timer_text("000537") == 337
     assert parse_hatch_timer_text("00?20?05") == 1205

@@ -197,6 +197,20 @@ def test_full_hatch_entrypoint_is_separate_unbounded_and_not_hunt() -> None:
     assert "Full Auto Hatch" in command
 
 
+def test_beginner_hatch_entrypoint_is_simple_and_does_not_manage_parents() -> None:
+    command = (REPO / "scripts/windows/start-hatch-beginner.cmd").read_text(
+        encoding="utf-8"
+    )
+    runner = (REPO / "scripts/windows/run-hatch-windows.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert '-Feature "hatch-beginner"' in command
+    assert 'set "hatch_status_port=8775"' in command
+    assert '"hatch-beginner"' in runner
+    assert "never sorts parents, enters the cave, or removes dinosaurs" in command
+
+
 def test_hatch_hunt_entrypoint_is_combined_unbounded_and_separate() -> None:
     command = (REPO / "scripts/windows/start-hatch-hunt.cmd").read_text(encoding="utf-8")
     runner = (REPO / "scripts/windows/run-hatch-windows.ps1").read_text(encoding="utf-8")

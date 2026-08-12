@@ -173,6 +173,7 @@ def test_dashboard_builds_noninteractive_runner_commands(tmp_path: Path) -> None
     controller = DashboardController(tmp_path, tmp_path / "app" / "logs")
 
     hunt = controller._runner_command("hunt")
+    beginner = controller._runner_command("hatch-beginner")
     combined = controller._runner_command("hatch-hunt")
     cave = controller._runner_command("hatch-stage", stage="cave")
     cave_after_switch = controller._runner_command(
@@ -185,6 +186,8 @@ def test_dashboard_builds_noninteractive_runner_commands(tmp_path: Path) -> None
     assert "run-windows.ps1" in hunt[6]
     assert hunt[-2:] == ["-StatusPort", "8765"]
     assert "run-hatch-windows.ps1" in combined[6]
+    assert "run-hatch-windows.ps1" in beginner[6]
+    assert "hatch-beginner" in beginner
     assert combined[-4:] == ["-MaxActions", "0", "-MaxCycles", "0"]
     assert "run-hatch-windows.ps1" in cave[6]
     assert "hatch-stage-cave" in cave
