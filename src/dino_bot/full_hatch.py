@@ -19,6 +19,7 @@ destructive-looking affirmative action also requires its known prompt.
 from __future__ import annotations
 
 import logging
+import math
 import time
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
@@ -63,7 +64,7 @@ from .overlays import (
     SELECT_CONFIRM_PROMPT,
 )
 from .parent_open import NEST_TITLE, SELECT_TITLE
-from .stalls import EggPileSnapshot, ParentStatsSnapshot
+from .stalls import EggPileSnapshot, HomeRecoverySnapshot, ParentStatsSnapshot
 
 # Full-workflow synthetic actions and newly cropped screen anchors.
 OPEN_NEST = "hatch_full_open_nest"
@@ -102,6 +103,7 @@ RECOVERY_CLAIM = "hatch_recovery_claim"
 RECOVERY_MAP_EXIT = "hatch_recovery_map_exit"
 RECOVERY_FOREST = "hatch_recovery_forest_recenter"
 RECOVERY_RECENTER = "hatch_recovery_recenter"
+RECOVERY_UNDO = "hatch_recovery_undo_recenter"
 RECOVERY_BACK = "hatch_recovery_back"
 HUNT_MAP_EXIT = "map_exit_nest_button"
 FOREST_RECENTER = "forest_recenter_button"
@@ -179,6 +181,7 @@ DEFAULT_TARGET_ACTIONS: dict[str, str] = {
     RECOVERY_MAP_EXIT: "tap",
     RECOVERY_FOREST: "tap",
     RECOVERY_RECENTER: "swipe",
+    RECOVERY_UNDO: "swipe",
     RECOVERY_BACK: "back",
     STARTUP_GROWTH_RESULT: "tap",
     STARTUP_AUTO_BATTLE_CLOSE: "tap",
@@ -218,6 +221,7 @@ DEFAULT_POST_ACTION_DELAYS_MS: dict[str, int] = {
     RECOVERY_MAP_EXIT: 4000,
     RECOVERY_FOREST: 4000,
     RECOVERY_RECENTER: 4000,
+    RECOVERY_UNDO: 4000,
     RECOVERY_BACK: 4000,
     STARTUP_GROWTH_RESULT: 3000,
     STARTUP_AUTO_BATTLE_CLOSE: 3000,
@@ -294,6 +298,18 @@ RETRYABLE_NAVIGATION_TARGETS: frozenset[str] = frozenset(
 )
 MAX_NAVIGATION_RETRIES = 2
 MAX_SCREENING_RECOVERY_FAILURES = 3
+
+# The centred home map is proven by the cyan egg-pile base rather than a
+# template, because the pile artwork changes with its contents while the base
+# does not.  Reference and tolerance live together so the "is it centred" test
+# and the correction that follows it cannot drift apart.
+HOME_PILE_BASE: tuple[float, float] = (450.0, 1455.0)
+HOME_PILE_TOLERANCE = 100.0
+
+# One observed run spent 111 seconds and 25 actions bouncing between home and
+# the hunt map before its attempt counters ran out.  Recovery is a detour, not
+# the work: bound the whole episode, retries included, by wall clock too.
+MAX_HOME_RECOVERY_SECONDS = 45.0
 
 
 HOME_FOREGROUND_TYPES: frozenset[str] = frozenset(
@@ -506,6 +522,23 @@ def is_home_screen(frame: Frame, detections: Sequence[Detection]) -> bool:
     return bool(np.mean(gray > 100) >= 0.45)
 
 
+def home_pile_offset(frame: Frame) -> tuple[float, float] | None:
+    """Return how far the egg-pile base sits from its centred position.
+
+    Positive values are the distance the map content must still travel, so a
+    correction gesture can use the pair directly as its drag vector.
+    """
+
+    pile = _egg_pile_base_center(frame)
+    if pile is None:
+        return None
+    scale = frame.width / 900.0
+    return (
+        HOME_PILE_BASE[0] * scale - pile[0],
+        HOME_PILE_BASE[1] * scale - pile[1],
+    )
+
+
 def is_centered_home_screen(frame: Frame, detections: Sequence[Detection]) -> bool:
     """Return whether the normal home map (not the shifted cave view) is ready."""
 
@@ -513,14 +546,11 @@ def is_centered_home_screen(frame: Frame, detections: Sequence[Detection]) -> bo
         item.type == CAVE for item in detections
     ):
         return False
-    pile = _egg_pile_base_center(frame)
-    if pile is None:
+    offset = home_pile_offset(frame)
+    if offset is None:
         return False
     scale = frame.width / 900.0
-    expected_x, expected_y = 450 * scale, 1455 * scale
-    return abs(pile[0] - expected_x) <= 100 * scale and abs(
-        pile[1] - expected_y
-    ) <= 100 * scale
+    return max(abs(offset[0]), abs(offset[1])) <= HOME_PILE_TOLERANCE * scale
 
 
 def _hatch_boost_ready(frame: Frame) -> bool:
@@ -641,22 +671,39 @@ class HatchHomeRecoveryPlanner:
         logger: logging.Logger | None = None,
         max_back_attempts: int = 2,
         required_home_frames: int = 2,
+        max_forest_trips: int = 1,
+        max_measured_corrections: int = 2,
     ) -> None:
         self.reference_width = reference_width
         self.logger = logger or logging.getLogger("dino_bot")
         self.max_back_attempts = max(0, max_back_attempts)
         self.required_home_frames = max(1, required_home_frames)
+        self.max_forest_trips = max(0, max_forest_trips)
+        self.max_measured_corrections = max(0, max_measured_corrections)
         self._stage = "inspect"
         self._back_attempts = 0
         self._home_frames = 0
         self._recenter_swipes = 0
         self._cave_recovery_required = False
         self._recenter_end = 0
+        self._forest_trips = 0
+        self._forest_refused = False
+        self._measured_corrections = 0
+        self._last_offset: tuple[float, float] | None = None
+        self._applied_swipes: list[tuple[int, int, int, int]] = []
+        self._undone_swipes = 0
+        self._pending_swipe: tuple[int, int, int, int] | None = None
+        self._pending_cave_leg = False
         self._complete = False
         self._failed = False
 
     def last_stage(self) -> str:
         return f"recover_home_{self._stage}"
+
+    def forest_trips(self) -> int:
+        """How many times this planner entered the hunt map to recentre."""
+
+        return self._forest_trips
 
     def is_complete(self) -> bool:
         return self._complete
@@ -666,11 +713,28 @@ class HatchHomeRecoveryPlanner:
 
     def on_action_success(self, target_type: str) -> None:
         if target_type == RECOVERY_RECENTER:
-            self._recenter_swipes += 1
+            if self._pending_cave_leg:
+                # Only the calibrated route is indexed by this counter.  A
+                # measured nudge that advanced it would make a later cave
+                # return skip its first leg and stop halfway home.
+                self._recenter_swipes += 1
+            if self._pending_swipe is not None:
+                # Remember the gesture, not just the count: a camera move that
+                # loses the home reference can only be undone by replaying the
+                # exact vector backwards.
+                self._applied_swipes.append(self._pending_swipe)
+        elif target_type == RECOVERY_UNDO:
+            self._undone_swipes += 1
+        elif target_type == RECOVERY_FOREST:
+            self._forest_trips += 1
+        self._pending_swipe = None
+        self._pending_cave_leg = False
         self._stage = f"verify_{target_type}"
 
     def on_action_failure(self, target_type: str) -> None:
         self.logger.error("Hatch recovery | action failed | target=%s", target_type)
+        self._pending_swipe = None
+        self._pending_cave_leg = False
         self._stage = f"failed_{target_type}"
         self._failed = True
 
@@ -693,7 +757,7 @@ class HatchHomeRecoveryPlanner:
                 self.reference_width,
             )
             self._stage = "recenter_cave_view"
-            return _swipe_target(RECOVERY_RECENTER, x1, y1, x2, y2)
+            return self._swipe(RECOVERY_RECENTER, x1, y1, x2, y2, cave_leg=True)
         if is_centered_home_screen(frame, detections):
             self._home_frames += 1
             self._stage = f"confirm_home_{self._home_frames}/{self.required_home_frames}"
@@ -754,52 +818,203 @@ class HatchHomeRecoveryPlanner:
             self._stage = "leave_hunt_map"
             return _synthetic(RECOVERY_MAP_EXIT, map_exit.x, map_exit.y)
 
+        # Correcting the camera against a landmark that is still on screen
+        # outranks any blind escape below: those only open and close screens,
+        # and none of them can put the map back where it belongs.
+        recenter = self._recenter_target(frame, detections, by_type, vectors)
+        if recenter is not None:
+            return recenter
+
         forest = _best(by_type.get(FOREST_RECENTER))
-        if forest is not None:
+        if forest is not None and self._forest_trips < self.max_forest_trips:
             # The bottom-right Forest button survives positions where the
             # hatch home anchor is clipped off-screen. Entering Forest and
-            # immediately using its named map-exit control resets the camera
-            # to a known home position without guessing another swipe.
+            # immediately using its named map-exit control has been observed
+            # to restore a clipped anchor, but it returns to the *previous*
+            # home camera position, so it cannot fix a panned map.  One trip
+            # proves which case this is; repeating it only burns wall clock.
             self._stage = "enter_forest_for_recenter"
             return _synthetic(RECOVERY_FOREST, forest.x, forest.y)
-
-        if is_home_screen(frame, detections) and CAVE in by_type:
-            if self._recenter_swipes >= len(vectors):
-                self.logger.error(
-                    "Hatch recovery | cave view remains after %d safe return swipes",
-                    self._recenter_swipes,
-                )
-            else:
-                self._cave_recovery_required = True
-                self._recenter_end = len(vectors)
-                return self.choose(frame, detections)
-
-        if is_home_screen(frame, detections):
-            pile = _egg_pile_base_center(frame)
-            if pile is not None:
-                scale = frame.width / 900.0
-                expected_x, expected_y = 450 * scale, 1455 * scale
-                x_shifted = abs(pile[0] - expected_x) > 100 * scale
-                y_too_high = pile[1] < expected_y - 100 * scale
-                if x_shifted or y_too_high:
-                    # A process may restart after the horizontal cave-return
-                    # swipe. Resume at the vertical leg when the pile is
-                    # already horizontally centred instead of replaying the
-                    # first leg and pushing it past centre again.
-                    self._recenter_swipes = 0 if x_shifted else 1
-                    self._recenter_end = 2 if y_too_high else 1
-                    self._cave_recovery_required = True
-                    return self.choose(frame, detections)
+        if forest is not None and not self._forest_refused:
+            self._forest_refused = True
+            self.logger.error(
+                "Hatch recovery | home still unproven and the forest round trip"
+                " is spent (trips=%d, budget=%d); it does not move the camera"
+                " on this screen",
+                self._forest_trips,
+                self.max_forest_trips,
+            )
 
         if self._back_attempts < self.max_back_attempts:
             self._back_attempts += 1
             self._stage = f"back_{self._back_attempts}/{self.max_back_attempts}"
             return _synthetic(RECOVERY_BACK, frame.width // 2, frame.height // 2)
 
+        # Last resort, deliberately after the escape ladder: the frame captured
+        # straight after any action is often still mid-transition and matches
+        # nothing, and undoing a correction that actually worked because of one
+        # such frame would be worse than the loop this repairs.  Reaching here
+        # means the settled screen really has no landmark left.
+        undo = self._undo_target()
+        if undo is not None:
+            return undo
+
         self.logger.error("Hatch recovery | unable to prove centered home after bounded escape")
         self._stage = "exhausted"
         self._failed = True
         return None
+
+    def _swipe(
+        self,
+        target_type: str,
+        x1: int,
+        y1: int,
+        x2: int,
+        y2: int,
+        *,
+        cave_leg: bool = False,
+    ) -> Target:
+        """Issue a camera gesture, holding it until the action is confirmed."""
+
+        if target_type == RECOVERY_RECENTER:
+            self._pending_swipe = (x1, y1, x2, y2)
+            self._pending_cave_leg = cave_leg
+        return _swipe_target(target_type, x1, y1, x2, y2)
+
+    def _recenter_target(
+        self,
+        frame: Frame,
+        detections: Sequence[Detection],
+        by_type: dict[str, list[Detection]],
+        vectors: Sequence[tuple[int, int, int, int]],
+    ) -> Target | None:
+        """Move the camera while a home landmark is still measurable."""
+
+        if not is_home_screen(frame, detections):
+            return None
+        if CAVE in by_type:
+            # The cave view is a calibrated displacement, so replaying the
+            # inverse route is exact.  A measured nudge is not available here:
+            # the egg pile is outside the viewport at the cave position.
+            if self._recenter_swipes >= len(vectors):
+                self.logger.error(
+                    "Hatch recovery | cave view remains after %d safe return swipes",
+                    self._recenter_swipes,
+                )
+                return None
+            self._cave_recovery_required = True
+            self._recenter_end = len(vectors)
+            x1, y1, x2, y2 = _scaled_swipe(
+                frame,
+                vectors[self._recenter_swipes],
+                self.reference_width,
+            )
+            self._stage = "recenter_cave_view"
+            return self._swipe(RECOVERY_RECENTER, x1, y1, x2, y2, cave_leg=True)
+
+        offset = home_pile_offset(frame)
+        if offset is None:
+            return None
+        scale = frame.width / 900.0
+        if max(abs(offset[0]), abs(offset[1])) <= HOME_PILE_TOLERANCE * scale:
+            return None
+        if (
+            self._last_offset is not None
+            and _hypot(offset) >= _hypot(self._last_offset)
+        ):
+            # Two corrections that do not converge mean the map is not
+            # responding to the gesture the way the measurement assumes.
+            # Repeating it walks the camera further from home, not closer.
+            self.logger.error(
+                "Hatch recovery | measured correction did not reduce the offset"
+                " | before=(%.0f,%.0f) | after=(%.0f,%.0f)",
+                self._last_offset[0],
+                self._last_offset[1],
+                offset[0],
+                offset[1],
+            )
+            return None
+        if self._measured_corrections >= self.max_measured_corrections:
+            self.logger.error(
+                "Hatch recovery | egg pile still off by (%.0f,%.0f)px"
+                " after %d measured corrections",
+                offset[0],
+                offset[1],
+                self._measured_corrections,
+            )
+            return None
+        # Drag by exactly the measured offset instead of replaying a
+        # calibrated leg.  The trigger tolerance is 100px while a calibrated
+        # leg is 450px, so a full leg turns a small offset into a larger one
+        # in the opposite direction - and once the pile and the anchor leave
+        # the viewport, nothing on screen can measure the mistake.
+        self._measured_corrections += 1
+        self._last_offset = offset
+        x1, y1, x2, y2 = self._nudge(frame, offset)
+        self._stage = (
+            f"recenter_pile_{self._measured_corrections}"
+            f"/{self.max_measured_corrections}"
+        )
+        self.logger.info(
+            "Hatch recovery | nudging map by (%.0f,%.0f)px | attempt=%d/%d",
+            offset[0],
+            offset[1],
+            self._measured_corrections,
+            self.max_measured_corrections,
+        )
+        return self._swipe(RECOVERY_RECENTER, x1, y1, x2, y2)
+
+    def _nudge(
+        self,
+        frame: Frame,
+        offset: tuple[float, float],
+    ) -> tuple[int, int, int, int]:
+        """Build a drag that moves map content by ``offset``.
+
+        The gesture is centred on the travel so both ends stay clear of the
+        edges; a clamped end only shortens the correction, which the next
+        measurement can finish, while an off-screen end would be dropped.
+        """
+
+        margin = round(80 * frame.width / 900.0)
+        dx, dy = round(offset[0]), round(offset[1])
+
+        def leg(span: int, travel: int) -> tuple[int, int]:
+            start = round(span / 2 - travel / 2)
+            start = max(margin, min(span - margin, start))
+            end = max(margin, min(span - margin, start + travel))
+            return start, end
+
+        x1, x2 = leg(frame.width, dx)
+        y1, y2 = leg(frame.height, dy)
+        return x1, y1, x2, y2
+
+    def _undo_target(self) -> Target | None:
+        """Reverse this planner's own camera move once the landmarks are gone.
+
+        Every branch that can prove or measure the home position needs either
+        the home anchor or the egg pile.  A gesture that pushes both out of
+        the viewport therefore blinds the planner to its own mistake, and no
+        later branch can repair it: the escape ladder below only opens and
+        closes screens.  Replaying the gesture backwards is the one move that
+        restores something to measure against.
+        """
+
+        if self._undone_swipes >= len(self._applied_swipes):
+            return None
+        x1, y1, x2, y2 = self._applied_swipes[-1 - self._undone_swipes]
+        self._stage = (
+            f"undo_recenter_{self._undone_swipes + 1}/{len(self._applied_swipes)}"
+        )
+        self.logger.warning(
+            "Hatch recovery | no home landmark after own camera move"
+            " | replaying (%d,%d)->(%d,%d) backwards",
+            x1,
+            y1,
+            x2,
+            y2,
+        )
+        return self._swipe(RECOVERY_UNDO, x2, y2, x1, y1)
 
 
 class AutoPlaceRoundPlanner:
@@ -1419,6 +1634,7 @@ class FullHatchPlanner:
         capacity_snapshots: CapacitySnapshot | None = None,
         parent_stats_snapshots: ParentStatsSnapshot | None = None,
         egg_pile_snapshots: EggPileSnapshot | None = None,
+        home_recovery_snapshots: HomeRecoverySnapshot | None = None,
         stage_scoped_scan: bool = True,
         standalone_stage: str | None = None,
         logger: logging.Logger | None = None,
@@ -1444,6 +1660,7 @@ class FullHatchPlanner:
         self.capacity_snapshots = capacity_snapshots
         self.parent_stats_snapshots = parent_stats_snapshots
         self.egg_pile_snapshots = egg_pile_snapshots
+        self.home_recovery_snapshots = home_recovery_snapshots
         self.stage_scoped_scan = bool(stage_scoped_scan)
         if standalone_stage is not None and standalone_stage not in STANDALONE_STAGES:
             raise ValueError(f"unsupported standalone hatch stage: {standalone_stage}")
@@ -1470,6 +1687,8 @@ class FullHatchPlanner:
         self._no_target_since: float | None = None
         self._recovery_reason: str | None = None
         self._recovery_rounds = 0
+        self._recovery_started_at: float | None = None
+        self._recovery_forest_exhausted = False
         self._collect_only_after_empty = False
         self._empty_rescan_wait = False
         # A fresh planner instance must prove that the dinosaur capacity is
@@ -2043,7 +2262,13 @@ class FullHatchPlanner:
         if self._stage == "recover_home":
             target = self._recovery_child.choose(frame, detections)
             if self._recovery_child.is_failed():
-                if self.standalone_stage is None and self._recovery_rounds < 2:
+                self._capture_recovery_evidence(frame, detections)
+                elapsed = self.clock() - (self._recovery_started_at or self.clock())
+                if (
+                    self.standalone_stage is None
+                    and self._recovery_rounds < 2
+                    and elapsed < MAX_HOME_RECOVERY_SECONDS
+                ):
                     # 畫面轉場常只比恢復預算慢幾秒;連續模式先重試,
                     # 不要一次失敗就把整個流程標記結束。
                     self._recovery_rounds += 1
@@ -2053,8 +2278,11 @@ class FullHatchPlanner:
                     )
                     return None
                 self.logger.error(
-                    "Hatch full | recovery failed | reason=%s",
+                    "Hatch full | recovery failed | reason=%s"
+                    " | rounds=%d | elapsed=%.0fs",
                     self._recovery_reason or "unknown",
+                    self._recovery_rounds,
+                    elapsed,
                 )
                 self._complete = True
                 return None
@@ -2071,6 +2299,8 @@ class FullHatchPlanner:
                         self._start_standalone()
                         return self._choose_current(frame, detections)
                 self._recovery_rounds = 0
+                self._recovery_started_at = None
+                self._recovery_forest_exhausted = False
                 self.logger.info(
                     "Hatch full | centered home confirmed | recovered=%s",
                     self._recovery_reason or "unknown",
@@ -2415,6 +2645,26 @@ class FullHatchPlanner:
             return target
         return None
 
+    def _capture_recovery_evidence(
+        self,
+        frame: Frame,
+        detections: Sequence[Detection],
+    ) -> None:
+        """Keep the frame a failed return-to-home could not describe."""
+
+        if self.home_recovery_snapshots is None:
+            return
+        self.home_recovery_snapshots.capture(
+            frame,
+            detections,
+            reason=self._recovery_reason or "unknown",
+            stage=self._recovery_child.last_stage(),
+            rounds=self._recovery_rounds,
+            forest_trips=self._recovery_child.forest_trips(),
+            measured_base=_egg_pile_base_center(frame),
+            expected_base=HOME_PILE_BASE,
+        )
+
     def _begin_home_recovery(self, reason: str) -> None:
         if self.standalone_stage is not None and self._standalone_started:
             self._standalone_returning = True
@@ -2441,10 +2691,22 @@ class FullHatchPlanner:
                 )
                 return
         self.logger.warning("Hatch full | recovering to centered home | %s", reason)
+        if self._stage != "recover_home":
+            # A fresh episode, not one of its own retries: start the wall-clock
+            # budget and forget what the previous episode learned about the
+            # screen it was looking at.
+            self._recovery_started_at = self.clock()
+            self._recovery_forest_exhausted = False
+        elif self._recovery_child.forest_trips():
+            # The retry gets a new child with fresh counters.  Carry this one
+            # fact across, or each retry buys another round trip that has
+            # already been shown not to move the camera.
+            self._recovery_forest_exhausted = True
         self._stage = "recover_home"
         self._child = HatchHomeRecoveryPlanner(
             reference_width=self.reference_width,
             logger=self.logger,
+            max_forest_trips=0 if self._recovery_forest_exhausted else 1,
         )
         self._no_target_since = None
         self._recovery_reason = reason
@@ -2903,6 +3165,10 @@ def _inverse_swipe_vectors(
 
 def _best(items: list[Detection] | None) -> Detection | None:
     return max(items, key=lambda item: item.confidence) if items else None
+
+
+def _hypot(offset: tuple[float, float]) -> float:
+    return math.hypot(offset[0], offset[1])
 
 
 def _near(

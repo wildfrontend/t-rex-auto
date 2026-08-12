@@ -68,6 +68,23 @@ class EggPileSnapshot(Protocol):
     ) -> Path | None: ...
 
 
+class HomeRecoverySnapshot(Protocol):
+    """Writes evidence when recovery cannot prove it reached centered home."""
+
+    def capture(
+        self,
+        frame: Frame,
+        detections: Sequence[Detection],
+        *,
+        reason: str,
+        stage: str,
+        rounds: int,
+        forest_trips: int,
+        measured_base: tuple[float, float] | None,
+        expected_base: tuple[float, float],
+    ) -> Path | None: ...
+
+
 class _SnapshotWriter:
     """Rate-limited, size-capped PNG + JSON evidence under one filename stem."""
 
@@ -395,6 +412,91 @@ class EggPileSnapshotWriter(_SnapshotWriter):
             "Hatch calibration | egg pile tap failed | target=(%d,%d) | saved %s",
             target_x,
             target_y,
+            path.name,
+        )
+        return path
+
+
+class HomeRecoverySnapshotWriter(_SnapshotWriter):
+    """Keep the frame that a failed return-to-home could not describe.
+
+    Recovery ends by reporting which controls it matched, and the failure it
+    reports most often is that it matched none of the ones it needed. Whether
+    the map is panned away from home, an unknown overlay is covering it, or a
+    template stopped matching produces the same empty event either way. The
+    frame separates them; nothing in the log can.
+    """
+
+    prefix = "home-recovery"
+
+    def capture(
+        self,
+        frame: Frame,
+        detections: Sequence[Detection],
+        *,
+        reason: str,
+        stage: str,
+        rounds: int,
+        forest_trips: int,
+        measured_base: tuple[float, float] | None,
+        expected_base: tuple[float, float],
+    ) -> Path | None:
+        """Write one recovery-failure frame, or ``None`` when rate limited."""
+
+        moment = self.clock()
+        if self._throttled(moment):
+            return None
+
+        annotated = frame.image.copy()
+        scale = frame.width / 900.0
+        radius = max(8, round(18 * scale))
+        expected = (
+            round(expected_base[0] * scale),
+            round(expected_base[1] * scale),
+        )
+        # Green = where the centred egg-pile base belongs, blue = where it was
+        # actually measured. No blue circle means the pile is off-screen or
+        # unrecognisable, which is the difference the log cannot express.
+        cv2.circle(annotated, expected, radius, (0, 255, 0), 4)
+        if measured_base is not None:
+            cv2.circle(
+                annotated,
+                tuple(round(value) for value in measured_base),
+                radius,
+                (255, 0, 0),
+                4,
+            )
+        annotated_frame = Frame(
+            annotated,
+            captured_at=frame.captured_at,
+            source=frame.source,
+            sequence=frame.sequence,
+        )
+        path = self._write(
+            annotated_frame,
+            {
+                "reason": "home_recovery_failed",
+                "recovery_reason": reason,
+                "stage": stage,
+                "rounds": rounds,
+                "forest_trips": forest_trips,
+                "measured_base": list(measured_base) if measured_base else None,
+                "expected_base": list(expected),
+                "detections": [item.to_dict() for item in detections],
+                "legend": {
+                    "green": "expected centered egg-pile base",
+                    "blue": "measured cyan base center",
+                },
+            },
+        )
+        if path is None:
+            return None
+
+        self._last_written = moment
+        self._prune()
+        self.logger.warning(
+            "Hatch recovery | centered home unproven | stage=%s | saved %s",
+            stage,
             path.name,
         )
         return path

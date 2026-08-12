@@ -43,6 +43,7 @@ _EVIDENCE_PREFIXES = (
     "egg-pile",
     "capacity",
     "parent-stats",
+    "home-recovery",
 )
 _EVIDENCE_GROUPS_PER_TYPE = 3
 _EVIDENCE_TOTAL_BYTES = 32 * 1024 * 1024
@@ -115,6 +116,13 @@ _CODEX_GUIDE = """# 猛龍計畫診斷包
    `hatch.capacity_read_retries` 才有意義；其餘三種再多重試也是同樣結果。
    判斷前先比對事件流中相鄰幾個循環的 `detect`——若各次偵測數值完全相同，
    代表畫面靜止，那就不是等待不夠的問題。
+10. `logs/stalls/home-recovery-*.png`：孵化流程證明不了自己回到置中首頁時的畫面，
+    對應日誌的 `Hatch recovery | unable to prove centered home`。綠圈是置中蛋堆
+    底座該在的位置，藍圈是實際量到的位置：
+    - 有藍圈但偏離綠圈：地圖被平移了，看偏移量決定是校準參考值不對還是真的沒回中。
+    - 沒有藍圈：蛋堆已經不在畫面內或認不出來，此時規劃器沒有任何可量測的參考點。
+    `.json` 的 `forest_trips` 是進出狩獵圖幾次、`rounds` 是外層重試第幾輪。
+    這兩個數字都不為零卻仍然失敗，代表換畫面救不了它，別再往等待時間去調。
 
 回答時請分成五部分：
 

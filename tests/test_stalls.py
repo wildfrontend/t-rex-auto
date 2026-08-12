@@ -6,9 +6,14 @@ from datetime import UTC, datetime
 
 import numpy as np
 
+from dino_bot.full_hatch import HOME_PILE_BASE
 from dino_bot.models import Frame
 from dino_bot.nest_readout import ATTACK_PARENT_REGIONS
-from dino_bot.stalls import EggPileSnapshotWriter, ParentStatsSnapshotWriter
+from dino_bot.stalls import (
+    EggPileSnapshotWriter,
+    HomeRecoverySnapshotWriter,
+    ParentStatsSnapshotWriter,
+)
 
 
 class UnreadableReader:
@@ -119,3 +124,69 @@ def test_egg_pile_snapshot_marks_points_and_keeps_detection_context(tmp_path) ->
     assert payload["target"] == {"x": 457, "y": 1279}
     assert payload["measured_base"] == [450.0, 1454.0]
     assert payload["proposed_point"] == [450, 1354]
+
+
+def test_home_recovery_snapshot_distinguishes_panned_map_from_lost_pile(
+    tmp_path,
+) -> None:
+    now = datetime(2026, 8, 8, 1, 23, 45, tzinfo=UTC)
+    writer = HomeRecoverySnapshotWriter(
+        tmp_path,
+        logging.getLogger("test-home-recovery"),
+        clock=lambda: 10.0,
+        now=lambda: now,
+    )
+    frame = Frame(np.full((1600, 900, 3), 255, dtype=np.uint8))
+
+    path = writer.capture(
+        frame,
+        [],
+        reason="hatch started from shifted cave view",
+        stage="recover_home_exhausted",
+        rounds=2,
+        forest_trips=1,
+        measured_base=(463.0, 1090.5),
+        expected_base=HOME_PILE_BASE,
+    )
+
+    assert path == tmp_path / "home-recovery-20260808-092345.png"
+    assert path.exists()
+    payload = json.loads(path.with_suffix(".json").read_text(encoding="utf-8"))
+    assert payload["reason"] == "home_recovery_failed"
+    assert payload["recovery_reason"] == "hatch started from shifted cave view"
+    assert payload["stage"] == "recover_home_exhausted"
+    assert payload["rounds"] == 2
+    # Both numbers non-zero says the escape ladder ran and still failed, so
+    # the answer is not "wait longer" - it is whatever this frame shows.
+    assert payload["forest_trips"] == 1
+    assert payload["measured_base"] == [463.0, 1090.5]
+    assert payload["expected_base"] == [450, 1455]
+
+
+def test_home_recovery_snapshot_reports_an_unmeasurable_pile_as_absent(
+    tmp_path,
+) -> None:
+    now = datetime(2026, 8, 8, 1, 23, 45, tzinfo=UTC)
+    writer = HomeRecoverySnapshotWriter(
+        tmp_path,
+        logging.getLogger("test-home-recovery"),
+        clock=lambda: 10.0,
+        now=lambda: now,
+    )
+
+    path = writer.capture(
+        Frame(np.zeros((1600, 900, 3), dtype=np.uint8)),
+        [],
+        reason="retry 2/2 after failed recovery",
+        stage="recover_home_exhausted",
+        rounds=2,
+        forest_trips=1,
+        measured_base=None,
+        expected_base=HOME_PILE_BASE,
+    )
+
+    assert path is not None
+    payload = json.loads(path.with_suffix(".json").read_text(encoding="utf-8"))
+    # A null base is the load-bearing distinction: the pile is off screen or
+    # unrecognisable, so no branch of recovery had anything to measure.
+    assert payload["measured_base"] is None

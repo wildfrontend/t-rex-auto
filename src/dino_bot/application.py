@@ -44,6 +44,7 @@ from .stalls import (
     CapacitySnapshotWriter,
     DinosaurFailureSnapshotWriter,
     EggPileSnapshotWriter,
+    HomeRecoverySnapshotWriter,
     ParentStatsSnapshotWriter,
     StallSnapshotWriter,
 )
@@ -420,6 +421,16 @@ def _create_hatch_engine(
         if config.stalls.snapshots_enabled
         else None
     )
+    home_recovery_snapshots = (
+        HomeRecoverySnapshotWriter(
+            config.stalls_dir,
+            logger,
+            limit=config.stalls.snapshot_limit,
+            min_interval_seconds=config.stalls.snapshot_min_interval_seconds,
+        )
+        if config.stalls.snapshots_enabled
+        else None
+    )
     if full:
         hatch_inventory = HatchBoostInventoryStore(
             config.root / "data" / "stats.sqlite3"
@@ -461,6 +472,7 @@ def _create_hatch_engine(
             capacity_snapshots=capacity_snapshots,
             parent_stats_snapshots=parent_stats_snapshots,
             egg_pile_snapshots=egg_pile_snapshots,
+            home_recovery_snapshots=home_recovery_snapshots,
             stage_scoped_scan=config.planner.stage_scoped_scan,
             standalone_stage=standalone_stage,
             logger=logger,
