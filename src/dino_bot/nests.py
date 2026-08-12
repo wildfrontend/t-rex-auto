@@ -109,11 +109,13 @@ HP_RULE = ReplacementRule(tag="HP特化", sort_option="HP", primary="hp")
 TOP_RULE = AutoPlaceRule(tag="頂尖", sort_option="最佳屬性組合")
 MASS_RULE = AutoPlaceRule(tag="量產", sort_option="等級")
 
-# Main-account screening only checks Attack and HP parents. Auto-place belongs
-# exclusively to the beginner hatch workflow.
+# Main-account screening replaces Attack/HP parents, then uses the game's
+# guarded auto-place flow for Top/Mass before collecting all eggs.
 ROUND_ORDER: tuple[ReplacementRule | AutoPlaceRule, ...] = (
     ATTACK_RULE,
     HP_RULE,
+    TOP_RULE,
+    MASS_RULE,
 )
 FINAL_TAG = "所有"
 

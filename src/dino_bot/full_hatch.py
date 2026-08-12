@@ -4,7 +4,7 @@ This module closes the loop described in ``docs/auto-hatch-plan.md``:
 
 * hatch every ready egg;
 * optimize Attack and HP parents;
-* optimize Attack and HP parents without using auto-place;
+* auto-place Top by best attributes and Mass by level;
 * collect every egg and close My Nest;
 * navigate to the cave, cull only above the configured threshold, and return;
 * when no egg was ready, collect completed nest eggs and then keep the
@@ -137,7 +137,7 @@ HUNT_ACTIVE_TYPES: frozenset[str] = frozenset(
 STANDALONE_STAGES: frozenset[str] = frozenset(
     {"hatch", "attack", "hp", "collect", "cave"}
 )
-SCREENING_STAGES: tuple[str, ...] = ("attack", "hp")
+SCREENING_STAGES: tuple[str, ...] = ("attack", "hp", "top", "mass")
 
 PLACE_SORT_BEST = "hatch_place_sort_best"
 PLACE_SORT_LEVEL = "hatch_place_sort_level"
@@ -1928,7 +1928,7 @@ class FullHatchPlanner:
         if target_type == RECOVERY_NO:
             self.logger.warning(
                 "Hatch full | cancelled unexpected auto-place confirmation"
-                " | auto-place is beginner-only"
+                " | outside top/mass stage"
             )
             self._begin_home_recovery("cancelled unexpected auto-place confirmation")
             return
@@ -2280,7 +2280,9 @@ class FullHatchPlanner:
             if interruption is not None:
                 self._no_target_since = None
                 return _target(interruption)
-        if AUTOPLACE_PROMPT in by_type or AUTOPLACE_NOTICE in by_type:
+        if self._stage not in {"top", "mass"} and (
+            AUTOPLACE_PROMPT in by_type or AUTOPLACE_NOTICE in by_type
+        ):
             no = _best(by_type.get(CONFIRM_NO))
             if no is None:
                 self.logger.error(

@@ -15,7 +15,12 @@ from dino_bot.nests import (
 
 
 def test_round_order_matches_plan() -> None:
-    assert [rule.tag for rule in nests.ROUND_ORDER] == ["攻擊特化", "HP特化"]
+    assert [rule.tag for rule in nests.ROUND_ORDER] == [
+        "攻擊特化",
+        "HP特化",
+        "頂尖",
+        "量產",
+    ]
     assert nests.FINAL_TAG == "所有"
 
 

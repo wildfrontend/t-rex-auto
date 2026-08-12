@@ -39,9 +39,9 @@ from dino_bot.full_hatch import (
     RECOVERY_NO,
     RECOVERY_RECENTER,
     RECOVERY_UNDO,
+    SCREENING_STAGES,
     SELECT_CHOOSE_BUTTON,
     SELECT_WEAKEST_BUTTON,
-    SCREENING_STAGES,
     STANDALONE_STAGES,
     STARTUP_AUTO_BATTLE_CLOSE,
     STARTUP_GROWTH_RESULT,
@@ -229,8 +229,8 @@ def test_autoplace_sort_dropdown_is_opened_when_target_is_not_visible() -> None:
     assert (target.x, target.y) == (450, 576)
 
 
-def test_full_hatch_never_schedules_autoplace_stages() -> None:
-    assert SCREENING_STAGES == ("attack", "hp")
+def test_full_hatch_schedules_top_and_mass_before_collect() -> None:
+    assert SCREENING_STAGES == ("attack", "hp", "top", "mass")
     assert "top" not in STANDALONE_STAGES
     assert "mass" not in STANDALONE_STAGES
 
@@ -238,8 +238,36 @@ def test_full_hatch_never_schedules_autoplace_stages() -> None:
     planner._management_pending = True
     planner._screening_completed = {"attack", "hp"}
     planner._start_next_screening_stage()
+    assert planner._stage == "top"
+    assert planner._autoplace_child.rule == TOP_RULE
 
+    planner._autoplace_child._complete = True
+    planner._advance_autoplace_if_done()
+    assert planner._stage == "mass"
+    assert planner._autoplace_child.rule == MASS_RULE
+
+    planner._autoplace_child._complete = True
+    planner._advance_autoplace_if_done()
     assert planner._stage == "collect"
+
+
+def test_full_hatch_top_stage_confirms_its_own_autoplace_prompt() -> None:
+    planner = make_full_planner()
+    planner._stage = "top"
+    planner._child = AutoPlaceRoundPlanner(TOP_RULE)
+    planner._autoplace_child._stage = "after_autoplace"
+
+    target = planner.choose(
+        frame(),
+        [
+            detection(AUTOPLACE_NOTICE, 450, 720),
+            detection(CONFIRM_YES, 365, 890),
+            detection(CONFIRM_NO, 535, 890),
+        ],
+    )
+
+    assert target is not None and target.type == AUTOPLACE_YES
+    assert (target.x, target.y) == (365, 890)
 
 
 def test_full_hatch_cancels_unexpected_autoplace_confirmation() -> None:
@@ -793,7 +821,7 @@ def test_cleanup_gate_reopens_nest_when_one_screening_stage_is_missing() -> None
 
     assert target is not None and target.type == OPEN_NEST
     assert target.type != CAVE_SWIPE
-    assert planner._missing_screening_stages() == ("hp",)
+    assert planner._missing_screening_stages() == ("hp", "top", "mass")
 
 
 def test_cleanup_gate_allows_cave_only_after_every_screening_stage() -> None:
@@ -803,7 +831,7 @@ def test_cleanup_gate_allows_cave_only_after_every_screening_stage() -> None:
     planner._management_pending = True
     planner._cave_cleanup_after_management = True
     planner._collect_only_after_empty = False
-    planner._screening_completed = {"attack", "hp"}
+    planner._screening_completed = {"attack", "hp", "top", "mass"}
     home = [detection(hatch.HOME_ANCHOR, 59, 561)]
 
     target = planner.choose(frame(), home)
