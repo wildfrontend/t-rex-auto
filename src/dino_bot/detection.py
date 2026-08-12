@@ -762,9 +762,11 @@ class StartupGrowthResultDetector:
         if (frame.width, frame.height) != self.reference_size:
             image = cv2.resize(image, (width, height), interpolation=cv2.INTER_LINEAR)
 
-        # This modal is the only launch screen with a tall white card and two
-        # large cyan/green shortcut buttons along its bottom edge. Requiring
-        # all three features avoids sending a tap on ordinary map screens.
+        # This modal is the only launch screen with a tall white card and a
+        # shortcut button along its bottom edge. Older game builds showed two
+        # buttons (auto battle + nest); newer builds keep only the centred
+        # green "Nest management shortcut" button. Requiring the white card
+        # plus a known button layout avoids tapping ordinary map screens.
         white_regions = np.concatenate(
             [
                 image[190:275, 200:685].reshape(-1, 3),
@@ -782,25 +784,53 @@ class StartupGrowthResultDetector:
             & (cyan[:, :, 1] >= 120)
             & (cyan[:, :, 0] >= cyan[:, :, 2] + 35)
         )
-        green = image[1190:1340, 475:710].astype(np.int16)
-        green_mask = (
-            (green[:, :, 1] >= 130)
-            & (green[:, :, 1] >= green[:, :, 0] + 15)
-            & (green[:, :, 1] >= green[:, :, 2] + 15)
+        legacy_green = image[1190:1340, 475:710].astype(np.int16)
+        legacy_green_mask = (
+            (legacy_green[:, :, 1] >= 130)
+            & (legacy_green[:, :, 1] >= legacy_green[:, :, 0] + 15)
+            & (legacy_green[:, :, 1] >= legacy_green[:, :, 2] + 15)
         )
         cyan_ratio = float(np.mean(cyan_mask))
-        green_ratio = float(np.mean(green_mask))
-        if cyan_ratio < 0.2 or green_ratio < 0.2:
+        legacy_green_ratio = float(np.mean(legacy_green_mask))
+
+        # The new centred button is approximately x=330..570, y=1200..1340
+        # in the 900x1600 reference layout. Sampling a slightly wider band
+        # tolerates the rounded corners and the egg artwork overlapping its
+        # top edge while still requiring a substantial green control.
+        centred_green = image[1200:1340, 320:580].astype(np.int16)
+        centred_green_mask = (
+            (centred_green[:, :, 1] >= 120)
+            & (centred_green[:, :, 1] >= centred_green[:, :, 0] + 12)
+            & (centred_green[:, :, 1] >= centred_green[:, :, 2] + 12)
+        )
+        centred_green_ratio = float(np.mean(centred_green_mask))
+
+        legacy_layout = cyan_ratio >= 0.2 and legacy_green_ratio >= 0.2
+        centred_layout = centred_green_ratio >= 0.25
+        if not legacy_layout and not centred_layout:
             return []
+
+        if centred_layout and not legacy_layout:
+            shortcut_layout = "centered_nest"
+            shortcut_point = (450.0, 1270.0)
+            growth_result_point = shortcut_point
+            button_ratio = centred_green_ratio
+        else:
+            shortcut_layout = "legacy_dual"
+            shortcut_point = (592.0, 1265.0)
+            # Hunt mode uses the left legacy shortcut to dismiss the result;
+            # full-hatch mode reads shortcut_point above and chooses the nest.
+            growth_result_point = (307.0, 1265.0)
+            button_ratio = min(cyan_ratio, legacy_green_ratio)
 
         scale_x = frame.width / width
         scale_y = frame.height / height
         return [
             Detection(
                 type=self.target_type,
-                x=round(307 * scale_x),
-                y=round(1265 * scale_y),
-                confidence=min(0.99, 0.7 + min(cyan_ratio, green_ratio) * 0.29),
+                x=round(growth_result_point[0] * scale_x),
+                y=round(growth_result_point[1] * scale_y),
+                confidence=min(0.99, 0.7 + button_ratio * 0.29),
                 bbox=BoundingBox(
                     x=round(125 * scale_x),
                     y=round(180 * scale_y),
@@ -811,7 +841,10 @@ class StartupGrowthResultDetector:
                     "detector": "startup_growth_result_layout",
                     "white_ratio": white_ratio,
                     "cyan_ratio": cyan_ratio,
-                    "green_ratio": green_ratio,
+                    "green_ratio": legacy_green_ratio,
+                    "centered_green_ratio": centred_green_ratio,
+                    "shortcut_layout": shortcut_layout,
+                    "shortcut_point": shortcut_point,
                 },
             )
         ]

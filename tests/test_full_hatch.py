@@ -72,8 +72,20 @@ def frame(image: np.ndarray | None = None) -> Frame:
     )
 
 
-def detection(target_type: str, x: int = 100, y: int = 100) -> Detection:
-    return Detection.from_bbox(target_type, BoundingBox(x - 5, y - 5, 10, 10), 0.99)
+def detection(
+    target_type: str,
+    x: int = 100,
+    y: int = 100,
+    metadata: dict[str, object] | None = None,
+) -> Detection:
+    return Detection(
+        target_type,
+        x,
+        y,
+        0.99,
+        BoundingBox(x - 5, y - 5, 10, 10),
+        metadata or {},
+    )
 
 
 def capacity_frame() -> Frame:
@@ -1144,6 +1156,24 @@ def test_full_flow_uses_nest_shortcut_before_tapping_visible_home() -> None:
 
     close = planner.choose(frame(), [detection(NEST_TITLE, 450, 260)])
     assert close is not None and close.type == RECOVERY_MASK_CLOSE
+
+
+def test_full_flow_uses_centred_nest_shortcut_on_new_growth_result_layout() -> None:
+    planner = make_full_planner()
+    target = planner.choose(
+        frame(),
+        [
+            detection(
+                STARTUP_GROWTH_RESULT,
+                307,
+                1265,
+                metadata={"shortcut_layout": "centered_nest"},
+            ),
+        ],
+    )
+
+    assert target is not None and target.type == STARTUP_NEST_SHORTCUT
+    assert (target.x, target.y) == (450, 1270)
 
 
 def test_full_flow_prefers_nested_auto_battle_overlay_during_startup() -> None:

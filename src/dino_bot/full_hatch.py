@@ -2245,12 +2245,20 @@ class FullHatchPlanner:
             return _target(auto_battle)
         if (
             not hatch_result_visible
-            and _best(by_type.get(STARTUP_GROWTH_RESULT)) is not None
+            and (growth_result := _best(by_type.get(STARTUP_GROWTH_RESULT))) is not None
         ):
             self._no_target_since = None
+            # The current game build moved the only remaining nest shortcut
+            # to the centre of the result card. Keep the old right-hand point
+            # for screenshots from builds that still show two shortcuts.
+            shortcut_point = (
+                (450.0, 1270.0)
+                if growth_result.metadata.get("shortcut_layout") == "centered_nest"
+                else (592.0, 1265.0)
+            )
             return _synthetic(
                 STARTUP_NEST_SHORTCUT,
-                *_scaled(frame, (592.0, 1265.0), self.reference_width),
+                *_scaled(frame, shortcut_point, self.reference_width),
             )
 
         if self._stage == "hatch" and any(

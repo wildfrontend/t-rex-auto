@@ -100,6 +100,24 @@ def test_startup_growth_result_requires_both_shortcut_buttons() -> None:
     assert StartupGrowthResultDetector().detect(frame) == []
 
 
+def test_startup_growth_result_detects_new_centred_nest_shortcut() -> None:
+    image = np.zeros((1600, 900, 3), dtype=np.uint8)
+    image[180:1350, 125:775] = 245
+    # Newer builds show one centred green nest-management shortcut, with the
+    # egg artwork overlapping the button's top edge.
+    image[1210:1330, 345:555] = (105, 185, 125)
+    frame = Frame(image=image, captured_at=datetime.now(UTC), source="test")
+
+    detections = StartupGrowthResultDetector().detect(frame)
+
+    assert len(detections) == 1
+    detection = detections[0]
+    assert detection.type == "startup_growth_result_back"
+    assert (detection.x, detection.y) == (450, 1270)
+    assert detection.metadata["shortcut_layout"] == "centered_nest"
+    assert detection.metadata["shortcut_point"] == (450.0, 1270.0)
+
+
 def test_startup_auto_battle_dialog_taps_outside() -> None:
     image = np.zeros((1600, 900, 3), dtype=np.uint8)
     image[355:1230, 175:725] = 245
