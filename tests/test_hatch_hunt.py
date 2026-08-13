@@ -3,9 +3,14 @@ from __future__ import annotations
 import numpy as np
 
 from dino_bot import hatch
-from dino_bot.full_hatch import STARTUP_GROWTH_RESULT, STARTUP_NEST_SHORTCUT
+from dino_bot.full_hatch import (
+    NEST_MASK_CLOSE,
+    STARTUP_GROWTH_RESULT,
+    STARTUP_NEST_SHORTCUT,
+)
 from dino_bot.hatch_hunt import HatchHuntPlanner
 from dino_bot.models import BoundingBox, Detection, Frame, Target, VerificationResult
+from dino_bot.parent_open import NEST_TITLE
 
 
 def frame() -> Frame:
@@ -28,6 +33,8 @@ def target(target_type: str, x: int, y: int) -> Target:
 
 
 class StubHatch:
+    reference_width = 900.0
+
     def __init__(self, cooldown_ms: int) -> None:
         self.cooldown_ms = cooldown_ms
         self.next_target: Target | None = None
@@ -155,7 +162,10 @@ def test_long_hatch_cooldown_switches_to_hunt_and_keeps_action_owner() -> None:
 
     chosen = combined.choose(frame(), [])
     assert chosen is not None and chosen.type == "dinosaur"
-    assert combined.planning_detection_types() == frozenset({"dinosaur"})
+    # The hunt scan carries NEST_TITLE so a stray My Nest panel is visible.
+    assert combined.planning_detection_types() == frozenset(
+        {"dinosaur", NEST_TITLE}
+    )
 
     combined.on_action_success(chosen.type)
     assert hunt_planner.successes == ["dinosaur"]
@@ -193,7 +203,10 @@ def test_blocked_hatch_falls_back_to_hunting_in_combined_mode() -> None:
     chosen = combined.choose(frame(), [])
 
     assert chosen is not None and chosen.type == "dinosaur"
-    assert combined.planning_detection_types() == frozenset({"dinosaur"})
+    # The hunt scan carries NEST_TITLE so a stray My Nest panel is visible.
+    assert combined.planning_detection_types() == frozenset(
+        {"dinosaur", NEST_TITLE}
+    )
     assert not combined.is_complete()
 
 
@@ -312,3 +325,46 @@ def test_hunt_idle_errand_skipped_when_handback_is_near() -> None:
     # 距離正式交棒不到 margin(30s handoff + 90s),不值得跑差事。
     assert calls == []
     assert combined._mode == "hunt"
+
+
+def test_stray_nest_panel_during_hunt_is_closed_then_handed_back() -> None:
+    combined, hatch_planner, hunt_planner = planner()
+    hunt_planner.next_target = target("dinosaur", 300, 700)
+
+    chosen = combined.choose(frame(), [])
+    assert chosen is not None and chosen.type == "dinosaur"
+
+    # 巢面板意外開著:它蓋住地圖上的每個狩獵控制項,所以關閉遮罩要勝過
+    # 狩獵側提出的目標。
+    panel = [detection(NEST_TITLE, 450, 240)]
+    chosen = combined.choose(frame(), panel)
+    assert chosen is not None and chosen.type == NEST_MASK_CLOSE
+    assert (chosen.x, chosen.y) == (50, 800)
+
+    # 這一下屬於孵蛋側的字彙,回呼要送到孵蛋 planner。
+    combined.on_action_success(chosen.type)
+    assert hatch_planner.successes == [NEST_MASK_CLOSE]
+
+    # 面板關掉後把控制權交還孵蛋側重新判斷冷卻,而不是原地接著狩獵。
+    hatch_planner.next_target = target("hatch_button", 450, 800)
+    chosen = combined.choose(frame(), [])
+    assert chosen is not None and chosen.type == "hatch_button"
+    assert combined._mode == "hatch"
+
+
+def test_nest_panel_that_never_closes_hands_back_to_hatch_recovery() -> None:
+    combined, hatch_planner, hunt_planner = planner()
+    hunt_planner.next_target = target("dinosaur", 300, 700)
+    assert combined.choose(frame(), []) is not None
+
+    panel = [detection(NEST_TITLE, 450, 240)]
+    for _ in range(combined.nest_close_attempt_limit):
+        chosen = combined.choose(frame(), panel)
+        assert chosen is not None and chosen.type == NEST_MASK_CLOSE
+
+    # 敲不掉的面板是這個 planner 讀不懂的畫面:交給孵蛋側的恢復流程,
+    # 而不是無限地敲遮罩。
+    hatch_planner.next_target = target("hatch_button", 450, 800)
+    chosen = combined.choose(frame(), panel)
+    assert chosen is not None and chosen.type == "hatch_button"
+    assert combined._mode == "hatch"

@@ -77,6 +77,8 @@ AUTOPLACE_BUTTON = "hatch_autoplace_button"
 AUTOPLACE_YES = "hatch_autoplace_yes"
 COLLECT_EGGS_BUTTON = "hatch_collect_eggs_button"
 NEST_MASK_CLOSE = "hatch_nest_mask_close"
+# 「我的巢」面板左外側的遮罩,900 寬座標。點它就關閉面板回主畫面。
+NEST_MASK_POINT = (50.0, 800.0)
 HATCH_DETAIL_CLOSE = "hatch_unready_detail_close"
 HATCH_BOOST_BUTTON = "hatch_cooldown_boost_button"
 HATCH_BOOST_CONFIRM = "hatch_cooldown_boost_confirm_yes"
@@ -2631,10 +2633,7 @@ class FullHatchPlanner:
             if NEST_TITLE not in by_type:
                 self._stage = "verify_nest_closed"
                 return self._choose_current(frame, detections)
-            return _synthetic(
-                NEST_MASK_CLOSE,
-                *_scaled(frame, (50.0, 800.0), self.reference_width),
-            )
+            return nest_mask_close_target(frame, self.reference_width)
         if self._stage == "verify_nest_closed":
             if NEST_TITLE in by_type:
                 self._stage = "close_nest"
@@ -3296,6 +3295,19 @@ def _retarget(detection: Detection, target_type: str) -> Target:
             bbox=detection.bbox,
             metadata={**detection.metadata, "source_type": detection.type},
         )
+    )
+
+
+def nest_mask_close_target(frame: Frame, reference_width: float) -> Target:
+    """The mask tap that dismisses the My Nest panel back to the home screen.
+
+    Shared with the hunting side: a hunt that finds this panel open has no
+    vocabulary for it and would otherwise tap map controls it cannot reach.
+    """
+
+    return _synthetic(
+        NEST_MASK_CLOSE,
+        *_scaled(frame, NEST_MASK_POINT, reference_width),
     )
 
 

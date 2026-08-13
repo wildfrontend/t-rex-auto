@@ -8,8 +8,13 @@ from collections.abc import Sequence
 from math import hypot
 from typing import Any
 
-from .full_hatch import STARTUP_DETECTION_TYPES, is_centered_home_screen
+from .full_hatch import (
+    STARTUP_DETECTION_TYPES,
+    is_centered_home_screen,
+    nest_mask_close_target,
+)
 from .models import Detection, Frame, Target, VerificationResult
+from .parent_open import NEST_TITLE
 from .planning import HuntPlanner
 
 
@@ -28,15 +33,18 @@ class HatchHuntPlanner:
         hunt: HuntPlanner,
         *,
         handoff_seconds: float = 30.0,
+        nest_close_attempt_limit: int = 6,
         logger: logging.Logger | None = None,
     ) -> None:
         self.hatch = hatch
         self.hunt = hunt
         self.handoff_ms = max(0, round(handoff_seconds * 1000))
+        self.nest_close_attempt_limit = max(1, nest_close_attempt_limit)
         self.logger = logger or logging.getLogger("dino_bot")
         self._mode = "hatch"
         self._action_owner: Any = None
         self._centered_frames = 0
+        self._nest_close_attempts = 0
         # 狩獵閒置差事:狩獵側全目標冷卻時,把空窗拿去收巢蛋。
         self.errand_min_idle_ms = 15_000
         self.errand_margin_ms = 90_000
@@ -82,6 +90,24 @@ class HatchHuntPlanner:
             self.hunt.reset_workflow()
             self._mode = "hatch"
             self._centered_frames = 0
+            self._nest_close_attempts = 0
+
+        # 狩獵側的字彙裡沒有「我的巢」面板。面板一開著,planner 照地圖劇本
+        # 找恐龍、點離開巢穴鈕,兩者都被面板蓋住,於是整輪空轉到重試耗盡。
+        # 面板是孵蛋側的畫面:先關掉它,再把控制權交還孵蛋側重新判斷冷卻,
+        # 而不是在原地接著狩獵。
+        if self._mode != "hatch":
+            if any(item.type == NEST_TITLE for item in detections):
+                return self._close_stray_nest_panel(frame, detections)
+            if self._nest_close_attempts:
+                self._nest_close_attempts = 0
+                self.logger.info(
+                    "Hatch+Hunt | stray nest panel closed | returning to hatch"
+                )
+                self.hunt.reset_workflow()
+                self._mode = "hatch"
+                self._centered_frames = 0
+                return self._choose_owned(self.hatch, frame, detections)
 
         if self._hatch_is_blocked():
             if not self._continue_hunting_when_blocked():
@@ -163,7 +189,10 @@ class HatchHuntPlanner:
         if self._mode == "hunt":
             hunt_types = self.hunt.planning_detection_types()
             if hunt_types is not None:
-                return hunt_types
+                # NEST_TITLE is not part of any hunting stage, but without it
+                # in the scan a stray My Nest panel is invisible and the hunt
+                # burns its retries on controls the panel covers.
+                return frozenset({*hunt_types, NEST_TITLE})
             # ``None`` means a full scan to a standalone planner. The combined
             # detector also owns all hatch templates, so translate that request
             # into the complete hunting vocabulary when the planner exposes it.
@@ -182,7 +211,7 @@ class HatchHuntPlanner:
         hunt_types = hunt_method() if callable(hunt_method) else None
         if hatch_types is None or hunt_types is None:
             return None
-        return frozenset({*hatch_types, *hunt_types})
+        return frozenset({*hatch_types, *hunt_types, NEST_TITLE})
 
     def verification_detection_types(self, target_type: str) -> frozenset[str]:
         method = getattr(self._action_owner, "verification_detection_types", None)
@@ -297,6 +326,7 @@ class HatchHuntPlanner:
         self._mode = "hatch"
         self._action_owner = None
         self._centered_frames = 0
+        self._nest_close_attempts = 0
 
     # Hunt diagnostics remain available to the shared engine while combined.
     def take_blind_escape(self) -> dict[str, Any] | None:
@@ -327,6 +357,38 @@ class HatchHuntPlanner:
     def _continue_hunting_when_blocked(self) -> bool:
         method = getattr(self.hatch, "continue_hunting_when_blocked", None)
         return bool(method()) if callable(method) else True
+
+    def _close_stray_nest_panel(
+        self,
+        frame: Frame,
+        detections: Sequence[Detection],
+    ) -> Target | None:
+        """Dismiss a My Nest panel found open while the hunt side has control.
+
+        Bounded: a panel that refuses to close is a screen this planner cannot
+        read, so hand the whole workflow back to the hatch side's recovery
+        rather than tapping the mask forever.
+        """
+
+        self._nest_close_attempts += 1
+        if self._nest_close_attempts > self.nest_close_attempt_limit:
+            self.logger.error(
+                "Hatch+Hunt | nest panel still open after %d mask taps"
+                " | handing back to hatch recovery",
+                self.nest_close_attempt_limit,
+            )
+            self.reset_workflow()
+            return self._choose_owned(self.hatch, frame, detections)
+        self.logger.info(
+            "Hatch+Hunt | nest panel open during %s | closing (%d/%d)",
+            self._mode,
+            self._nest_close_attempts,
+            self.nest_close_attempt_limit,
+        )
+        # The tap belongs to the hatch vocabulary, so its success, failure and
+        # verification callbacks have to reach the hatch planner.
+        self._action_owner = self.hatch
+        return nest_mask_close_target(frame, self.hatch.reference_width)
 
     def _choose_handoff(
         self,
