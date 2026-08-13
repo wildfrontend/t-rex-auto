@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from collections.abc import Callable, Mapping, Sequence
 from math import atan2, degrees, hypot
@@ -26,7 +27,12 @@ class TargetPlanner:
         retry_exhausted_cooldown_ms: int = 60_000,
         suppression_radius: float = 60.0,
         clock: Callable[[], float] = time.monotonic,
+        logger: logging.Logger | None = None,
     ) -> None:
+        # Every escalation path this planner owns reports what it did before
+        # acting on it; without a logger the repeated-failure recovery raised
+        # AttributeError and took the whole run down with it.
+        self.logger = logger or logging.getLogger("dino_bot")
         self.target_types = tuple(target_types)
         self.strategy = strategy
         self.blocking_types = frozenset(blocking_types)

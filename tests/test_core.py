@@ -3121,3 +3121,14 @@ def test_every_recenter_names_the_reason_that_started_it() -> None:
     assert planner.last_recenter_reason() == "batch", (
         "a scheduled sweep must not read as a starved map"
     )
+
+
+def test_hunt_recovery_from_repeated_failures_survives_its_own_log_line() -> None:
+    # 這條升級路徑先前必定 AttributeError:planner 沒有 logger,而恢復動作
+    # 做完後的那行 warning 直接把整個 run 帶下去。實測 s13 每次卡住之後
+    # 都是這樣停機的,不是自然結束。
+    planner = HuntPlanner(("dinosaur",))
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    target = Target("dinosaur", 300, 700, 1.0, None)
+
+    assert planner.recover_from_action_failures(target, "hunt", 3, frame, [])
