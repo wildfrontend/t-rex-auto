@@ -286,6 +286,25 @@ def test_full_hatch_cancels_unexpected_autoplace_confirmation() -> None:
     assert planner._stage == "recover_home"
 
 
+def test_full_hatch_parent_swap_confirmation_beats_false_autoplace_notice() -> None:
+    # 替換親代的確認框同樣是「青色是 + 紅色否」,廣義版面偵測會以 0.99 的信心
+    # 報成自動放置提示。按下「否」會取消篩選階段剛要求的替換,階段重來後又問
+    # 一次,永遠出不去。精確模板在場就證明畫面是哪一種對話框。
+    planner = make_full_planner()
+
+    target = planner.choose(
+        frame(),
+        [
+            detection(SELECT_CONFIRM_PROMPT, 450, 700),
+            detection(AUTOPLACE_NOTICE, 450, 720),
+            detection(CONFIRM_YES, 365, 890),
+            detection(CONFIRM_NO, 535, 890),
+        ],
+    )
+
+    assert target is None or target.type != RECOVERY_NO
+
+
 def test_full_hatch_device_history_prompt_beats_false_autoplace_notice() -> None:
     planner = make_full_planner()
     target = planner.choose(

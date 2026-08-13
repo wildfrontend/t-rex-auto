@@ -2280,8 +2280,18 @@ class FullHatchPlanner:
             if interruption is not None:
                 self._no_target_since = None
                 return _target(interruption)
-        if self._stage not in {"top", "mass"} and (
-            AUTOPLACE_PROMPT in by_type or AUTOPLACE_NOTICE in by_type
+        # Same rule one step further: the parent-replacement confirmation also
+        # carries cyan Yes and red No buttons, so the broad auto-place layout
+        # matches it too. Its own exact templates prove which dialog is really
+        # in front, and cancelling one aborts the swap the screening stage just
+        # asked for - then the stage restarts and asks again, forever.
+        replacing_parent = (
+            SELECT_CONFIRM_PROMPT in by_type or NESTED_PARENT_WARNING in by_type
+        )
+        if (
+            self._stage not in {"top", "mass"}
+            and not replacing_parent
+            and (AUTOPLACE_PROMPT in by_type or AUTOPLACE_NOTICE in by_type)
         ):
             no = _best(by_type.get(CONFIRM_NO))
             if no is None:
