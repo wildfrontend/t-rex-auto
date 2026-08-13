@@ -1351,6 +1351,15 @@ class HuntPlanner(TargetPlanner):
         if target is not None:
             return target
 
+        # The fixed coordinate below is only safe on a clear map. A hunt sheet
+        # leaves the upper third of the map showing - own-path segments and all
+        # - so the landmark evidence still passes while the sheet covers the
+        # very spot this would tap.
+        if any(
+            item.type == self.hunt_dialog_close_type for item in detections
+        ):
+            return None
+
         # The nest is animated and can briefly miss exact template matching.
         # A visible mailbox is a stable map-only landmark, so it safely
         # authorizes the fixed bottom-right nest coordinate as a fallback.
@@ -1603,6 +1612,26 @@ class HuntPlanner(TargetPlanner):
             self._waited_frames = 0
             self._stage = "hunt_unavailable"
             return super().choose(frame, unavailable)
+
+        # A team sheet that cannot field anyone greys out its Hunt button, so
+        # no hunt control matches, yet the sheet still covers the map's exit
+        # control in the bottom right. Its own close button is the only thing
+        # left on screen that can be pressed. Without this rung the planner
+        # reached for the exit underneath the sheet instead: s13 spent 100
+        # seconds there, recognising this X on every single frame while
+        # tapping a coordinate the sheet was sitting on top of.
+        stranded_dialog = self.filter_suppressed(
+            [
+                item
+                for item in detections
+                if item.type == self.hunt_dialog_close_type
+            ]
+        )
+        if stranded_dialog and not actionable_hunt_controls:
+            self._awaiting_hunt_button = False
+            self._waited_frames = 0
+            self._stage = "close_hunt_dialog"
+            return super().choose(frame, stranded_dialog)
 
         team_status_buttons = [
             item for item in detections if item.type in self.recovery_button_types

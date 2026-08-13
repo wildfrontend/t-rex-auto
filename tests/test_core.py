@@ -3132,3 +3132,46 @@ def test_hunt_recovery_from_repeated_failures_survives_its_own_log_line() -> Non
     target = Target("dinosaur", 300, 700, 1.0, None)
 
     assert planner.recover_from_action_failures(target, "hunt", 3, frame, [])
+
+
+def test_hunt_sheet_with_no_team_is_closed_by_its_own_button() -> None:
+    """實測 s13 的死結:隊伍湊不出來,「狩獵」鈕變灰因而比對不到,面板卻仍蓋著
+    地圖右下的離開鈕。畫面上唯一按得動的是面板自己的紅色 X,而 planner 每一幀
+    都認得出它,卻一直去點被面板蓋住的那個座標,繞了 100 秒。"""
+
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(HUNT_TARGET_TYPES)
+    # 面板只蓋住下方,上方地圖仍露出來,所以我方路徑照樣看得到——正是這個
+    # 證據讓固定座標的離開鈕 fallback 誤以為畫面是一張乾淨的地圖。
+    sheet = [
+        Detection("dinosaur", 265, 532, 0.78),
+        Detection("hunt_dialog_close_button", 754, 1690, 0.95),
+        Detection("own_hunt_path", 300, 400, 0.9),
+    ]
+
+    target = planner.choose(frame, sheet)
+
+    assert target is not None and target.type == "hunt_dialog_close_button"
+    assert planner.last_stage() == "close_hunt_dialog"
+
+
+def test_a_usable_hunt_sheet_is_never_closed_from_under_the_hunt() -> None:
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(HUNT_TARGET_TYPES)
+    usable = [
+        Detection("hunt_button", 517, 536, 0.98),
+        Detection("hunt_dialog_close_button", 754, 1690, 0.95),
+        Detection("own_hunt_path", 300, 400, 0.9),
+    ]
+
+    target = planner.choose(frame, usable)
+
+    assert target is not None and target.type == "hunt_button"
+
+
+# 與 config 的 planner.target_types 同序:面板的關閉鈕本來就在裡面。
+HUNT_TARGET_TYPES = (
+    "hunt_dialog_close_button",
+    "hunt_button",
+    "dinosaur",
+)
