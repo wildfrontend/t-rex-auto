@@ -49,6 +49,40 @@ class CapacityRead:
         return self.count is not None
 
 
+def _denominator_clipped_by_scenery(
+    text: str, expected_capacity: int
+) -> tuple[int, int] | None:
+    """Recover a readout whose last denominator digit merged with the map.
+
+    In the cave view the HUD sits over the map, and a dark scenery outline can
+    touch the final digit: the two become one connected shape that matches no
+    glyph, so the whole readout is discarded and hatching stops. The count
+    itself is what the plan acts on, and it is still read in full here.
+
+    The denominator's job is to prove the crop landed on the right HUD, so it
+    is only waived one digit at a time: every legible digit must match the
+    configured capacity, the lengths must agree, and exactly one glyph may be
+    unreadable. A misplaced crop fails all three. A digit that reads as the
+    wrong number - rather than as unreadable - still goes down the ordinary
+    ``unexpected_capacity`` path.
+    """
+
+    if text.count("/") != 1:
+        return None
+    left, right = text.split("/")
+    if not left.isdigit():
+        return None
+    expected_text = str(expected_capacity)
+    if len(right) != len(expected_text) or right.count("?") != 1:
+        return None
+    if any(
+        digit != "?" and digit != want
+        for digit, want in zip(right, expected_text, strict=True)
+    ):
+        return None
+    return int(left), expected_capacity
+
+
 def probe_dino_count(
     image: Image,
     reader: DigitReader,
@@ -71,7 +105,9 @@ def probe_dino_count(
     if x0 >= x1 or y0 >= y1 or x1 > width or y1 > height:
         return CapacityRead(None, "", None, region, "region_outside_frame")
     text = reader.read(image[y0:y1, x0:x1])
-    fraction = parse_fraction(text)
+    fraction = parse_fraction(text) or _denominator_clipped_by_scenery(
+        text, expected_capacity
+    )
     if fraction is None:
         return CapacityRead(None, text, None, region, "unparsed")
     count, capacity = fraction

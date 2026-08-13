@@ -109,6 +109,29 @@ def test_probe_reads_a_narrow_hud_clipped_by_the_next_icon() -> None:
     assert read.fraction == (174, 200)
 
 
+@pytest.mark.parametrize(
+    ("text", "reason", "count"),
+    [
+        # 洞穴視角下 HUD 壓在石階上,分母最後一位會和場景描邊連成一塊而讀不出來。
+        ("188/20?", "ok", 188),
+        ("188/?00", "ok", 188),
+        # 分子不完整、可讀位數對不上設定、或壞掉不只一位,都必須照舊拒絕。
+        ("18?/200", "unparsed", None),
+        ("188/3?0", "unparsed", None),
+        ("188/2??", "unparsed", None),
+        # 讀成別的數字(而不是讀不出來)仍走原本的分母不符路徑。
+        ("188/208", "unexpected_capacity", None),
+    ],
+)
+def test_probe_waives_one_unreadable_denominator_digit(
+    text: str, reason: str, count: int | None
+) -> None:
+    frame = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    read = probe_dino_count(frame, StubReader(text), expected_capacity=200)
+    assert read.reason == reason
+    assert read.count == count
+
+
 def test_probe_still_rejects_a_stray_digit_in_the_readout() -> None:
     frame = np.full((1600, 900, 3), 255, dtype=np.uint8)
     read = probe_dino_count(frame, StubReader("174/200/1"), expected_capacity=200)
