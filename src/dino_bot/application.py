@@ -28,7 +28,7 @@ from .detection import (
 from .digits import DigitReader
 from .engine import BotContext, BotEngine
 from .events import EventLog, JsonlEventLog, NullEventLog
-from .full_hatch import FullHatchPlanner
+from .full_hatch import FullHatchPlanner, set_home_base_template
 from .hatch import HatchPlanner
 from .hatch_hunt import HatchHuntPlanner
 from .hatch_inventory import HatchBoostInventoryStore
@@ -389,6 +389,12 @@ def _create_hatch_engine(
             chrome_insets=config.capture.chrome_insets,
         )
 
+    # The starter-nest base is measured straight off the frame rather than
+    # through the detector, so point it at this instance's own templates the
+    # way every manifest-driven asset already resolves.
+    set_home_base_template(
+        hatch.manifest.parent / "templates" / "hatch-home-straw-base.png"
+    )
     open_cv_detector = OpenCvDetector(
         hatch.manifest,
         default_threshold=config.detector.default_threshold,

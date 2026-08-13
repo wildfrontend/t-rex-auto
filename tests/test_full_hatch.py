@@ -26,6 +26,7 @@ from dino_bot.full_hatch import (
     HATCH_BOOST_BUTTON,
     HATCH_BOOST_CONFIRM,
     HATCH_DETAIL_CLOSE,
+    HOME_PILE_BASE,
     NEST_GEAR,
     NEST_MASK_CLOSE,
     OPEN_NEST,
@@ -53,9 +54,11 @@ from dino_bot.full_hatch import (
     CaveCullPlanner,
     FullHatchPlanner,
     HatchHomeRecoveryPlanner,
+    home_pile_offset,
     is_centered_home_screen,
     is_home_screen,
     is_unready_egg_detail,
+    set_home_base_template,
 )
 from dino_bot.hatch_inventory import HatchBoostInventoryStore
 from dino_bot.models import BoundingBox, Detection, Frame, Target
@@ -1115,6 +1118,74 @@ def test_centered_home_accepts_clipped_anchor_with_forest_landmark() -> None:
         [detection("forest_recenter_button", 841, 1296)],
     )
     assert not is_centered_home_screen(frame(), [])
+
+
+def straw_home_frame(scale: float = 1.0, dy: int = 0) -> Frame:
+    """A home frame carrying the starter nest's base and no cyan at all.
+
+    ``scale`` reproduces the nest growing with its contents, which is the whole
+    reason the base is matched over a sweep rather than at one size.
+    """
+
+    template = cv2.imread(
+        str(REPO / "assets" / "hatch" / "templates" / "hatch-home-straw-base.png"),
+        cv2.IMREAD_COLOR,
+    )
+    assert template is not None
+    if scale != 1.0:
+        template = cv2.resize(template, None, fx=scale, fy=scale)
+    image = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    height, width = template.shape[:2]
+    top = int(HOME_PILE_BASE[1] + dy - height / 2)
+    left = int(HOME_PILE_BASE[0] - width / 2)
+    image[top : top + height, left : left + width] = template
+    return Frame(image)
+
+
+def test_starter_nest_base_is_measured_by_template_when_no_cyan_exists() -> None:
+    # The cyan strip belongs to the upgraded stone basin. The starter nest is
+    # straw on brick, so an account that still has one measured nothing at all
+    # and never once agreed it had arrived home.
+    offset = home_pile_offset(straw_home_frame())
+    assert offset is not None
+    assert max(abs(offset[0]), abs(offset[1])) <= 2
+    assert is_centered_home_screen(
+        straw_home_frame(),
+        [detection(hatch.HOME_ANCHOR, 59, 561)],
+    )
+
+
+def test_starter_nest_base_is_found_at_the_sizes_its_contents_produce() -> None:
+    # Observed 1.00x and 1.17x on the same nest twenty minutes apart; the base
+    # centre stayed on the same map point through it.
+    for scale in (0.8, 1.0, 1.17, 1.4):
+        offset = home_pile_offset(straw_home_frame(scale=scale))
+        assert offset is not None, scale
+        assert max(abs(offset[0]), abs(offset[1])) <= 4, scale
+
+
+def test_starter_nest_base_still_measures_an_off_centre_home() -> None:
+    offset = home_pile_offset(straw_home_frame(dy=-120))
+    assert offset is not None
+    assert 116 <= offset[1] <= 124
+
+
+def test_upgraded_basin_keeps_its_cyan_measurement_and_skips_the_sweep() -> None:
+    # The cyan path must stay first: it is both the calibrated one and the
+    # cheap one, and the template sweep costs ~30x more per frame.
+    assert home_pile_offset(frame()) == home_pile_offset(frame())
+    offset = home_pile_offset(frame())
+    assert offset is not None
+    assert max(abs(offset[0]), abs(offset[1])) <= 2
+
+
+def test_home_base_template_absence_leaves_the_cyan_path_untouched(tmp_path) -> None:
+    set_home_base_template(tmp_path / "missing.png")
+    try:
+        assert home_pile_offset(straw_home_frame()) is None
+        assert home_pile_offset(frame()) is not None
+    finally:
+        set_home_base_template(None)
 
 
 def test_home_recovery_unwinds_prompt_select_nest_then_confirms_two_frames() -> None:

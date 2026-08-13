@@ -352,6 +352,59 @@ def test_stray_nest_panel_during_hunt_is_closed_then_handed_back() -> None:
     assert combined._mode == "hatch"
 
 
+def test_handoff_that_never_centers_gives_up_instead_of_toggling_forever() -> None:
+    now = [0.0]
+    combined, hatch_planner, hunt_planner = planner()
+    combined.clock = lambda: now[0]
+    assert combined.choose(frame(), []) is None
+    hatch_planner.cooldown_ms = 20_000
+    hunt_planner.next_target = target("map_exit_nest_button", 840, 1295)
+    map_view = [detection("map_exit_nest_button", 840, 1295)]
+
+    assert combined.choose(frame(), map_view) is not None
+    assert combined._mode == "handoff"
+
+    # 期限一過就不再敲同一組按鈕:冷卻交棒是非做不可的,所以交給孵蛋側
+    # 自己的恢復流程,而不是留在原地空轉。
+    now[0] = 95.0
+    recoveries: list[str] = []
+    hatch_planner.begin_home_recovery = lambda reason: recoveries.append(reason) or True
+    hatch_planner.next_target = target("hatch_button", 450, 800)
+
+    chosen = combined.choose(frame(), map_view)
+
+    assert len(recoveries) == 1
+    assert chosen is not None and chosen.type == "hatch_button"
+    assert combined._mode == "hatch"
+
+
+def test_timed_out_errand_is_abandoned_back_to_hunting() -> None:
+    now = [0.0]
+    combined, hatch_planner, hunt_planner = planner()
+    combined.clock = lambda: now[0]
+    hunt_planner.next_target = target("dinosaur", 300, 700)
+    assert combined.choose(frame(), []) is not None
+
+    aborts: list[str] = []
+    hatch_planner.begin_interim_collection = lambda: True
+    hatch_planner.abort_interim_collection = (
+        lambda reason: aborts.append(reason) or True
+    )
+    hunt_planner.next_target = None
+    hunt_planner.delay_ms = 30_000
+    combined.choose(frame(), [])
+    assert combined._mode == "handoff"
+
+    # 差事是可選的,期限到了就退回狩獵,並把下一次差事往後推。
+    now[0] = 95.0
+    hunt_planner.next_target = target("dinosaur", 300, 700)
+    chosen = combined.choose(frame(), [])
+
+    assert len(aborts) == 1
+    assert chosen is not None and chosen.type == "dinosaur"
+    assert combined._mode == "hunt"
+
+
 def test_nest_panel_that_never_closes_hands_back_to_hatch_recovery() -> None:
     combined, hatch_planner, hunt_planner = planner()
     hunt_planner.next_target = target("dinosaur", 300, 700)

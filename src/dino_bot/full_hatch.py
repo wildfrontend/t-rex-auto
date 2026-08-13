@@ -315,12 +315,44 @@ RETRYABLE_NAVIGATION_TARGETS: frozenset[str] = frozenset(
 MAX_NAVIGATION_RETRIES = 2
 MAX_SCREENING_RECOVERY_FAILURES = 3
 
-# The centred home map is proven by the cyan egg-pile base rather than a
-# template, because the pile artwork changes with its contents while the base
-# does not.  Reference and tolerance live together so the "is it centred" test
+# The centred home map is proven by the egg-pile base rather than by the pile
+# itself, because the pile artwork changes with its contents while the base
+# stays put.  Reference and tolerance live together so the "is it centred" test
 # and the correction that follows it cannot drift apart.
 HOME_PILE_BASE: tuple[float, float] = (450.0, 1455.0)
 HOME_PILE_TOLERANCE = 100.0
+
+# The cyan strip above only exists on the upgraded stone basin.  The starter
+# nest is straw on brick with no cyan anywhere, so that account measured
+# nothing at all and every "am I home yet" test answered no forever.  Its base
+# is matched as a template instead, over a scale sweep: unlike the basin, the
+# whole straw nest grows with its contents (226x112 straw at six eggs, 264x131
+# a little later - a uniform 1.17x), while its centre stays on the same map
+# point.  Sweep bounds sit a little outside both observed sizes.
+HOME_BASE_REFERENCE: tuple[int, int] = (900, 1600)
+HOME_BASE_MIN_CONFIDENCE = 0.65
+HOME_BASE_SCALES: tuple[float, ...] = tuple(
+    round(0.75 + 0.05 * step, 2) for step in range(15)
+)
+_HOME_BASE_TEMPLATE_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "assets"
+    / "hatch"
+    / "templates"
+    / "hatch-home-straw-base.png"
+)
+_home_base_template: np.ndarray | None = None
+_home_base_template_loaded = False
+
+
+def set_home_base_template(path: str | Path | None) -> None:
+    """Point the straw-nest base matcher at an instance's own copy."""
+
+    global _HOME_BASE_TEMPLATE_PATH, _home_base_template, _home_base_template_loaded
+    if path is not None:
+        _HOME_BASE_TEMPLATE_PATH = Path(path)
+    _home_base_template = None
+    _home_base_template_loaded = False
 
 # One observed run spent 111 seconds and 25 actions bouncing between home and
 # the hunt map before its attempt counters ran out.  Recovery is a detour, not
@@ -607,8 +639,61 @@ def _hatch_boost_ready(frame: Frame) -> bool:
     return float(hsv[:, :, 1].mean()) >= _BOOST_BAR_MIN_SATURATION
 
 
+def _load_home_base_template() -> np.ndarray | None:
+    global _home_base_template, _home_base_template_loaded
+    if not _home_base_template_loaded:
+        _home_base_template_loaded = True
+        _home_base_template = cv2.imread(
+            str(_HOME_BASE_TEMPLATE_PATH),
+            cv2.IMREAD_COLOR,
+        )
+    return _home_base_template
+
+
+def _straw_base_center(frame: Frame) -> tuple[float, float] | None:
+    """Locate the starter nest's brick base, which carries no cyan at all."""
+
+    template = _load_home_base_template()
+    if template is None:
+        return None
+    image = frame.image
+    if (frame.width, frame.height) != HOME_BASE_REFERENCE:
+        image = cv2.resize(image, HOME_BASE_REFERENCE, interpolation=cv2.INTER_AREA)
+    # Same floor the cyan search uses: the base never rides in the top half,
+    # and a smaller haystack pays for the scale sweep.  Both sides are then
+    # halved again, because matchTemplate costs scale with the searched pixel
+    # count and a sweep pays that cost once per scale.  The 2px of reference
+    # precision this trades away is nothing against a 100px tolerance.
+    top = 850
+    region = cv2.resize(image[top:, :], None, fx=0.5, fy=0.5, interpolation=cv2.INTER_AREA)
+    best: tuple[float, float, float] | None = None
+    for scale in HOME_BASE_SCALES:
+        sized = cv2.resize(
+            template,
+            None,
+            fx=scale * 0.5,
+            fy=scale * 0.5,
+            interpolation=cv2.INTER_AREA,
+        )
+        if sized.shape[0] > region.shape[0] or sized.shape[1] > region.shape[1]:
+            continue
+        _, confidence, _, location = cv2.minMaxLoc(
+            cv2.matchTemplate(region, sized, cv2.TM_CCOEFF_NORMED)
+        )
+        if best is None or confidence > best[0]:
+            best = (
+                confidence,
+                (location[0] + sized.shape[1] / 2) * 2.0,
+                top + (location[1] + sized.shape[0] / 2) * 2.0,
+            )
+    if best is None or best[0] < HOME_BASE_MIN_CONFIDENCE:
+        return None
+    frame_scale = frame.width / 900.0
+    return (best[1] * frame_scale, best[2] * frame_scale)
+
+
 def _egg_pile_base_center(frame: Frame) -> tuple[float, float] | None:
-    """Locate the stable cyan base of the variable-looking home egg pile."""
+    """Locate the stable base of the variable-looking home egg pile."""
 
     if frame.image.size == 0:
         return None
@@ -627,7 +712,12 @@ def _egg_pile_base_center(frame: Frame) -> tuple[float, float] | None:
             and 150 * scale <= center_x <= 750 * scale
         ):
             candidates.append((float(center_x), float(center_y)))
-    return max(candidates, key=lambda center: center[1]) if candidates else None
+    if candidates:
+        return max(candidates, key=lambda center: center[1])
+    # No cyan anywhere means either "not home" or the starter nest, and only
+    # the template can tell those apart.  Keeping it second leaves the upgraded
+    # basin on exactly its old path and off the scale sweep entirely.
+    return _straw_base_center(frame)
 
 
 def _egg_pile_safe_tap(frame: Frame) -> tuple[int, int] | None:
@@ -1911,6 +2001,38 @@ class FullHatchPlanner:
             max(0.0, self._observed_cooldown_until - self.clock()),
         )
         self._enter_open_nest(collect_only=True)
+        return True
+
+    def abort_interim_collection(self, reason: str) -> bool:
+        """Undo an errand that never reached the nest and resume the cooldown.
+
+        `begin_interim_collection` clears the rescan wait so the nest round can
+        run, which also makes `is_hunt_cooldown_active` false. A caller that
+        gives up therefore cannot simply hand control back: the hunt side would
+        read "cooldown over" and bounce straight into another handoff. Restart
+        the wait from the pinned deadline instead, so the abandoned errand costs
+        the remaining cooldown and nothing more.
+        """
+
+        if self._stage != "open_nest":
+            return False
+        self.logger.warning(
+            "Hatch full | interim collection abandoned | %s",
+            reason,
+        )
+        self._start_empty_rescan_wait()
+        return True
+
+    def begin_home_recovery(self, reason: str) -> bool:
+        """Let a combined workflow hand a mis-centred home back to recovery.
+
+        Recovery owns the measured drag that pulls the egg pile back to its
+        reference position. A caller that can see the pile but cannot accept it
+        as centred has found exactly that job, so route it here rather than
+        leaving the home screen to look for a fix elsewhere.
+        """
+
+        self._begin_home_recovery(reason)
         return True
 
     def reset_workflow(self) -> None:

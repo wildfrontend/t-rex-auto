@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from math import hypot
 from typing import Any
 
@@ -33,18 +33,29 @@ class HatchHuntPlanner:
         hunt: HuntPlanner,
         *,
         handoff_seconds: float = 30.0,
+        handoff_timeout_seconds: float = 90.0,
         nest_close_attempt_limit: int = 6,
+        clock: Callable[[], float] | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
+        self.clock = clock or time.monotonic
         self.hatch = hatch
         self.hunt = hunt
         self.handoff_ms = max(0, round(handoff_seconds * 1000))
+        # Handoff ends on a measurement, not on a countdown, so a measurement
+        # that can never succeed has no exit at all: one observed run spent 14
+        # minutes and 227 actions toggling between the map and home before a
+        # human stopped it. A deadline converts that silent burn into a logged
+        # decision.  A healthy handoff finishes in well under 30s.
+        self.handoff_timeout_seconds = max(0.0, handoff_timeout_seconds)
         self.nest_close_attempt_limit = max(1, nest_close_attempt_limit)
         self.logger = logger or logging.getLogger("dino_bot")
         self._mode = "hatch"
         self._action_owner: Any = None
         self._centered_frames = 0
         self._nest_close_attempts = 0
+        self._handoff_deadline: float | None = None
+        self._handoff_reason = ""
         # 狩獵閒置差事:狩獵側全目標冷卻時,把空窗拿去收巢蛋。
         self.errand_min_idle_ms = 15_000
         self.errand_margin_ms = 90_000
@@ -143,8 +154,7 @@ class HatchHuntPlanner:
                 not self.hatch.is_hunt_cooldown_active()
                 or remaining <= self.handoff_ms
             ):
-                self._mode = "handoff"
-                self._centered_frames = 0
+                self._enter_handoff("cooldown")
                 self.logger.info(
                     "Hatch+Hunt | cooldown handoff window | remaining=%.0fs",
                     remaining / 1000,
@@ -154,14 +164,13 @@ class HatchHuntPlanner:
             if (
                 hunt_idle >= self.errand_min_idle_ms
                 and remaining > self.handoff_ms + self.errand_margin_ms
-                and time.monotonic() >= self._next_errand_at
+                and self.clock() >= self._next_errand_at
                 and self.hatch.begin_interim_collection()
             ):
                 # 狩獵側全目標都在冷卻;把這段空窗換成一趟回家收蛋,
                 # 收完由既有的冷卻切換邏輯自動回到狩獵。
-                self._next_errand_at = time.monotonic() + self.errand_interval_seconds
-                self._mode = "handoff"
-                self._centered_frames = 0
+                self._next_errand_at = self.clock() + self.errand_interval_seconds
+                self._enter_handoff("errand")
                 self.logger.info(
                     "Hatch+Hunt | hunt idle %.0fs | interim collection errand",
                     hunt_idle / 1000,
@@ -169,6 +178,8 @@ class HatchHuntPlanner:
                 return self._choose_handoff(frame, detections)
             return self._choose_owned(self.hunt, frame, detections)
 
+        if self._handoff_expired():
+            return self._abandon_handoff(frame, detections)
         return self._choose_handoff(frame, detections)
 
     def next_ready_delay_ms(self) -> int:
@@ -390,6 +401,61 @@ class HatchHuntPlanner:
         self._action_owner = self.hatch
         return nest_mask_close_target(frame, self.hatch.reference_width)
 
+    def _enter_handoff(self, reason: str) -> None:
+        self._mode = "handoff"
+        self._centered_frames = 0
+        self._handoff_reason = reason
+        self._handoff_deadline = (
+            self.clock() + self.handoff_timeout_seconds
+            if self.handoff_timeout_seconds
+            else None
+        )
+
+    def _handoff_expired(self) -> bool:
+        return (
+            self._handoff_deadline is not None
+            and self.clock() >= self._handoff_deadline
+        )
+
+    def _abandon_handoff(
+        self,
+        frame: Frame,
+        detections: Sequence[Detection],
+    ) -> Target | None:
+        """Leave a handoff that the centred-home test will never end.
+
+        An errand is optional, so drop it and go back to hunting; the cooldown
+        handoff is not, so give the hatch side its own recovery instead. Either
+        way the deadline is cleared here, because both destinations re-arm one
+        of their own when they need it.
+        """
+
+        reason = self._handoff_reason
+        self._handoff_deadline = None
+        self.logger.error(
+            "Hatch+Hunt | handoff to centered home timed out after %.0fs | source=%s",
+            self.handoff_timeout_seconds,
+            reason or "unknown",
+        )
+        if reason == "errand":
+            abort = getattr(self.hatch, "abort_interim_collection", None)
+            if callable(abort) and abort("centered home never confirmed"):
+                # 差事沒跑成,別讓下一輪空窗立刻再試一次同樣的路。
+                self._next_errand_at = (
+                    self.clock() + self.errand_interval_seconds
+                )
+                self._mode = "hunt"
+                self._centered_frames = 0
+                return self._choose_owned(self.hunt, frame, detections)
+
+        self.hunt.reset_workflow()
+        self._mode = "hatch"
+        self._centered_frames = 0
+        recover = getattr(self.hatch, "begin_home_recovery", None)
+        if callable(recover):
+            recover("hatch+hunt handoff could not confirm centered home")
+        return self._choose_owned(self.hatch, frame, detections)
+
     def _choose_handoff(
         self,
         frame: Frame,
@@ -418,6 +484,7 @@ class HatchHuntPlanner:
             self.hunt.reset_workflow()
             self._mode = "hatch"
             self._centered_frames = 0
+            self._handoff_deadline = None
             begin_home_collection = getattr(
                 self.hatch,
                 "begin_home_collection",
