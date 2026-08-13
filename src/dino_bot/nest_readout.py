@@ -221,5 +221,6 @@ def rehearse_attack_replacement(
             rows,
             ATTACK_RULE,
             guards=stat_guards,
+            partner=parents[1 - parent_side],
         ),
     )

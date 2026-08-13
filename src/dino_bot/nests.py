@@ -164,6 +164,7 @@ def pick_replacement(
     rule: ReplacementRule,
     *,
     guards: Mapping[str, StatUpgradeGuard] = DEFAULT_STAT_UPGRADE_GUARDS,
+    partner: Stats | None = None,
 ) -> int | None:
     """Pick which list row should replace ``parent``, or None to keep it.
 
@@ -178,6 +179,13 @@ def pick_replacement(
     ``guards`` still rejects readouts that cannot be real (``min_value``,
     ``max_value``, ``multiple_of``); it no longer requires the increase itself
     to fall in a band.
+
+    ``partner`` is the other parent already standing in this nest. The game
+    will not let one dinosaur hold both sides, so picking it produces a tap
+    that does nothing at all - no confirmation, no warning - and the round
+    stalls. Rows are only known by their three numbers here, so a different
+    dinosaur with identical stats is skipped too: losing one swap is cheaper
+    than a stall.
     """
 
     if not rows or not stat_value_is_valid(parent, guards):
@@ -187,6 +195,7 @@ def pick_replacement(
         index
         for index, row in enumerate(rows)
         if stat_value_is_valid(row, guards)
+        and (partner is None or row != partner)
         and (
             primary_of(row, rule) > parent_primary
             or (

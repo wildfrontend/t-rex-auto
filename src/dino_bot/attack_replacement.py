@@ -129,6 +129,7 @@ class AttackReplacementTestPlanner:
         self._stage = "filter_attack"
         self._side = 0
         self._current_parent: Stats | None = None
+        self._partner_parent: Stats | None = None
         self._parent_read_failures = 0
         self._parent_consensus = ConsecutiveReadConsensus[
             tuple[Stats, Stats]
@@ -280,6 +281,7 @@ class AttackReplacementTestPlanner:
             return None
         self._parent_read_failures = 0
         self._current_parent = parents[self._side]
+        self._partner_parent = parents[1 - self._side]
         self.logger.info(
             "Hatch %s | side=%s | parent=%s | pair=%s,%s",
             self.rule.tag,
@@ -350,6 +352,7 @@ class AttackReplacementTestPlanner:
             rows,
             self.rule,
             guards=self.stat_guards,
+            partner=self._partner_parent,
         )
         if replacement_index is None:
             self.logger.info(
@@ -431,6 +434,7 @@ class AttackReplacementTestPlanner:
         if self._side == 0:
             self._side = 1
             self._current_parent = None
+            self._partner_parent = None
             self._select_planner = None
             self._stage = "nest_right"
         else:

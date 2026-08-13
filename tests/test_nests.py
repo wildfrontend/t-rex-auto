@@ -51,6 +51,24 @@ def test_empty_list_keeps_parent() -> None:
     assert pick_replacement(Stats(30, 276, 1), [], ATTACK_RULE) is None
 
 
+def test_the_other_parent_in_the_nest_is_never_offered_as_a_replacement() -> None:
+    # 巢中另一隻親代出現在候選清單時,遊戲不會讓牠同時佔兩個位置:點下去毫無
+    # 回應,沒有確認框也沒有警告,整輪就卡在驗證失敗。
+    parent = Stats(760, 77, 85)
+    partner = Stats(670, 89, 79)
+    rows = [partner, Stats(670, 87, 79)]
+
+    assert pick_replacement(parent, rows, ATTACK_RULE) == 0
+    assert pick_replacement(parent, rows, ATTACK_RULE, partner=partner) == 1
+
+
+def test_partner_exclusion_can_leave_no_candidate_at_all() -> None:
+    parent = Stats(760, 77, 85)
+    partner = Stats(670, 89, 79)
+
+    assert pick_replacement(parent, [partner], ATTACK_RULE, partner=partner) is None
+
+
 def test_equal_primary_without_lower_secondaries_keeps_parent() -> None:
     parent = Stats(30, 276, 1)
     rows = [Stats(2160, 276, 1), Stats(50, 270, 150)]
