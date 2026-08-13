@@ -569,12 +569,15 @@ class HuntTeamAvailabilityDetector:
             ),
             key=lambda item: item[0],
         )
-        # "0 / 11" is four glyphs, "10 / 11" and "11 / 11" are five. Within the
-        # four-glyph shapes only the leading digit separates "no team left"
-        # from "some team left", and a width threshold alone accepts every one
-        # of 2..9 - which cancelled thirteen consecutive hunts. Identify the
-        # zero by its shape instead.
-        if len(glyphs) != 4 or not _is_zero_glyph(mask, glyphs[0]):
+        # The glyph count follows the account's team cap: "0 / 5" is three,
+        # "0 / 11" is four, and a two-digit current value ("10 / 11") is five.
+        # Only the leading digit ever separates "no team left" from "some team
+        # left", and a width threshold alone accepts every one of 2..9 - which
+        # cancelled thirteen consecutive hunts. Identify the zero by its shape
+        # instead, and accept either counter width: requiring exactly four
+        # blinded this detector on every single-digit cap, so s13 kept opening
+        # sheet after sheet it could not field a team for instead of waiting.
+        if len(glyphs) not in (3, 4) or not _is_zero_glyph(mask, glyphs[0]):
             return []
 
         scale_x = frame.width / width

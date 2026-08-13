@@ -3241,3 +3241,40 @@ def test_the_autoplace_prompt_is_watched_for_on_every_hunt_scan() -> None:
             break
     assert scoped is not None
     assert "hunt_autoplace_cancel_button" in scoped
+
+
+def test_hunt_team_availability_detector_handles_a_single_digit_team_cap() -> None:
+    """S13 的隊伍上限是 5,計數器因而是「0 / 5」——三個字形,不是四個。
+
+    偵測器原本要求剛好四個字形(「0 / 11」),對個位數上限完全失明。S13 因此
+    從來沒有進入過「沒有可用恐龍」的 30 秒冷卻,而是一隻恐龍換一隻地開面板、
+    發現組不出隊、關掉、再開,21 分鐘只打成 29 次。
+    """
+
+    detector = HuntTeamAvailabilityDetector()
+
+    def team_screen(label: str) -> Frame:
+        image = np.full((1600, 900, 3), 30, dtype=np.uint8)
+        image[850:1500] = 255
+        cv2.putText(
+            image,
+            label,
+            (410, 960),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.9,
+            (0, 0, 0),
+            2,
+            cv2.LINE_AA,
+        )
+        cv2.rectangle(image, (592, 1372), (664, 1447), (50, 80, 255), -1)
+        return Frame(image)
+
+    unavailable = detector.detect(team_screen("0 / 5"))
+    assert len(unavailable) == 1
+    assert unavailable[0].type == "no_available_dinosaurs"
+    # 點擊點仍是面板自己的關閉鈕,後面接的是既有的 30 秒動作冷卻。
+    assert (unavailable[0].x, unavailable[0].y) == (628, 1409)
+
+    # 還有隊伍可派時絕不能誤判:那會取消一次本來打得成的狩獵。
+    for label in ("1 / 5", "3 / 5", "5 / 5"):
+        assert detector.detect(team_screen(label)) == [], label
