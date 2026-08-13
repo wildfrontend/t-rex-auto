@@ -130,7 +130,17 @@ def _post_json(url: str, timeout: float = 3.0) -> dict[str, Any]:
 
 
 def _port_is_bindable(port: int) -> bool:
+    """Ask the same question the status server will ask when it starts.
+
+    ``ThreadingHTTPServer`` binds with ``allow_reuse_address``, so a socket
+    left in TIME_WAIT by the Bot that just stopped does not block it. Probing
+    without the option makes this check stricter than the real bind: the
+    restart is refused as "port occupied" while lsof reports no listener,
+    because TIME_WAIT is not a listening socket.
+    """
+
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
         sock.bind(("127.0.0.1", port))
     except OSError:

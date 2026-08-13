@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 import json
 import os
+import socket
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -220,6 +221,35 @@ def test_dashboard_records_a_concrete_clean_restart_failure(
 
     with pytest.raises(RuntimeError, match=r"PID 4321 / unknown\.exe"):
         controller._wait_for_clean_port(instance, 1234, timeout_seconds=0)
+
+
+def test_port_check_ignores_a_time_wait_socket_the_server_could_reuse() -> None:
+    # 剛停掉的 Bot 會在 status port 留下 TIME_WAIT。status server 用
+    # allow_reuse_address 綁定，照樣起得來；檢查若比它嚴格，就會在沒有任何
+    # LISTEN 程序的情況下把重啟擋掉。
+    server = socket.socket()
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind(("127.0.0.1", 0))
+    port = server.getsockname()[1]
+    server.listen(1)
+    client = socket.create_connection(("127.0.0.1", port))
+    accepted, _ = server.accept()
+    server.close()
+    accepted.close()  # 伺服端主動關閉，這一端進入 TIME_WAIT
+    client.close()
+
+    plain = socket.socket()
+    try:
+        plain.bind(("127.0.0.1", port))
+    except OSError:
+        pass
+    else:
+        plain.close()
+        pytest.skip("這台機器沒有留下 TIME_WAIT，涵蓋不到該情境")
+    finally:
+        plain.close()
+
+    assert dashboard_module._port_is_bindable(port)
 
 
 def test_dashboard_clean_restart_waits_for_old_pid_even_after_port_release(
