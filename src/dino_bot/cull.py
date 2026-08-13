@@ -11,7 +11,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .digits import DigitReader, parse_fraction
+import cv2
+
+from .digits import DigitReader, binarize, parse_fraction
 from .models import Image
 
 # HUD capacity readout in 900-wide reference space, valid on the cave view
@@ -49,6 +51,32 @@ class CapacityRead:
         return self.count is not None
 
 
+def _without_truncated_ink(crop: Image) -> Image:
+    """Blank out ink that the crop's own edge cuts through.
+
+    Unlike the stat panels, this HUD sits over the map, so dark scenery can
+    reach into the calibrated region from the side. Every glyph of the
+    readout falls entirely inside that region; anything the border truncates
+    is not one of them. Left in place it is read as an extra digit and
+    poisons the value - a stone outline once turned 114/200 into 114/2002 -
+    and it cannot be told apart by size, having been as slim as a real digit.
+
+    A blob that merges with the last digit is erased along with it, which
+    reads short and fails the denominator check: the run stops instead of
+    acting on a number the scenery had a hand in.
+    """
+
+    ink = binarize(crop)
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(ink, connectivity=8)
+    width = ink.shape[1]
+    cleaned = crop.copy()
+    for index in range(1, count):
+        x = stats[index, cv2.CC_STAT_LEFT]
+        if x == 0 or x + stats[index, cv2.CC_STAT_WIDTH] >= width:
+            cleaned[labels == index] = 255
+    return cleaned
+
+
 def probe_dino_count(
     image: Image,
     reader: DigitReader,
@@ -70,7 +98,7 @@ def probe_dino_count(
     # empty array and read as an ordinary unparsed miss.
     if x0 >= x1 or y0 >= y1 or x1 > width or y1 > height:
         return CapacityRead(None, "", None, region, "region_outside_frame")
-    text = reader.read(image[y0:y1, x0:x1])
+    text = reader.read(_without_truncated_ink(image[y0:y1, x0:x1]))
     fraction = parse_fraction(text)
     if fraction is None:
         return CapacityRead(None, text, None, region, "unparsed")
