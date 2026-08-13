@@ -101,8 +101,8 @@
       "file": "templates/map-center-egg.png",
       "threshold": 0.75,
       "click_offset": [
-        48,
-        35
+        26,
+        29
       ],
       "match_scale": 0.5
     },

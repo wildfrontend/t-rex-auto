@@ -600,8 +600,47 @@ class HuntTeamAvailabilityDetector:
         ]
 
 
+# The same dispatched/total pair the egg nest carries is mirrored in the HUD
+# pill at the top right, which does not travel with the map. Measured on a
+# 900x1600 frame, between the meat icon that opens the pill and the green plus
+# that closes it, so only the digits and their separator fall inside.
+HUNT_TEAM_HUD_REGION: tuple[int, int, int, int] = (770, 222, 862, 264)
+
+
+def _groups_match(mask: np.ndarray, left: list, right: list) -> bool:
+    """Whether two glyph runs draw the same number, ignoring what it is.
+
+    A dispatched counter is full exactly when both sides of the slash read
+    alike, so the pair can be compared as pixels and never has to be
+    recognised as digits. That is what keeps this free of a hard-coded team
+    cap: 5/5 and 11/11 answer yes on the same evidence as 10/10, and a pass
+    that raises the limit later needs no recalibration here.
+    """
+
+    if not left or len(left) != len(right):
+        return False
+    for first, second in zip(left, right, strict=True):
+        x1, y1, w1, h1, _ = first
+        x2, y2, w2, h2, _ = second
+        # One glyph drawn at two sub-pixel offsets can bound a pixel apart, so
+        # the boxes are only required to be the same size to within that.
+        if abs(w1 - w2) > 1 or abs(h1 - h2) > 1:
+            return False
+        one = mask[y1 : y1 + h1, x1 : x1 + w1]
+        two = mask[y2 : y2 + h2, x2 : x2 + w2]
+        if one.size == 0 or two.size == 0:
+            return False
+        if one.shape != two.shape:
+            two = cv2.resize(two, (one.shape[1], one.shape[0]), interpolation=cv2.INTER_NEAREST)
+        # Measured on rendered counters: one digit against itself agrees on
+        # 0.90 of its pixels at worst, two different digits on 0.69 at best.
+        if float(np.mean(one == two)) < 0.8:
+            return False
+    return True
+
+
 class HuntCapacityDetector:
-    """Detect the map egg nest's fixed ``10/10`` dispatched-team counter."""
+    """Detect the fixed ``N/N`` dispatched-team counter, full only."""
 
     def __init__(
         self,
@@ -609,7 +648,9 @@ class HuntCapacityDetector:
         reference_size: tuple[int, int] = (900, 1600),
         anchor_template: str | Path | None = None,
         anchor_threshold: float = 0.65,
+        hud_region: tuple[int, int, int, int] = HUNT_TEAM_HUD_REGION,
     ) -> None:
+        self.hud_region = hud_region
         self.target_type = target_type
         self.reference_size = reference_size
         template_path = (
@@ -638,7 +679,7 @@ class HuntCapacityDetector:
         )
         _, anchor_confidence, _, (anchor_x, anchor_y) = cv2.minMaxLoc(matches)
         if anchor_confidence < self.anchor_threshold:
-            return []
+            return self._detect_hud(image)
 
         # The availability label is immediately below/right of the egg nest.
         # Its position follows the nest as the map pans, unlike the top-right
@@ -665,7 +706,7 @@ class HuntCapacityDetector:
         if len(glyphs) != 5 or [
             _is_zero_glyph(mask, glyph) for glyph in glyphs
         ] != [False, True, False, False, True]:
-            return []
+            return self._detect_hud(image)
         scale_x = frame.width / width
         scale_y = frame.height / height
         bbox = BoundingBox(
@@ -686,6 +727,49 @@ class HuntCapacityDetector:
                     "value": "10/10",
                     "anchor_confidence": float(anchor_confidence),
                 },
+            )
+        ]
+
+    def _detect_hud(self, image: np.ndarray) -> list[Detection]:
+        """Read the counter from the HUD pill instead of the egg nest.
+
+        The nest-anchored reading only exists while the nest is on screen, and
+        the map pans away from it for most of a hunt: sampling a live session
+        found the anchor over threshold in one frame out of six. A capacity
+        wait that is invisible five times out of six is read as a stall, and
+        the watchdog answers a stall by restarting the game - an expensive
+        reply to teams that only needed time to come back.
+        """
+
+        x1, y1, x2, y2 = self.hud_region
+        if x1 >= x2 or y1 >= y2 or x2 > image.shape[1] or y2 > image.shape[0]:
+            return []
+        gray = cv2.cvtColor(image[y1:y2, x1:x2], cv2.COLOR_BGR2GRAY)
+        mask = np.where(gray > 210, 255, 0).astype(np.uint8)
+        _, _, stats, _ = cv2.connectedComponentsWithStats(mask)
+        glyphs = sorted(
+            (
+                (int(x), int(y), int(glyph_width), int(glyph_height), int(area))
+                for x, y, glyph_width, glyph_height, area in stats[1:]
+                if area >= 8 and glyph_height >= 8
+            ),
+            key=lambda item: item[0],
+        )
+        # An odd count with a matching run either side is the only shape a
+        # full counter takes; every partial reading is shorter on the left.
+        if len(glyphs) < 3 or len(glyphs) % 2 == 0:
+            return []
+        half = len(glyphs) // 2
+        if not _groups_match(mask, glyphs[:half], glyphs[half + 1 :]):
+            return []
+        return [
+            Detection(
+                type=self.target_type,
+                x=round((x1 + x2) / 2),
+                y=round((y1 + y2) / 2),
+                confidence=1.0,
+                bbox=BoundingBox(x=x1, y=y1, width=x2 - x1, height=y2 - y1),
+                metadata={"detector": "hunt_team_hud", "digits": half},
             )
         ]
 

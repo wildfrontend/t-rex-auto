@@ -1514,6 +1514,61 @@ def test_hunt_capacity_detector_only_matches_ten_at_egg_nest() -> None:
     assert detector.detect(capacity_screen("10/10", show_nest=False)) == []
 
 
+def hud_capacity_screen(label: str) -> Frame:
+    """Draw a dispatched-team counter into the fixed top-right HUD pill."""
+
+    image = np.full((1600, 900, 3), 30, dtype=np.uint8)
+    cv2.putText(
+        image,
+        label,
+        (774, 258),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.7,
+        (255, 255, 255),
+        2,
+        cv2.LINE_AA,
+    )
+    return Frame(image)
+
+
+def test_hunt_capacity_detector_reads_the_hud_when_the_nest_is_off_screen() -> None:
+    # The map pans away from the egg nest for most of a hunt, so a wait that
+    # only the nest can report is invisible when it matters and gets answered
+    # with a game restart instead of patience.
+    detector = HuntCapacityDetector()
+
+    found = detector.detect(hud_capacity_screen("10/10"))
+
+    assert len(found) == 1 and found[0].type == "hunt_capacity_full"
+    assert found[0].metadata["detector"] == "hunt_team_hud"
+
+
+def test_hunt_capacity_hud_is_full_at_any_team_cap() -> None:
+    # The cap rises with a growth pass, and a hard-coded 10 went blind on a
+    # team counter that never reads 10 - the same assumption that already
+    # blinded the availability detector on a single-digit cap.
+    detector = HuntCapacityDetector()
+
+    for label in ("5/5", "8/8", "11/11"):
+        assert len(detector.detect(hud_capacity_screen(label))) == 1, label
+
+
+def test_hunt_capacity_hud_ignores_a_counter_with_teams_left() -> None:
+    detector = HuntCapacityDetector()
+
+    for label in ("6/10", "0/10", "1/11"):
+        assert detector.detect(hud_capacity_screen(label)) == [], label
+
+
+def test_hunt_capacity_hud_compares_pixels_not_glyph_counts() -> None:
+    # "2/5" draws one glyph either side just like "5/5"; only the pixels tell
+    # a full counter from a partial one that happens to be the same shape.
+    detector = HuntCapacityDetector()
+
+    assert detector.detect(hud_capacity_screen("2/5")) == []
+    assert detector.detect(hud_capacity_screen("3/8")) == []
+
+
 def test_target_too_strong_detector_requires_red_warning_and_close_button() -> None:
     detector = TargetTooStrongDetector()
     image = np.full((1600, 900, 3), 255, dtype=np.uint8)
