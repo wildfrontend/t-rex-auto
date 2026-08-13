@@ -241,14 +241,6 @@ class HatchConfig:
     cave_recenter_checks: int = 3
     # Time without an actionable target before full hatch begins home recovery.
     recovery_timeout_seconds: float = 15.0
-    # Reserved per-account settings for the simple beginner workflow. They do
-    # not affect its first release: it never reads population, culls dinosaurs,
-    # or makes stat-based decisions. Keeping them in the instance config now
-    # avoids a shared global policy when multi-instance management arrives.
-    beginner_population_limit: int | None = None
-    beginner_stat_upgrade_guards: dict[str, StatUpgradeGuard] = field(
-        default_factory=dict
-    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -456,49 +448,6 @@ def _stat_upgrade_guards(data: dict[str, Any]) -> dict[str, StatUpgradeGuard]:
             if value is not None and (isinstance(value, bool) or not isinstance(value, int)):
                 raise ConfigError(
                     f"hatch.stat_upgrade_guards.{stat}.{key} must be an integer or null"
-                )
-            values[key] = value
-        guards[stat] = StatUpgradeGuard(**values)
-    return guards
-
-
-def _beginner_stat_upgrade_guards(data: dict[str, Any]) -> dict[str, StatUpgradeGuard]:
-    """Read optional future per-account guards without enabling them yet."""
-
-    raw = data.get("beginner_stat_upgrade_guards", {})
-    if raw is None:
-        return {}
-    if not isinstance(raw, dict):
-        raise ConfigError("hatch.beginner_stat_upgrade_guards must be a JSON object")
-    known_stats = frozenset({"hp", "attack", "speed"})
-    unknown_stats = set(raw) - known_stats
-    if unknown_stats:
-        raise ConfigError(
-            "hatch.beginner_stat_upgrade_guards contains unknown stats: "
-            + ", ".join(sorted(str(item) for item in unknown_stats))
-        )
-    allowed_keys = frozenset(
-        {"min_delta", "max_delta", "min_value", "max_value", "multiple_of"}
-    )
-    guards: dict[str, StatUpgradeGuard] = {}
-    for stat, entry in raw.items():
-        if not isinstance(entry, dict):
-            raise ConfigError(
-                f"hatch.beginner_stat_upgrade_guards.{stat} must be a JSON object"
-            )
-        unknown_keys = set(entry) - allowed_keys
-        if unknown_keys:
-            raise ConfigError(
-                f"hatch.beginner_stat_upgrade_guards.{stat} contains unknown keys: "
-                + ", ".join(sorted(str(item) for item in unknown_keys))
-            )
-        values: dict[str, int | None] = {}
-        for key in allowed_keys:
-            value = entry.get(key)
-            if value is not None and (isinstance(value, bool) or not isinstance(value, int)):
-                raise ConfigError(
-                    f"hatch.beginner_stat_upgrade_guards.{stat}.{key} "
-                    "must be an integer or null"
                 )
             values[key] = value
         guards[stat] = StatUpgradeGuard(**values)
@@ -801,12 +750,6 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
             recovery_timeout_seconds=float(
                 hatch_data.get("recovery_timeout_seconds", 15)
             ),
-            beginner_population_limit=(
-                None
-                if hatch_data.get("beginner_population_limit") is None
-                else int(hatch_data["beginner_population_limit"])
-            ),
-            beginner_stat_upgrade_guards=_beginner_stat_upgrade_guards(hatch_data),
         ),
         training=TrainingConfig(
             fps=float(training_data.get("fps", 2)),
@@ -960,47 +903,6 @@ def _validate(config: AppConfig) -> None:
         raise ConfigError("hatch.cave_recenter_checks must be greater than zero")
     if config.hatch.recovery_timeout_seconds <= 0:
         raise ConfigError("hatch.recovery_timeout_seconds must be greater than zero")
-    if (
-        config.hatch.beginner_population_limit is not None
-        and config.hatch.beginner_population_limit < 0
-    ):
-        raise ConfigError("hatch.beginner_population_limit cannot be negative")
-    for stat, guard in config.hatch.beginner_stat_upgrade_guards.items():
-        for name in (
-            "min_delta",
-            "max_delta",
-            "min_value",
-            "max_value",
-            "multiple_of",
-        ):
-            value = getattr(guard, name)
-            if value is not None and value < 0:
-                raise ConfigError(
-                    f"hatch.beginner_stat_upgrade_guards.{stat}.{name} cannot be negative"
-                )
-        if guard.multiple_of == 0:
-            raise ConfigError(
-                f"hatch.beginner_stat_upgrade_guards.{stat}.multiple_of "
-                "must be greater than zero"
-            )
-        if (
-            guard.min_delta is not None
-            and guard.max_delta is not None
-            and guard.min_delta > guard.max_delta
-        ):
-            raise ConfigError(
-                f"hatch.beginner_stat_upgrade_guards.{stat}.min_delta "
-                "cannot exceed max_delta"
-            )
-        if (
-            guard.min_value is not None
-            and guard.max_value is not None
-            and guard.min_value > guard.max_value
-        ):
-            raise ConfigError(
-                f"hatch.beginner_stat_upgrade_guards.{stat}.min_value "
-                "cannot exceed max_value"
-            )
     if config.hatch.home_failure_limit <= 0:
         raise ConfigError("hatch.home_failure_limit must be greater than zero")
     if config.hatch.home_backoff_seconds < 0:

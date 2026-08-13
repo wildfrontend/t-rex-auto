@@ -28,7 +28,7 @@ from .metrics import MetricsStore
 DASHBOARD_VERSION = 1
 DEFAULT_BOT_PORTS = {"hatch-hunt": 8773, "hunt": 8765, "hatch-stage": 8774}
 SUPPORTED_BOT_MODES = frozenset(
-    {"hunt", "hatch-beginner", "hatch-beginner-hunt", "hatch-hunt", "hatch-stage"}
+    {"hunt", "hatch-hunt", "hatch-stage"}
 )
 MODE_SWITCH_PROCESS_WAIT_SECONDS = 20
 DEFAULT_INSTANCE_ID = "main"
@@ -516,10 +516,6 @@ class DashboardController:
     def _mode_info(feature: str | None) -> tuple[str | None, str]:
         if feature == "hunt":
             return "hunt", "純狩獵"
-        if feature == "hatch-beginner":
-            return "hatch-beginner", "新手自動孵蛋"
-        if feature == "hatch-beginner-hunt":
-            return "hatch-beginner-hunt", "新手孵蛋＋狩獵"
         if feature == "hatch-hunt":
             return "hatch-hunt", "自動孵蛋＋狩獵"
         if feature and feature.startswith("hatch-stage-"):
@@ -776,7 +772,7 @@ class DashboardController:
                 str(instance.status_port),
                 "--verbose",
             ]
-        elif mode in {"hatch-beginner", "hatch-beginner-hunt", "hatch-hunt"}:
+        elif mode == "hatch-hunt":
             command += [
                 "run",
                 "--feature",
@@ -844,7 +840,7 @@ class DashboardController:
                 "-StatusPort",
                 str(instance.status_port),
             ]
-        elif mode in {"hatch-beginner", "hatch-beginner-hunt", "hatch-hunt"}:
+        elif mode == "hatch-hunt":
             runner = scripts / "run-hatch-windows.ps1"
             arguments = [
                 "-Feature",
@@ -909,13 +905,7 @@ class DashboardController:
         instance_id: str | None = None,
     ) -> dict[str, Any]:
         instance = self._instance(instance_id)
-        if mode not in {
-            "hunt",
-            "hatch-beginner",
-            "hatch-beginner-hunt",
-            "hatch-hunt",
-            "hatch-stage",
-        }:
+        if mode not in {"hunt", "hatch-hunt", "hatch-stage"}:
             raise RuntimeError("Unsupported Bot mode")
         if mode not in instance.allowed_modes:
             raise RuntimeError(f"{instance.name} 不允許啟動 {mode}")
@@ -1366,7 +1356,7 @@ class DashboardController:
                 if stage not in HATCH_STAGE_LABELS:
                     stage = "hatch"
                 self.start("hatch-stage", stage=stage, instance_id=instance_id)
-            elif mode in {"hunt", "hatch-beginner", "hatch-beginner-hunt", "hatch-hunt"}:
+            elif mode in {"hunt", "hatch-hunt"}:
                 self.start(str(mode), instance_id=instance_id)
             restarted = True
         return {
@@ -1478,14 +1468,6 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         try:
             if action == "start-hunt":
                 result = self.server.controller.start("hunt", instance_id=instance_id)
-            elif action == "start-hatch-beginner":
-                result = self.server.controller.start(
-                    "hatch-beginner", instance_id=instance_id
-                )
-            elif action == "start-hatch-beginner-hunt":
-                result = self.server.controller.start(
-                    "hatch-beginner-hunt", instance_id=instance_id
-                )
             elif action == "start-hatch-hunt":
                 result = self.server.controller.start("hatch-hunt", instance_id=instance_id)
             elif action.startswith("start-stage-"):

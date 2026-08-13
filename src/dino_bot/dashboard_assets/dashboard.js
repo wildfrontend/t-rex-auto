@@ -67,8 +67,6 @@ function renderInstances(items) {
       <div class="instance-card-meta"><span>${escapeHtml(active.mode_label || "未啟動")}</span><span>${escapeHtml((active.status || {}).current_stage || "—")}</span></div>
       <div class="instance-card-actions">
         <button type="button" data-instance-action="select" data-instance-id="${escapeHtml(item.id)}">檢視</button>
-        ${startButton("hatch-beginner", "新手孵蛋")}
-        ${startButton("hatch-beginner-hunt", "新手孵蛋＋狩獵")}
         ${startButton("hatch-hunt", "孵蛋＋狩獵")}
         ${startButton("hunt", "純狩獵")}
         <button type="button" data-instance-action="edit" data-instance-id="${escapeHtml(item.id)}">設定</button>

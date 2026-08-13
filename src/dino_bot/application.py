@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 
 from . import attack_replacement as attack_replacement_feature
-from . import beginner_hatch as beginner_hatch_feature
 from . import full_hatch as full_hatch_feature
 from . import hatch as hatch_feature
 from . import nest_filter as nest_filter_feature
@@ -13,14 +12,11 @@ from . import parent_open as parent_open_feature
 from . import select_sort as select_sort_feature
 from .actions import AdbActionDriver, AdbClient
 from .attack_replacement import AttackReplacementTestPlanner
-from .beginner_hatch import BeginnerHatchPlanner
 from .capture import AdbScreencapCapture, MssEmulatorCapture
 from .config import AppConfig
 from .detection import (
     CompositeDetector,
-    HatchAutoplaceConfirmYesDetector,
     HatchAutoplaceDialogDetector,
-    HatchAutoplaceUnavailableDetector,
     HuntCapacityDetector,
     HuntTeamAvailabilityDetector,
     OpenCvDetector,
@@ -71,15 +67,6 @@ def create_engine(
         )
     if feature == "hatch":
         return _create_hatch_engine(config, verbose=verbose)
-    if feature == "hatch-beginner":
-        return _create_hatch_engine(config, verbose=verbose, beginner=True)
-    if feature == "hatch-beginner-hunt":
-        return _create_hatch_engine(
-            config,
-            verbose=verbose,
-            beginner=True,
-            hunt_during_cooldown=True,
-        )
     if feature == "hatch-full":
         return _create_hatch_engine(config, verbose=verbose, full=True)
     if feature == "hatch-hunt":
@@ -315,7 +302,6 @@ def _create_hatch_engine(
     parent_test: bool = False,
     attack_test: bool = False,
     hp_test: bool = False,
-    beginner: bool = False,
     full: bool = False,
     hunt_during_cooldown: bool = False,
     standalone_stage: str | None = None,
@@ -336,20 +322,7 @@ def _create_hatch_engine(
         backup_count=config.log_backup_count,
     )
     hatch = config.hatch
-    if beginner and hunt_during_cooldown:
-        logger.info(
-            "Feature | hatch-beginner-hunt | beginner hatch -> all -> auto-place"
-            " once -> collect once -> cave capacity/cull; hunt during cooldown"
-            " | handoff=30s | capacity=%d",
-            hatch.capacity_limit,
-        )
-    elif beginner:
-        logger.info(
-            "Feature | hatch-beginner | hatch -> all -> auto-place once -> collect once"
-            " -> cave capacity/cull | weakest-only | capacity=%d",
-            hatch.capacity_limit,
-        )
-    elif standalone_stage is not None:
+    if standalone_stage is not None:
         logger.info(
             "Feature | hatch-stage | stage=%s | bounded preflight + run + return",
             standalone_stage,
@@ -426,7 +399,7 @@ def _create_hatch_engine(
             "Hatch detector has no assets; capture templates into %s first",
             hatch.manifest,
         )
-    if hunt_during_cooldown or standalone_stage is not None or beginner:
+    if hunt_during_cooldown or standalone_stage is not None:
         hunt_cv_detector = OpenCvDetector(
             config.detector.manifest,
             default_threshold=config.detector.default_threshold,
@@ -435,9 +408,7 @@ def _create_hatch_engine(
         detector = CompositeDetector(
             open_cv_detector,
             hunt_cv_detector,
-            *([HatchAutoplaceDialogDetector()] if beginner or full else []),
-            *([HatchAutoplaceUnavailableDetector()] if beginner else []),
-            *([HatchAutoplaceConfirmYesDetector()] if beginner else []),
+            *([HatchAutoplaceDialogDetector()] if full else []),
             HuntTeamAvailabilityDetector(),
             HuntCapacityDetector(),
             TargetTooStrongDetector(),
@@ -487,40 +458,10 @@ def _create_hatch_engine(
             limit=config.stalls.snapshot_limit,
             min_interval_seconds=config.stalls.snapshot_min_interval_seconds,
         )
-        if config.stalls.snapshots_enabled and (beginner or full)
+        if config.stalls.snapshots_enabled and full
         else None
     )
-    if beginner:
-        beginner_planner = BeginnerHatchPlanner(
-            DigitReader(hatch.manifest.parent / "digits"),
-            egg_pile_point=(hatch.egg_pile[0], hatch.egg_pile[1]),
-            reference_width=hatch.reference_width,
-            scroll_vector=hatch.scroll_vector,
-            scroll_duration_ms=hatch.scroll_duration_ms,
-            max_scrolls=hatch.max_scrolls,
-            rescan_interval_seconds=hatch.rescan_interval_seconds,
-            require_home_anchor=hatch.require_home_anchor,
-            home_failure_limit=hatch.home_failure_limit,
-            home_backoff_seconds=hatch.home_backoff_seconds,
-            capacity_limit=hatch.capacity_limit,
-            cave_safe_margin=80,
-            cave_bottom_exclusion_px=config.planner.bottom_exclusion_px,
-            capacity_read_retries=hatch.capacity_read_retries,
-            cave_recenter_checks=hatch.cave_recenter_checks,
-            capacity_snapshots=capacity_snapshots,
-            logger=logger,
-        )
-        planner = (
-            HatchHuntPlanner(
-                beginner_planner,
-                _build_hunt_planner(config),
-                handoff_seconds=30,
-                logger=logger,
-            )
-            if hunt_during_cooldown
-            else beginner_planner
-        )
-    elif full:
+    if full:
         hatch_inventory = HatchBoostInventoryStore(
             config.root / "data" / "stats.sqlite3"
         )
@@ -623,9 +564,7 @@ def _create_hatch_engine(
         )
     action = AdbActionDriver(adb, device_size=adb.display_size())
     defaults = (
-        beginner_hatch_feature
-        if beginner
-        else full_hatch_feature
+        full_hatch_feature
         if full
         else attack_replacement_feature
         if attack_test or hp_test
@@ -659,7 +598,7 @@ def _create_hatch_engine(
                 *config.verify.success_requires_target_absence,
                 *full_hatch_feature.STARTUP_DETECTION_TYPES,
             )
-            if hunt_during_cooldown or standalone_stage is not None or beginner
+            if hunt_during_cooldown or standalone_stage is not None
             else ()
         ),
     )

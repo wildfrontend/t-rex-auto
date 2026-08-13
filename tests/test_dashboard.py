@@ -173,8 +173,6 @@ def test_dashboard_builds_noninteractive_runner_commands(tmp_path: Path) -> None
     controller = DashboardController(tmp_path, tmp_path / "app" / "logs")
 
     hunt = controller._runner_command("hunt")
-    beginner = controller._runner_command("hatch-beginner")
-    beginner_hunt = controller._runner_command("hatch-beginner-hunt")
     combined = controller._runner_command("hatch-hunt")
     cave = controller._runner_command("hatch-stage", stage="cave")
     cave_after_switch = controller._runner_command(
@@ -187,10 +185,7 @@ def test_dashboard_builds_noninteractive_runner_commands(tmp_path: Path) -> None
     assert "run-windows.ps1" in hunt[6]
     assert hunt[-2:] == ["-StatusPort", "8765"]
     assert "run-hatch-windows.ps1" in combined[6]
-    assert "run-hatch-windows.ps1" in beginner[6]
-    assert "hatch-beginner" in beginner
-    assert "run-hatch-windows.ps1" in beginner_hunt[6]
-    assert "hatch-beginner-hunt" in beginner_hunt
+    assert "hatch-hunt" in combined
     assert combined[-4:] == ["-MaxActions", "0", "-MaxCycles", "0"]
     assert "run-hatch-windows.ps1" in cave[6]
     assert "hatch-stage-cave" in cave
@@ -326,7 +321,7 @@ def test_dashboard_builds_commands_for_the_selected_instance(tmp_path: Path) -> 
                         "name": "第二台",
                         "config": "instances/second/config.json",
                         "status_port": 8775,
-                        "allowed_modes": ["hunt", "hatch-beginner", "hatch-beginner-hunt"],
+                        "allowed_modes": ["hunt", "hatch-stage"],
                     },
                 ]
             }
@@ -343,8 +338,8 @@ def test_dashboard_builds_commands_for_the_selected_instance(tmp_path: Path) -> 
     assert [item.instance_id for item in controller.instances] == ["main", "second"]
     assert controller.instances[0].logs_dir == app / "logs"
     assert controller.instances[1].logs_dir == tmp_path / "instances" / "second" / "logs"
-    with pytest.raises(RuntimeError, match="主力 不允許啟動 hatch-beginner"):
-        controller.start("hatch-beginner", instance_id="main")
+    with pytest.raises(RuntimeError, match="主力 不允許啟動 hatch-stage"):
+        controller.start("hatch-stage", stage="cave", instance_id="main")
 
 
 def test_dashboard_can_create_an_isolated_instance(tmp_path: Path) -> None:
@@ -407,8 +402,6 @@ def test_dashboard_can_update_instance_settings_without_manual_file_edits(
         "config": "app/config.json",
         "status_port": 8786,
         "allowed_modes": [
-            "hatch-beginner",
-            "hatch-beginner-hunt",
             "hatch-hunt",
             "hatch-stage",
             "hunt",
