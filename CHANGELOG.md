@@ -1,5 +1,19 @@
 # 版本紀錄
 
+## v0.0.30 — 2026-08-13
+
+- 修正洞穴人口讀值被隔壁圖示切入而整串作廢：`174/200` 這種較窄的讀值會在裁切框
+  右緣多讀出一個斜線（`174/200/`），讓 S13 的 preflight 判定 `unparsed` 後直接
+  停機。尾隨斜線現在會忽略，數字本身仍必須完整；多讀到數字仍照舊安全拒絕。
+- 修正 `config-mac.json` 的 `hatch.capacity_limit` 與實機不符（實際為 `350`，
+  設定卻寫 `380`），Mac 主力孵蛋不會再因 `unexpected_capacity` 停住。
+- macOS 發佈包比照 Windows 帶上 `instances.json` 與 `instances/s13`（Mac 版
+  設定 ADB `127.0.0.1:5565`、容量 `180/200`、獨立素材），不必再手動搬實例資料夾。
+- 移除新手孵蛋流程：`hatch-beginner`、`hatch-beginner-hunt` 兩個模式、
+  `BeginnerHatchPlanner`、Dashboard 按鈕、`start-hatch-beginner.cmd`，以及
+  `hatch.beginner_population_limit` 與 `hatch.beginner_stat_upgrade_guards`
+  設定欄位都已刪除。所有實例一律走完整孵蛋流程。
+
 ## v0.0.29 — 2026-08-13
 
 - S13 改用與主力相同的完整孵蛋流程：不再走新手的「所有 → 自動放置一次 → 收集一次」，
