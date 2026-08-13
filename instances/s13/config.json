@@ -7,8 +7,7 @@
     "backend": "adb"
   },
   "hatch": {
-    "beginner_population_limit": 200,
-    "beginner_stat_upgrade_guards": {},
-    "capacity_limit": 200
+    "capacity_limit": 200,
+    "cull_threshold": 180
   }
 }

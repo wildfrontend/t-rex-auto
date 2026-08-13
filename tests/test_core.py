@@ -180,11 +180,25 @@ def test_s13_config_uses_adb_capture() -> None:
 
     assert config.adb.serial == "127.0.0.1:16416"
     assert config.capture.backend == "adb"
-    assert config.hatch.beginner_population_limit == 200
+    # S13 跑主力的完整孵蛋流程，容量門檻比照主力保留餘裕。
+    assert config.hatch.capacity_limit == 200
+    assert config.hatch.cull_threshold == 180
     assert "forest_recenter_button" in config.planner.target_types
     assert "dinosaur" in config.planner.target_types
     assert config.planner.blocking_types == ("duplicate_hunt_alert",)
     assert config.planner.deduplicate_types == ("dinosaur",)
+
+
+def test_s13_instance_allows_only_full_hatch_modes() -> None:
+    registry_path = Path(__file__).resolve().parents[1] / "instances.json"
+    registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    modes = {
+        instance["id"]: set(instance["allowed_modes"])
+        for instance in registry["instances"]
+    }
+
+    # S13 與主力共用同一套孵蛋篩選，新手模式只留給 CLI。
+    assert modes["s13"] == modes["main"] == {"hunt", "hatch-hunt"}
 
 
 def test_packaged_instance_config_inherits_shared_app_config(tmp_path: Path) -> None:

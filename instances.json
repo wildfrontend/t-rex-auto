@@ -12,7 +12,7 @@
       "name": "新手 S13",
       "config": "instances/s13/config.json",
       "status_port": 8775,
-      "allowed_modes": ["hunt", "hatch-beginner", "hatch-beginner-hunt"]
+      "allowed_modes": ["hunt", "hatch-hunt"]
     }
   ]
 }
