@@ -31,6 +31,7 @@
     "startup_auto_battle_close": 3000,
     "hunt_button": 5000,
     "hunt_confirm_button": 3000,
+    "hunt_autoplace_cancel_button": 2500,
     "hunt_dialog_close_button": 2500,
     "map_center_egg": 5000,
     "map_exit_nest_button": 4000,
@@ -89,6 +90,7 @@
       "map_center_egg",
       "hunt_max_group_button",
       "hunt_confirm_button",
+      "hunt_autoplace_cancel_button",
       "hunt_dialog_close_button",
       "hunt_button",
       "mail_reward_collect_button",
@@ -244,6 +246,9 @@
         "map_exit_nest_button",
         "map_center_egg",
         "mailbox_button"
+      ],
+      "hunt_autoplace_cancel_button": [
+        "hunt_dialog_close_button"
       ],
       "hunt_dialog_close_button": [
         "mailbox_button",

@@ -175,6 +175,15 @@
         37
       ],
       "match_scale": 0.5
+    },
+    {
+      "type": "hunt_autoplace_cancel_button",
+      "file": "templates/hunt-autoplace-cancel-button.png",
+      "threshold": 0.85,
+      "click_offset": [
+        83,
+        39
+      ]
     }
   ],
   "hsv_ranges": [

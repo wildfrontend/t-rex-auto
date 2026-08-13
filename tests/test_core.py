@@ -3175,3 +3175,69 @@ HUNT_TARGET_TYPES = (
     "hunt_button",
     "dinosaur",
 )
+
+
+def test_nest_autoplace_prompt_is_refused_then_waited_out() -> None:
+    """選到巢裡的親代時,遊戲會問「要進行巢的自動配置並繼續行動嗎?」。
+
+    答「是」會把孵蛋側辛苦篩出來的親代重新洗牌,所以一律按取消。先前沒有任何
+    規則認得這個框:確認鍵看起來只是點了沒反應,於是走進「信箱一定滿了」那條
+    恢復路徑——25 趟空信箱、14 分鐘、0 次狩獵。
+    """
+
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(
+        (*HUNT_TARGET_TYPES, "hunt_autoplace_cancel_button"),
+        autoplace_refused_wait_seconds=180.0,
+    )
+    prompt = [
+        Detection("hunt_autoplace_cancel_button", 668, 1117, 0.99),
+        Detection("hunt_confirm_button", 541, 1693, 0.87),
+        Detection("hunt_dialog_close_button", 754, 1691, 0.96),
+    ]
+
+    target = planner.choose(frame, prompt)
+    assert target is not None and target.type == "hunt_autoplace_cancel_button"
+    assert planner.last_stage() == "refuse_nest_autoplace"
+
+    planner.on_action_success("hunt_autoplace_cancel_button")
+
+    # 框沒了,底下的隊伍面板還在,而「狩獵」鍵看起來仍可按——再按一次只會把
+    # 同一個框叫回來,所以這裡必須改成離開面板。
+    sheet = [
+        Detection("hunt_confirm_button", 541, 1693, 0.87),
+        Detection("hunt_dialog_close_button", 754, 1691, 0.96),
+    ]
+    target = planner.choose(frame, sheet)
+    assert target is not None and target.type == "hunt_dialog_close_button"
+
+    planner.on_action_success("hunt_dialog_close_button")
+
+    # 現在才進入等待:場上唯一能組的隊伍就是遊戲不肯放行的那一組。
+    assert planner.last_stage() == "capacity_wait"
+    assert 0 < planner.next_ready_delay_ms() <= 180_000
+    assert planner.choose(frame, [Detection("dinosaur", 400, 800, 0.9)]) is None
+
+
+def test_the_autoplace_prompt_is_watched_for_on_every_hunt_scan() -> None:
+    # 這個框可以在任何一次狩獵確認後跳出來;掃描漏掉它就等於看不見。
+    planner = HuntPlanner((*HUNT_TARGET_TYPES, "hunt_autoplace_cancel_button"))
+
+    assert "hunt_autoplace_cancel_button" in planner.full_detection_types()
+
+    # 收窄成 scoped 掃描之後仍必須留著它:框正是在狩獵確認之後才跳出來的。
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    on_map = [
+        Detection("map_center_egg", 450, 800, 1.0),
+        Detection("dinosaur", 650, 1200, 0.90),
+    ]
+    assert planner.choose(frame, on_map) is not None
+    # 掃描寬窄會隨週期交替,取第一個收窄後的集合來檢查。
+    scoped = None
+    for _ in range(6):
+        planner.choose(frame, on_map)
+        scoped = planner.planning_detection_types()
+        if scoped is not None:
+            break
+    assert scoped is not None
+    assert "hunt_autoplace_cancel_button" in scoped

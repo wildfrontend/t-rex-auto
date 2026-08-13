@@ -272,6 +272,8 @@ class HuntPlanner(TargetPlanner):
         no_available_type: str = "no_available_dinosaurs",
         target_too_strong_type: str = "target_too_strong",
         capacity_full_type: str = "hunt_capacity_full",
+        autoplace_cancel_type: str = "hunt_autoplace_cancel_button",
+        autoplace_refused_wait_seconds: float = 180.0,
         capacity_wait_seconds: float = 300.0,
         ring_width: float = 150.0,
         own_path_angle_degrees: float = 7.0,
@@ -331,6 +333,11 @@ class HuntPlanner(TargetPlanner):
         self.no_available_type = no_available_type
         self.target_too_strong_type = target_too_strong_type
         self.capacity_full_type = capacity_full_type
+        self.autoplace_cancel_type = autoplace_cancel_type
+        self.autoplace_refused_wait_seconds = max(
+            0.0,
+            autoplace_refused_wait_seconds,
+        )
         self.capacity_wait_seconds = max(0.0, capacity_wait_seconds)
         self.ring_width = max(1.0, ring_width)
         self.own_path_angle_degrees = max(0.0, own_path_angle_degrees)
@@ -379,6 +386,8 @@ class HuntPlanner(TargetPlanner):
         self._mail_stage = 0
         self._mail_failures = 0
         self._mailbox_full_recovery = False
+        # 拒絕過「巢的自動配置」之後,隊伍面板還開著,必須先收掉才能等待。
+        self._autoplace_refused = False
         self._capacity_cooldown_until = 0.0
         self._action_cooldown_until = 0.0
         self._map_idle_since: float | None = None
@@ -408,6 +417,28 @@ class HuntPlanner(TargetPlanner):
     def on_action_success(self, target_type: str) -> None:
         """Commit hunt counters only after the confirmation tap is verified."""
 
+        if target_type == self.autoplace_cancel_type:
+            # The dialog is gone; the sheet underneath still is not. Mark the
+            # refusal so the close rung fires even though Hunt looks pressable.
+            self._autoplace_refused = True
+            self._awaiting_hunt_button = False
+            self._waited_frames = 0
+            return
+        if target_type == self.hunt_dialog_close_type and self._autoplace_refused:
+            # Back on the map with the sheet shut. The only team the game will
+            # field right now is one it refuses to send without reshuffling the
+            # nest, so stop asking until the hunting parties return.
+            self._autoplace_refused = False
+            self._capacity_cooldown_until = (
+                time.monotonic() + self.autoplace_refused_wait_seconds
+            )
+            self._stage = "capacity_wait"
+            self.logger.warning(
+                "Hunt | only nest parents are selectable | refused nest"
+                " auto-arrange and waiting %.0fs",
+                self.autoplace_refused_wait_seconds,
+            )
+            return
         if target_type == self.hunt_dialog_close_type and self._mailbox_full_recovery:
             self._mailbox_full_recovery = False
             self._mail_stage = 1
@@ -666,6 +697,7 @@ class HuntPlanner(TargetPlanner):
         # is part of that: leaving it armed sends the bot straight back into
         # the mail flow that caused the restart, restart after restart.
         self._total_hunt_count = 0
+        self._autoplace_refused = False
         self._capacity_cooldown_until = 0.0
         self._action_cooldown_until = 0.0
         self._map_idle_since = None
@@ -1113,6 +1145,9 @@ class HuntPlanner(TargetPlanner):
             self.no_available_type,
             self.target_too_strong_type,
             self.capacity_full_type,
+            # The nest auto-arrange prompt is exactly the case this paragraph
+            # warns about: unseen, it cost 14 minutes of refused hunts.
+            self.autoplace_cancel_type,
         }
         map_view = {
             self.dinosaur_type,
@@ -1613,6 +1648,26 @@ class HuntPlanner(TargetPlanner):
             self._stage = "hunt_unavailable"
             return super().choose(frame, unavailable)
 
+        # Hunting a group that includes a nest parent makes the game ask
+        # whether to auto-arrange the nest and carry on. Saying yes would
+        # reshuffle the parents the hatch side spent its rounds selecting, so
+        # this always answers Cancel. Nothing recognised this dialog before:
+        # the confirm tap looked like it simply failed, which sent the planner
+        # into the "mailbox must be full" recovery - 25 round trips to an empty
+        # mailbox, 14 minutes, zero hunts.
+        autoplace_cancel = self.filter_suppressed(
+            [
+                item
+                for item in detections
+                if item.type == self.autoplace_cancel_type
+            ]
+        )
+        if autoplace_cancel:
+            self._awaiting_hunt_button = False
+            self._waited_frames = 0
+            self._stage = "refuse_nest_autoplace"
+            return super().choose(frame, autoplace_cancel)
+
         # A team sheet that cannot field anyone greys out its Hunt button, so
         # no hunt control matches, yet the sheet still covers the map's exit
         # control in the bottom right. Its own close button is the only thing
@@ -1620,6 +1675,10 @@ class HuntPlanner(TargetPlanner):
         # reached for the exit underneath the sheet instead: s13 spent 100
         # seconds there, recognising this X on every single frame while
         # tapping a coordinate the sheet was sitting on top of.
+        #
+        # `_autoplace_refused` forces the same exit after a refusal: the sheet
+        # is still usable, so tapping Hunt again would only raise the dialog
+        # again. Leave the sheet, then wait for dinosaurs to come home.
         stranded_dialog = self.filter_suppressed(
             [
                 item
@@ -1627,7 +1686,9 @@ class HuntPlanner(TargetPlanner):
                 if item.type == self.hunt_dialog_close_type
             ]
         )
-        if stranded_dialog and not actionable_hunt_controls:
+        if stranded_dialog and (
+            self._autoplace_refused or not actionable_hunt_controls
+        ):
             self._awaiting_hunt_button = False
             self._waited_frames = 0
             self._stage = "close_hunt_dialog"
