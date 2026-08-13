@@ -100,54 +100,6 @@ def test_probe_names_the_reject_branch(text: str, reason: str) -> None:
     assert read.text == text
 
 
-def test_probe_reads_a_narrow_hud_clipped_by_the_next_icon() -> None:
-    # S13 的 174/200 比主力的 280/350 窄，裁切框右緣會切到隔壁圖示，多讀出一個
-    # 斜線。數字本身完整，不該因此整串作廢並讓孵蛋停機。
-    frame = np.full((1600, 900, 3), 255, dtype=np.uint8)
-    read = probe_dino_count(frame, StubReader("174/200/"), expected_capacity=200)
-    assert read.ok
-    assert read.fraction == (174, 200)
-
-
-@pytest.mark.parametrize(
-    ("text", "reason", "count"),
-    [
-        # 洞穴視角下 HUD 壓在石階上,分母最後一位會和場景描邊連成一塊而讀不出來。
-        ("188/20?", "ok", 188),
-        ("188/?00", "ok", 188),
-        # 數字較窄時描邊不會黏住,而是多疊出一個沒人認得的字形。
-        ("149/200?", "ok", 149),
-        ("149/200??", "ok", 149),
-        # 描邊是一道細斜線,被吃掉的那一位也可能讀成 '/' 而不是 '?'。
-        ("149/20/", "ok", 149),
-        ("174/200/", "ok", 174),
-        # 讀值本身就不完整時,尾巴的雜訊救不了它。
-        ("149/20??", "unparsed", None),
-        ("149/300?", "unparsed", None),
-        ("149/2//", "unparsed", None),
-        # 分子不完整、可讀位數對不上設定、或壞掉不只一位,都必須照舊拒絕。
-        ("18?/200", "unparsed", None),
-        ("188/3?0", "unparsed", None),
-        ("188/2??", "unparsed", None),
-        # 讀成別的數字(而不是讀不出來)仍走原本的分母不符路徑。
-        ("188/208", "unexpected_capacity", None),
-    ],
-)
-def test_probe_waives_one_unreadable_denominator_digit(
-    text: str, reason: str, count: int | None
-) -> None:
-    frame = np.full((1600, 900, 3), 255, dtype=np.uint8)
-    read = probe_dino_count(frame, StubReader(text), expected_capacity=200)
-    assert read.reason == reason
-    assert read.count == count
-
-
-def test_probe_still_rejects_a_stray_digit_in_the_readout() -> None:
-    frame = np.full((1600, 900, 3), 255, dtype=np.uint8)
-    read = probe_dino_count(frame, StubReader("174/200/1"), expected_capacity=200)
-    assert read.reason == "unparsed"
-
-
 def test_probe_accepts_configured_capacity_limit() -> None:
     frame = np.full((1600, 900, 3), 255, dtype=np.uint8)
     read = probe_dino_count(

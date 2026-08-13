@@ -24,10 +24,6 @@ from .models import Image
 # connected from y=239 onward at 900-wide reference scale.
 CAPACITY_REGION = (10.0, 239.0, 110.0, 258.0)
 EXPECTED_CAPACITY = 350
-# What the map's outline reads as when it reaches into the crop: either no
-# glyph at all, or - being a thin diagonal stroke - a slash. Both are equally
-# untrustworthy, and neither can be told from a genuine digit by shape alone.
-SCENERY_GLYPHS = "?/"
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,45 +49,6 @@ class CapacityRead:
         return self.count is not None
 
 
-def _denominator_clipped_by_scenery(
-    text: str, expected_capacity: int
-) -> tuple[int, int] | None:
-    """Recover a readout the map's outline reached into.
-
-    In the cave view the HUD sits over the map, and a dark scenery outline
-    lands right after the capacity. Depending on how wide the numbers are it
-    either stays separate - adding one glyph nobody can name, ``149/200?`` -
-    or touches the final digit and swallows it, ``188/20?``. As strings the
-    two are indistinguishable, so the configured capacity is what tells them
-    apart. The count is what the plan acts on and is read in full either way.
-
-    The denominator only proves the crop landed on the right HUD, so it is
-    waived narrowly: trailing noise may be dropped only if what remains is
-    exactly the configured capacity, and a swallowed digit only if the
-    lengths agree and every legible digit matches. A misplaced crop satisfies
-    neither. A digit that reads as the wrong number - rather than as
-    unreadable - still goes down the ordinary ``unexpected_capacity`` path.
-    """
-
-    left, separator, right = text.partition("/")
-    if not separator or not left.isdigit():
-        return None
-    expected_text = str(expected_capacity)
-    trimmed = right.rstrip(SCENERY_GLYPHS)
-    if trimmed != right and trimmed == expected_text:
-        return int(left), expected_capacity
-    if len(right) != len(expected_text):
-        return None
-    if sum(1 for glyph in right if glyph in SCENERY_GLYPHS) != 1:
-        return None
-    if any(
-        glyph not in SCENERY_GLYPHS and glyph != want
-        for glyph, want in zip(right, expected_text, strict=True)
-    ):
-        return None
-    return int(left), expected_capacity
-
-
 def probe_dino_count(
     image: Image,
     reader: DigitReader,
@@ -114,9 +71,7 @@ def probe_dino_count(
     if x0 >= x1 or y0 >= y1 or x1 > width or y1 > height:
         return CapacityRead(None, "", None, region, "region_outside_frame")
     text = reader.read(image[y0:y1, x0:x1])
-    fraction = parse_fraction(text) or _denominator_clipped_by_scenery(
-        text, expected_capacity
-    )
+    fraction = parse_fraction(text)
     if fraction is None:
         return CapacityRead(None, text, None, region, "unparsed")
     count, capacity = fraction

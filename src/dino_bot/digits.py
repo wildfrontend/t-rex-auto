@@ -283,8 +283,9 @@ def parse_fraction(text: str) -> tuple[int, int] | None:
     apply the identical accept/reject rule.
 
     Strict on purpose: a trailing glyph may be scenery bleeding into the crop
-    or a real digit misread, and nothing here can tell which. Callers that
-    know what the denominator should be resolve that themselves.
+    or a real digit misread, and nothing here can tell which. Anything that is
+    not exactly ``N/M`` fails safe instead of being guessed at - the caller
+    acts on this number by deleting dinosaurs.
     """
 
     if "?" in text or text.count("/") != 1:
