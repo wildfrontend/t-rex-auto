@@ -1,5 +1,15 @@
 # 版本紀錄
 
+## v0.0.35 — 2026-08-13
+
+- 修正每次卡住之後 Bot 都會直接崩潰停機。`recover_from_action_failures` 把狩獵各
+  階段解開、要求重新置中之後，最後那行回報用的 `self.logger.warning` 直接丟出
+  `AttributeError`——`TargetPlanner` 從來沒有定義 `logger`，`planning.py` 甚至沒有
+  `import logging`。而這條升級路徑正是「動作連續失敗」會走的路，所以任何一次卡住
+  的結局都一樣：`engine._request_stage_recovery` 吐出 traceback 後 `Bot stopped`，
+  在 log 裡看起來卻像是乾淨的正常結束。既有的升級測試是用子類覆寫這個方法，真正
+  的實作從沒被執行過，因此新測試直接呼叫本尊。
+
 ## v0.0.34 — 2026-08-13
 
 - 修正在狩獵途中重啟就回不了家、27 秒後自己停機。狩獵氣泡框蓋住地圖右側的離開
