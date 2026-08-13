@@ -107,6 +107,12 @@ RECOVERY_FOREST = "hatch_recovery_forest_recenter"
 RECOVERY_RECENTER = "hatch_recovery_recenter"
 RECOVERY_UNDO = "hatch_recovery_undo_recenter"
 RECOVERY_BACK = "hatch_recovery_back"
+RECOVERY_HUNT_DIALOG_CLOSE = "hatch_recovery_hunt_dialog_close"
+RECOVERY_HUNT_DIALOG_DISMISS = "hatch_recovery_hunt_dialog_dismiss"
+# 收掉狩獵氣泡框用的地圖空點,900 寬座標。左側中下最不容易壓到 HUD;真的
+# 壓到別隻恐龍也只是換一個氣泡,下一輪再收,代價與現況相同。
+HUNT_DIALOG_DISMISS_POINT = (110.0, 1200.0)
+HUNT_DIALOG_CLOSE = "hunt_dialog_close_button"
 HUNT_MAP_EXIT = "map_exit_nest_button"
 FOREST_RECENTER = "forest_recenter_button"
 STARTUP_GROWTH_RESULT = "startup_growth_result_back"
@@ -185,6 +191,8 @@ DEFAULT_TARGET_ACTIONS: dict[str, str] = {
     RECOVERY_RECENTER: "swipe",
     RECOVERY_UNDO: "swipe",
     RECOVERY_BACK: "back",
+    RECOVERY_HUNT_DIALOG_CLOSE: "tap",
+    RECOVERY_HUNT_DIALOG_DISMISS: "tap",
     STARTUP_GROWTH_RESULT: "tap",
     STARTUP_AUTO_BATTLE_CLOSE: "tap",
     STARTUP_NEST_SHORTCUT: "tap",
@@ -225,6 +233,8 @@ DEFAULT_POST_ACTION_DELAYS_MS: dict[str, int] = {
     RECOVERY_RECENTER: 4000,
     RECOVERY_UNDO: 4000,
     RECOVERY_BACK: 4000,
+    RECOVERY_HUNT_DIALOG_CLOSE: 3000,
+    RECOVERY_HUNT_DIALOG_DISMISS: 3000,
     STARTUP_GROWTH_RESULT: 3000,
     STARTUP_AUTO_BATTLE_CLOSE: 3000,
     STARTUP_NEST_SHORTCUT: 4000,
@@ -260,6 +270,10 @@ DEFAULT_SUCCESS_TRANSITIONS: dict[str, tuple[str, ...]] = {
     SELECT_CHOOSE_BUTTON: (CAVE_CONTINUOUS_BUTTON,),
     CAVE_CONTINUOUS_BUTTON: (hatch_feature.CLAIM_BUTTON,),
     RECOVERY_FOREST: (HUNT_MAP_EXIT,),
+    # 氣泡收掉的證據就是它蓋住的那些地圖控制項重新露出來。這個檢查同時
+    # 擋掉 Back 那種「合成目標當然不見了」的假成功。
+    RECOVERY_HUNT_DIALOG_CLOSE: (HUNT_MAP_EXIT, FOREST_RECENTER),
+    RECOVERY_HUNT_DIALOG_DISMISS: (HUNT_MAP_EXIT, FOREST_RECENTER),
     hatch_feature.CLAIM_BUTTON: (
         hatch_feature.HATCH_BUTTON,
         hatch_feature.INCUBATOR_TITLE,
@@ -694,12 +708,14 @@ class HatchHomeRecoveryPlanner:
         required_home_frames: int = 2,
         max_forest_trips: int = 1,
         max_measured_corrections: int = 2,
+        max_hunt_dialog_dismissals: int = 3,
     ) -> None:
         self.reference_width = reference_width
         self.logger = logger or logging.getLogger("dino_bot")
         self.max_back_attempts = max(0, max_back_attempts)
         self.required_home_frames = max(1, required_home_frames)
         self.max_forest_trips = max(0, max_forest_trips)
+        self.max_hunt_dialog_dismissals = max(0, max_hunt_dialog_dismissals)
         self.max_measured_corrections = max(0, max_measured_corrections)
         self._stage = "inspect"
         self._back_attempts = 0
@@ -709,6 +725,7 @@ class HatchHomeRecoveryPlanner:
         self._recenter_end = 0
         self._forest_trips = 0
         self._forest_refused = False
+        self._hunt_dialog_dismissals = 0
         self._measured_corrections = 0
         self._last_offset: tuple[float, float] | None = None
         self._applied_swipes: list[tuple[int, int, int, int]] = []
@@ -838,6 +855,39 @@ class HatchHomeRecoveryPlanner:
             # exit control is stable and already template-gated.
             self._stage = "leave_hunt_map"
             return _synthetic(RECOVERY_MAP_EXIT, map_exit.x, map_exit.y)
+
+        # A hunt prompt covers the map controls the rung above needs, and Back
+        # does not close it: six presses against one left the button's box and
+        # confidence identical every frame at pixel_change=0.000, and the
+        # escape ladder spent its whole budget on them before failing. Clear
+        # the prompt first so the named exit can be seen at all.
+        hunt_prompt = _best(
+            [
+                *by_type.get("hunt_button", ()),
+                *by_type.get("hunt_max_group_button", ()),
+            ]
+        )
+        if hunt_prompt is not None:
+            dialog_close = _best(by_type.get(HUNT_DIALOG_CLOSE))
+            if dialog_close is not None:
+                self._stage = "close_hunt_dialog"
+                return _synthetic(
+                    RECOVERY_HUNT_DIALOG_CLOSE,
+                    dialog_close.x,
+                    dialog_close.y,
+                )
+            if self._hunt_dialog_dismissals < self.max_hunt_dialog_dismissals:
+                # The level-up bubble carries no close button of its own; a tap
+                # on empty map is what dismisses it.
+                self._hunt_dialog_dismissals += 1
+                self._stage = (
+                    f"dismiss_hunt_dialog_{self._hunt_dialog_dismissals}"
+                    f"/{self.max_hunt_dialog_dismissals}"
+                )
+                return _synthetic(
+                    RECOVERY_HUNT_DIALOG_DISMISS,
+                    *_scaled(frame, HUNT_DIALOG_DISMISS_POINT, self.reference_width),
+                )
 
         # Correcting the camera against a landmark that is still on screen
         # outranks any blind escape below: those only open and close screens,

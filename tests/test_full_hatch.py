@@ -22,6 +22,7 @@ from dino_bot.full_hatch import (
     CAVE_SELECT_BUTTON,
     CAVE_SWIPE,
     COLLECT_EGGS_BUTTON,
+    DEFAULT_SUCCESS_TRANSITIONS,
     HATCH_BOOST_BUTTON,
     HATCH_BOOST_CONFIRM,
     HATCH_DETAIL_CLOSE,
@@ -34,6 +35,8 @@ from dino_bot.full_hatch import (
     PLACE_SORT_LEVEL,
     RECOVERY_BACK,
     RECOVERY_FOREST,
+    RECOVERY_HUNT_DIALOG_CLOSE,
+    RECOVERY_HUNT_DIALOG_DISMISS,
     RECOVERY_MAP_EXIT,
     RECOVERY_MASK_CLOSE,
     RECOVERY_NO,
@@ -1227,6 +1230,59 @@ def test_full_flow_immediately_leaves_active_hunt_map_on_startup() -> None:
     assert target is not None and target.type == RECOVERY_MAP_EXIT
     assert (target.x, target.y) == (841, 1295)
     assert planner._stage == "recover_home"
+
+
+def test_recovery_dismisses_a_hunt_prompt_that_hides_the_map_exit() -> None:
+    # 實測的死結:氣泡框蓋住地圖右側的離開鈕,掃描只認得出那顆狩獵按鈕,
+    # 而 Back 對氣泡完全無效(連按六次,bbox 與信心度逐格相同)。
+    planner = HatchHomeRecoveryPlanner()
+
+    target = planner.choose(
+        frame(np.zeros((1600, 900, 3), dtype=np.uint8)),
+        [detection("hunt_button", 515, 550)],
+    )
+
+    assert target is not None and target.type == RECOVERY_HUNT_DIALOG_DISMISS
+    assert (target.x, target.y) == (110, 1200)
+    # 收掉氣泡的證據是被它蓋住的控制項重新露出來,而不是合成目標消失。
+    assert DEFAULT_SUCCESS_TRANSITIONS[RECOVERY_HUNT_DIALOG_DISMISS] == (
+        "map_exit_nest_button",
+        "forest_recenter_button",
+    )
+
+
+def test_recovery_prefers_a_real_close_button_over_tapping_empty_map() -> None:
+    planner = HatchHomeRecoveryPlanner()
+
+    target = planner.choose(
+        frame(np.zeros((1600, 900, 3), dtype=np.uint8)),
+        [
+            detection("hunt_button", 515, 550),
+            detection("hunt_dialog_close_button", 700, 400),
+        ],
+    )
+
+    assert target is not None and target.type == RECOVERY_HUNT_DIALOG_CLOSE
+    assert (target.x, target.y) == (700, 400)
+
+
+def test_recovery_stops_dismissing_a_hunt_prompt_that_never_clears() -> None:
+    planner = HatchHomeRecoveryPlanner()
+    detections = [detection("hunt_button", 515, 550)]
+
+    for _ in range(planner.max_hunt_dialog_dismissals):
+        target = planner.choose(
+            frame(np.zeros((1600, 900, 3), dtype=np.uint8)),
+            detections,
+        )
+        assert target is not None and target.type == RECOVERY_HUNT_DIALOG_DISMISS
+
+    # 收不掉就讓位給階梯剩下的逃生手段,而不是永遠點空地圖。
+    target = planner.choose(
+        frame(np.zeros((1600, 900, 3), dtype=np.uint8)),
+        detections,
+    )
+    assert target is not None and target.type == RECOVERY_BACK
 
 
 def test_full_flow_tracks_shifted_egg_pile_instead_of_tapping_roaming_dinosaur() -> None:
