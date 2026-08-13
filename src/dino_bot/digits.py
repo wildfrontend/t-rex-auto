@@ -282,15 +282,11 @@ def parse_fraction(text: str) -> tuple[int, int] | None:
     report *why* a read failed can hold on to the raw glyph text and still
     apply the identical accept/reject rule.
 
-    A narrow readout leaves empty space inside the calibrated crop, so the
-    neighbouring HUD icon can clip in on the right and read as one more slash
-    (``174/200/``). Trailing slashes carry no value either way - a real
-    fraction never ends in one - so drop them before the shape check rather
-    than throwing away an otherwise complete number. Digits are still not
-    tolerated: a stray digit changes the value and must fail safe.
+    Strict on purpose: a trailing glyph may be scenery bleeding into the crop
+    or a real digit misread, and nothing here can tell which. Callers that
+    know what the denominator should be resolve that themselves.
     """
 
-    text = text.rstrip("/")
     if "?" in text or text.count("/") != 1:
         return None
     left, right = text.split("/")

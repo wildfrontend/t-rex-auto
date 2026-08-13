@@ -24,6 +24,10 @@ from .models import Image
 # connected from y=239 onward at 900-wide reference scale.
 CAPACITY_REGION = (10.0, 239.0, 110.0, 258.0)
 EXPECTED_CAPACITY = 350
+# What the map's outline reads as when it reaches into the crop: either no
+# glyph at all, or - being a thin diagonal stroke - a slash. Both are equally
+# untrustworthy, and neither can be told from a genuine digit by shape alone.
+SCENERY_GLYPHS = "?/"
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,32 +56,37 @@ class CapacityRead:
 def _denominator_clipped_by_scenery(
     text: str, expected_capacity: int
 ) -> tuple[int, int] | None:
-    """Recover a readout whose last denominator digit merged with the map.
+    """Recover a readout the map's outline reached into.
 
-    In the cave view the HUD sits over the map, and a dark scenery outline can
-    touch the final digit: the two become one connected shape that matches no
-    glyph, so the whole readout is discarded and hatching stops. The count
-    itself is what the plan acts on, and it is still read in full here.
+    In the cave view the HUD sits over the map, and a dark scenery outline
+    lands right after the capacity. Depending on how wide the numbers are it
+    either stays separate - adding one glyph nobody can name, ``149/200?`` -
+    or touches the final digit and swallows it, ``188/20?``. As strings the
+    two are indistinguishable, so the configured capacity is what tells them
+    apart. The count is what the plan acts on and is read in full either way.
 
-    The denominator's job is to prove the crop landed on the right HUD, so it
-    is only waived one digit at a time: every legible digit must match the
-    configured capacity, the lengths must agree, and exactly one glyph may be
-    unreadable. A misplaced crop fails all three. A digit that reads as the
-    wrong number - rather than as unreadable - still goes down the ordinary
-    ``unexpected_capacity`` path.
+    The denominator only proves the crop landed on the right HUD, so it is
+    waived narrowly: trailing noise may be dropped only if what remains is
+    exactly the configured capacity, and a swallowed digit only if the
+    lengths agree and every legible digit matches. A misplaced crop satisfies
+    neither. A digit that reads as the wrong number - rather than as
+    unreadable - still goes down the ordinary ``unexpected_capacity`` path.
     """
 
-    if text.count("/") != 1:
-        return None
-    left, right = text.split("/")
-    if not left.isdigit():
+    left, separator, right = text.partition("/")
+    if not separator or not left.isdigit():
         return None
     expected_text = str(expected_capacity)
-    if len(right) != len(expected_text) or right.count("?") != 1:
+    trimmed = right.rstrip(SCENERY_GLYPHS)
+    if trimmed != right and trimmed == expected_text:
+        return int(left), expected_capacity
+    if len(right) != len(expected_text):
+        return None
+    if sum(1 for glyph in right if glyph in SCENERY_GLYPHS) != 1:
         return None
     if any(
-        digit != "?" and digit != want
-        for digit, want in zip(right, expected_text, strict=True)
+        glyph not in SCENERY_GLYPHS and glyph != want
+        for glyph, want in zip(right, expected_text, strict=True)
     ):
         return None
     return int(left), expected_capacity
