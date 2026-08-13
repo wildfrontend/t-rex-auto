@@ -31,6 +31,14 @@ cp -a \
 # macOS 包的預設設定即 Mac 版設定(BlueStacks Air 的 ADB 5555)。
 cp -a "${project_root}/config-mac.json" "${package_app}/config.json"
 
+# 多實例清單與各實例的 root。每個實例要有自己的 config 與素材,logs、資料庫與
+# 截圖才會分開;實例 config 只放覆寫值,其餘自動疊加 app/config.json。
+cp -a "${project_root}/instances.json" "${package_root}/instances.json"
+package_s13="${package_root}/instances/s13"
+mkdir -p "${package_s13}"
+cp -a "${project_root}/instances/s13/config-mac.json" "${package_s13}/config.json"
+cp -a "${project_root}/assets" "${package_s13}/assets"
+
 cp -a \
   "${project_root}/scripts/macos/install-macos-runtime.sh" \
   "${project_root}/scripts/macos/control-macos.py" \

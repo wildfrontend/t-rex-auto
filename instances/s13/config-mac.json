@@ -1,0 +1,13 @@
+{
+  "emulator": "custom",
+  "adb": {
+    "serial": "127.0.0.1:5565"
+  },
+  "capture": {
+    "backend": "adb"
+  },
+  "hatch": {
+    "capacity_limit": 200,
+    "cull_threshold": 180
+  }
+}
