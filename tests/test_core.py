@@ -179,7 +179,7 @@ def test_s13_config_uses_adb_capture() -> None:
     assert config.planner.deduplicate_types == ("dinosaur",)
 
 
-def test_s13_instance_allows_only_full_hatch_modes() -> None:
+def test_s13_instance_allows_single_hatch_stages_without_changing_main() -> None:
     registry_path = Path(__file__).resolve().parents[1] / "instances.json"
     registry = json.loads(registry_path.read_text(encoding="utf-8"))
     modes = {
@@ -187,8 +187,8 @@ def test_s13_instance_allows_only_full_hatch_modes() -> None:
         for instance in registry["instances"]
     }
 
-    # S13 與主力共用同一套孵蛋篩選，新手模式只留給 CLI。
-    assert modes["s13"] == modes["main"] == {"hunt", "hatch-hunt"}
+    assert modes["main"] == {"hunt", "hatch-hunt"}
+    assert modes["s13"] == {"hunt", "hatch-hunt", "hatch-stage"}
 
 
 def test_packaged_instance_config_inherits_shared_app_config(tmp_path: Path) -> None:
@@ -1724,6 +1724,56 @@ def test_verifier_accepts_expected_frame_structure_without_template_detection() 
     assert "frame structure" in result.reason
 
 
+def test_verifier_accepts_required_previous_ui_disappearance() -> None:
+    target_detection = make_detection(type="hatch_candidate_row")
+    target = Target(
+        target_detection.type,
+        target_detection.x,
+        target_detection.y,
+        target_detection.confidence,
+        target_detection,
+    )
+    select_title = make_detection(type="hatch_select_title")
+    verifier = TargetChangedVerifier(
+        success_transitions={
+            "hatch_candidate_row": ("hatch_select_confirm_prompt",)
+        },
+        success_requires_detection_disappearance={
+            "hatch_candidate_row": ("hatch_select_title",)
+        },
+    )
+
+    transitioned = verifier.verify(
+        make_frame(10),
+        make_frame(20),
+        target,
+        [select_title],
+        [],
+    )
+    unchanged = verifier.verify(
+        make_frame(10),
+        make_frame(20),
+        target,
+        [select_title],
+        [select_title],
+    )
+    missing_before_evidence = verifier.verify(
+        make_frame(10),
+        make_frame(20),
+        target,
+        [],
+        [],
+    )
+
+    assert transitioned.success
+    assert "hatch_select_title" in transitioned.reason
+    assert not unchanged.success
+    assert not missing_before_evidence.success
+    assert verifier.relevant_detection_types(target.type) == frozenset(
+        {"hatch_select_confirm_prompt", "hatch_select_title"}
+    )
+
+
 def test_verifier_requires_forest_target_to_disappear_before_dinosaur_success() -> None:
     forest = make_detection(type="forest_recenter_button")
     target = Target(forest.type, forest.x, forest.y, forest.confidence, forest)
@@ -2543,6 +2593,59 @@ def test_engine_escalates_repeated_action_failures_and_opens_restart_fuse() -> N
         "restart_game",
         "stop_bot",
     ]
+
+
+def test_engine_passes_verified_success_context_to_planner() -> None:
+    class ContextPlanner:
+        def __init__(self) -> None:
+            self.contexts: list[
+                tuple[Target, Frame, list[Detection], VerificationResult]
+            ] = []
+            self.legacy_successes: list[str] = []
+
+        def choose(self, frame, detections):
+            return None
+
+        def on_action_success_context(self, target, frame, detections, result):
+            self.contexts.append((target, frame, list(detections), result))
+
+        def on_action_success(self, target_type):
+            self.legacy_successes.append(target_type)
+
+    target_detection = make_detection(type="hatch_candidate_row")
+    target = Target(
+        target_detection.type,
+        target_detection.x,
+        target_detection.y,
+        target_detection.confidence,
+        target_detection,
+    )
+    planner = ContextPlanner()
+    result = VerificationResult(True, "previous UI disappeared: hatch_select_title")
+    after = make_frame(255)
+    context = BotContext(
+        capture_provider=SequenceCapture([after]),
+        detector=PixelDetector(),
+        planner=planner,
+        action_driver=RecordingActionDriver(),
+        verifier=SequenceVerifier([result]),
+        observer=RuntimeMode(),
+        logger=logging.getLogger("test_success_context"),
+        click_delay_ms=0,
+        state=BotState.VERIFY,
+        before_frame=make_frame(10),
+        before_detections=[target_detection],
+        target=target,
+        action=ActionCommand.tap(target.x, target.y),
+        attempt=1,
+    )
+
+    assert BotEngine(context).step() == BotState.IDLE
+    assert len(planner.contexts) == 1
+    assert planner.contexts[0][0] == target
+    assert planner.contexts[0][1] is after
+    assert planner.contexts[0][3] == result
+    assert planner.legacy_successes == []
 
 
 def test_engine_productive_milestone_resets_action_failure_fuse() -> None:

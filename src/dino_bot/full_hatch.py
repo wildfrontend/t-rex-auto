@@ -45,7 +45,7 @@ from .cave_navigation import (
 from .cull import EXPECTED_CAPACITY, CapacityRead, probe_dino_count, should_cull
 from .digits import DigitReader
 from .hatch_inventory import HatchBoostInventoryStore
-from .models import Detection, Frame, Target
+from .models import Detection, Frame, Target, VerificationResult
 from .nests import (
     ATTACK_RULE,
     DEFAULT_STAT_UPGRADE_GUARDS,
@@ -289,6 +289,9 @@ DEFAULT_SUCCESS_TRANSITIONS: dict[str, tuple[str, ...]] = {
     STARTUP_AUTO_BATTLE_CLOSE: (hatch_feature.HOME_ANCHOR,),
     STARTUP_NEST_SHORTCUT: (NEST_TITLE,),
 }
+DEFAULT_SUCCESS_DISAPPEARANCES: dict[str, tuple[str, ...]] = {
+    **replacement_feature.DEFAULT_SUCCESS_DISAPPEARANCES,
+}
 
 # Full mode is intentionally unbounded.  It reports its own completed
 # management cycles and does not let a cave result's reused "獲取" button be
@@ -334,6 +337,17 @@ HOME_BASE_MIN_CONFIDENCE = 0.65
 HOME_BASE_SCALES: tuple[float, ...] = tuple(
     round(0.75 + 0.05 * step, 2) for step in range(15)
 )
+# The higher-level lava nest has no cyan strip and is too different from the
+# starter straw nest for that template sweep.  Its broad red/orange/yellow base
+# is stable, however.  These bounds describe the one connected warm-colour
+# component observed on the 900x1600 home map while rejecting the much smaller
+# orange incubator nests around it.
+LAVA_BASE_HSV_LOWER = (0, 100, 70)
+LAVA_BASE_HSV_UPPER = (40, 255, 255)
+LAVA_BASE_MIN_AREA = 8_000.0
+LAVA_BASE_WIDTH_RANGE = (190.0, 280.0)
+LAVA_BASE_HEIGHT_RANGE = (110.0, 220.0)
+LAVA_BASE_BOTTOM_INSET = 18.0
 _HOME_BASE_TEMPLATE_PATH = (
     Path(__file__).resolve().parents[2]
     / "assets"
@@ -692,6 +706,41 @@ def _straw_base_center(frame: Frame) -> tuple[float, float] | None:
     return (best[1] * frame_scale, best[2] * frame_scale)
 
 
+def _lava_base_center(frame: Frame) -> tuple[float, float] | None:
+    """Locate the red/orange upgraded nest and return its map anchor point."""
+
+    image = frame.image
+    if image.size == 0:
+        return None
+    scale = frame.width / 900.0
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    warm = cv2.inRange(hsv, LAVA_BASE_HSV_LOWER, LAVA_BASE_HSV_UPPER)
+    count, _, stats, _ = cv2.connectedComponentsWithStats(warm)
+    candidates: list[tuple[int, int, int, int, int]] = []
+    for index in range(1, count):
+        x, y, width, height, area = map(int, stats[index])
+        center_x = x + width / 2.0
+        if (
+            area >= LAVA_BASE_MIN_AREA * scale * scale
+            and LAVA_BASE_WIDTH_RANGE[0] * scale
+            <= width
+            <= LAVA_BASE_WIDTH_RANGE[1] * scale
+            and LAVA_BASE_HEIGHT_RANGE[0] * scale
+            <= height
+            <= LAVA_BASE_HEIGHT_RANGE[1] * scale
+            and y >= 850 * scale
+            and 150 * scale <= center_x <= 750 * scale
+        ):
+            candidates.append((area, x, y, width, height))
+    if not candidates:
+        return None
+    _, x, y, width, height = max(candidates)
+    return (
+        x + width / 2.0,
+        y + height - LAVA_BASE_BOTTOM_INSET * scale,
+    )
+
+
 def _egg_pile_base_center(frame: Frame) -> tuple[float, float] | None:
     """Locate the stable base of the variable-looking home egg pile."""
 
@@ -714,9 +763,12 @@ def _egg_pile_base_center(frame: Frame) -> tuple[float, float] | None:
             candidates.append((float(center_x), float(center_y)))
     if candidates:
         return max(candidates, key=lambda center: center[1])
-    # No cyan anywhere means either "not home" or the starter nest, and only
-    # the template can tell those apart.  Keeping it second leaves the upgraded
-    # basin on exactly its old path and off the scale sweep entirely.
+    lava = _lava_base_center(frame)
+    if lava is not None:
+        return lava
+    # No cyan or lava base means either "not home" or the starter nest, and
+    # only the template can tell those apart. Keeping it last leaves both
+    # upgraded bases off the expensive scale sweep entirely.
     return _straw_base_center(frame)
 
 
@@ -2243,6 +2295,20 @@ class FullHatchPlanner:
             return
         if self._stage == "cave":
             self._cave_child.on_action_success(target_type)
+
+    def on_action_success_context(
+        self,
+        target: Target,
+        frame: Frame,
+        detections: Sequence[Detection],
+        result: VerificationResult,
+    ) -> None:
+        if self._stage in ("attack", "hp"):
+            child = self._replacement_child
+            child.on_action_success_context(target, frame, detections, result)
+            self._advance_replacement_if_done()
+            return
+        self.on_action_success(target.type)
 
     def on_action_failure_context(
         self,

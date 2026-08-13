@@ -793,9 +793,22 @@ class VerifyState:
             context.escalate_to_back = False
         if result.success:
             target_type = context.target.type
-            on_action_success = getattr(context.planner, "on_action_success", None)
-            if callable(on_action_success):
-                on_action_success(target_type)
+            on_action_success_context = getattr(
+                context.planner,
+                "on_action_success_context",
+                None,
+            )
+            if callable(on_action_success_context):
+                on_action_success_context(
+                    context.target,
+                    after,
+                    after_detections,
+                    result,
+                )
+            else:
+                on_action_success = getattr(context.planner, "on_action_success", None)
+                if callable(on_action_success):
+                    on_action_success(target_type)
             _record_action_success(context, target_type)
             # A confirmed hunt is the only thing the stall watchdog accepts as
             # progress; everything else on screen can stay unchanged for a

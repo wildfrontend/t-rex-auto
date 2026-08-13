@@ -21,7 +21,7 @@ echo ---- launcher start %DATE% %TIME% ---->>"%log_file%"
 echo runtime_root=%runtime_root%>>"%log_file%"
 
 rem 從 ZIP 內直接雙擊時,Windows 會把檔案解到唯讀暫存資料夾,相對路徑隨即失效。
-rem 用字串置換比 `echo ... | find` 安全:路徑含 & 之類的字元不會把管線本身弄壞。
+rem 直接用字串置換檢查暫存路徑，避免建立額外的命令管線。
 if not "%runtime_root:AppData\Local\Temp=%"=="%runtime_root%" (
   set "reason=Running from inside the ZIP. Extract the whole folder first, then double-click."
   set "reason_zh=偵測到是直接從 ZIP 裡執行。請先把整個資料夾解壓縮到例如桌面,再雙擊 start-dashboard.cmd。"

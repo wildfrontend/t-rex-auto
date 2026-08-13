@@ -4,7 +4,7 @@ import numpy as np
 
 from dino_bot import attack_replacement, nest_filter, select_sort
 from dino_bot.attack_replacement import AttackReplacementTestPlanner
-from dino_bot.models import BoundingBox, Detection, Frame
+from dino_bot.models import BoundingBox, Detection, Frame, VerificationResult
 from dino_bot.nest_readout import (
     ATTACK_PARENT_REGIONS,
     SELECT_FIRST_ROW_REGIONS,
@@ -304,6 +304,70 @@ def test_confirmation_yes_is_never_guessed_without_known_prompt() -> None:
     assert planner.is_complete()
 
 
+def test_candidate_can_apply_directly_and_return_to_nest() -> None:
+    reader = EncodedReader()
+    parent_frame = nest_frame(reader, Stats(30, 276, 1), Stats(30, 276, 1))
+    candidates = select_frame(reader, [Stats(30, 279, 1), Stats(30, 278, 1)])
+    planner = AttackReplacementTestPlanner(  # type: ignore[arg-type]
+        reader,
+        minimum_consistent_stat_reads=2,
+        stat_read_retries=3,
+    )
+    finish_main_filter(planner)
+    assert planner.choose(parent_frame, nest_detections()) is None
+    parent = planner.choose(parent_frame, nest_detections())
+    assert parent is not None
+    planner.on_action_success(parent.type)
+    assert planner.choose(candidates, select_detections()) is None
+    candidate = planner.choose(candidates, select_detections())
+    assert candidate is not None
+    planner.on_action_success_context(
+        candidate,
+        parent_frame,
+        [],
+        VerificationResult(True, "previous UI disappeared: hatch_select_title"),
+    )
+    assert planner.choose(parent_frame, []) is None
+    right = planner.choose(parent_frame, [])
+
+    assert right is not None and right.type == attack_replacement.PARENT_RIGHT
+
+
+def test_parent_panel_without_nest_evidence_is_rejected_without_direct_return() -> None:
+    reader = EncodedReader()
+    parent_frame = nest_frame(reader, Stats(30, 276, 1), Stats(30, 276, 1))
+    planner = AttackReplacementTestPlanner(reader)  # type: ignore[arg-type]
+    finish_main_filter(planner)
+
+    assert planner.choose(parent_frame, []) is None
+    assert planner.last_stage() == "nest_left"
+
+
+def test_candidate_prompt_still_uses_legacy_confirmation_flow() -> None:
+    reader = EncodedReader()
+    parent_frame = nest_frame(reader, Stats(30, 276, 1), Stats(30, 276, 1))
+    candidates = select_frame(reader, [Stats(30, 279, 1), Stats(30, 278, 1)])
+    planner = AttackReplacementTestPlanner(reader)  # type: ignore[arg-type]
+    finish_main_filter(planner)
+    parent = planner.choose(parent_frame, nest_detections())
+    assert parent is not None
+    planner.on_action_success(parent.type)
+    candidate = planner.choose(candidates, select_detections())
+    assert candidate is not None
+    prompt = detection(SELECT_CONFIRM_PROMPT, 450, 660)
+    yes_button = detection(CONFIRM_YES, 350, 850)
+
+    planner.on_action_success_context(
+        candidate,
+        candidates,
+        [prompt],
+        VerificationResult(True, "next UI detected: hatch_select_confirm_prompt"),
+    )
+    yes = planner.choose(candidates, [prompt, yes_button])
+
+    assert yes is not None and yes.type == CONFIRM_YES
+
+
 def test_nested_parent_warning_is_confirmed_then_normal_prompt_is_confirmed() -> None:
     reader = EncodedReader()
     parent_frame = nest_frame(reader, Stats(30, 282, 1), Stats(30, 282, 1))
@@ -458,6 +522,9 @@ def test_action_vocabulary_contains_only_bounded_workflow_controls() -> None:
     assert attack_replacement.DEFAULT_SUCCESS_TRANSITIONS[
         attack_replacement.CANDIDATE_ROW
     ] == (SELECT_CONFIRM_PROMPT, NESTED_PARENT_WARNING)
+    assert attack_replacement.DEFAULT_SUCCESS_DISAPPEARANCES[
+        attack_replacement.CANDIDATE_ROW
+    ] == (attack_replacement.SELECT_TITLE,)
     assert attack_replacement.DEFAULT_SUCCESS_TRANSITIONS[
         attack_replacement.NESTED_PARENT_YES
     ] == (SELECT_CONFIRM_PROMPT, attack_replacement.NEST_TITLE)

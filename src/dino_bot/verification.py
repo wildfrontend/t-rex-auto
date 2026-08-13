@@ -21,6 +21,9 @@ class TargetChangedVerifier:
         success_frame_predicates: Mapping[str, Callable[[Frame], bool]] | None = None,
         black_mean_threshold: float = 2.0,
         success_requires_target_absence: Sequence[str] = (),
+        success_requires_detection_disappearance: Mapping[
+            str, Sequence[str]
+        ] | None = None,
     ):
         self.max_distance = max_distance
         self.pixel_change_threshold = pixel_change_threshold
@@ -34,6 +37,12 @@ class TargetChangedVerifier:
         self.success_requires_target_absence = frozenset(
             success_requires_target_absence
         )
+        self.success_requires_detection_disappearance = {
+            target_type: frozenset(required_types)
+            for target_type, required_types in (
+                success_requires_detection_disappearance or {}
+            ).items()
+        }
 
     def relevant_detection_types(self, target_type: str) -> frozenset[str]:
         expected = self.success_transitions.get(target_type)
@@ -42,10 +51,14 @@ class TargetChangedVerifier:
             if target_type in self.success_requires_target_absence
             else ()
         )
+        required_disappearances = self.success_requires_detection_disappearance.get(
+            target_type, frozenset()
+        )
         return frozenset(
             {
                 *(expected or (target_type,)),
                 *target_presence,
+                *required_disappearances,
                 *self.failure_types,
             }
         )
@@ -108,6 +121,23 @@ class TargetChangedVerifier:
                 reason=f"next UI detected: {', '.join(visible_successors)}",
                 confidence=1.0,
             )
+        required_disappearances = self.success_requires_detection_disappearance.get(
+            target.type, frozenset()
+        )
+        if required_disappearances:
+            before_types = {item.type for item in before_detections}
+            after_types = {item.type for item in after_detections}
+            if required_disappearances.issubset(before_types) and not (
+                required_disappearances & after_types
+            ):
+                return VerificationResult(
+                    success=True,
+                    reason=(
+                        "previous UI disappeared: "
+                        f"{', '.join(sorted(required_disappearances))}"
+                    ),
+                    confidence=1.0,
+                )
         # Measure the region before the successor branch returns. A missing
         # successor says the expected screen did not arrive; it cannot say
         # whether the tap did anything at all. Only `pixel_change` separates

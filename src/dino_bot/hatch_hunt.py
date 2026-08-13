@@ -233,6 +233,19 @@ class HatchHuntPlanner:
         if callable(method):
             method(target_type)
 
+    def on_action_success_context(
+        self,
+        target: Target,
+        frame: Frame,
+        detections: Sequence[Detection],
+        result: VerificationResult,
+    ) -> None:
+        method = getattr(self._action_owner, "on_action_success_context", None)
+        if callable(method):
+            method(target, frame, detections, result)
+            return
+        self.on_action_success(target.type)
+
     def on_action_failure(self, target_type: str) -> None:
         method = getattr(self._action_owner, "on_action_failure", None)
         if callable(method):

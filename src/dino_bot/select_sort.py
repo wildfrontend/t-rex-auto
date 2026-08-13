@@ -248,9 +248,21 @@ class SelectSortTestPlanner:
 
     @staticmethod
     def _descending_direction(values: list[int]) -> bool | None:
+        descending_votes = 0
+        ascending_votes = 0
         for first, second in zip(values, values[1:], strict=False):
-            if first != second:
-                return first > second
+            if first > second:
+                descending_votes += 1
+            elif first < second:
+                ascending_votes += 1
+        if descending_votes > ascending_votes:
+            return True
+        if ascending_votes > descending_votes:
+            return False
+        if descending_votes or ascending_votes:
+            # Conflicting evidence without a majority is not enough to risk
+            # reversing an otherwise valid list.
+            return None
         # 全部同值時任何順序都成立;視為降冪通過,避免在同值高原
         # (例如攻擊全 296)上無限重試。空清單仍視為讀取失敗。
         return True if values else None

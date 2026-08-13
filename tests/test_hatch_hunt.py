@@ -41,6 +41,7 @@ class StubHatch:
         self.successes: list[str] = []
         self.blocked = False
         self.continue_hunting = True
+        self.success_contexts: list[tuple[str, str]] = []
 
     def choose(self, frame: Frame, detections: list[Detection]) -> Target | None:
         return self.next_target
@@ -62,6 +63,15 @@ class StubHatch:
 
     def on_action_success(self, target_type: str) -> None:
         self.successes.append(target_type)
+
+    def on_action_success_context(
+        self,
+        target: Target,
+        frame: Frame,
+        detections: list[Detection],
+        result: VerificationResult,
+    ) -> None:
+        self.success_contexts.append((target.type, result.reason))
 
     def reset_workflow(self) -> None:
         self.cooldown_ms = 0
@@ -182,6 +192,18 @@ def test_hatch_mode_uses_hatch_scoped_detection_types() -> None:
     combined, _, _ = planner(cooldown_ms=0)
 
     assert combined.planning_detection_types() == frozenset({"hatch_button"})
+
+
+def test_hatch_mode_forwards_verified_success_context() -> None:
+    combined, hatch_planner, _ = planner(cooldown_ms=0)
+    selected = target("hatch_candidate_row", 350, 435)
+    result = VerificationResult(True, "previous UI disappeared: hatch_select_title")
+    hatch_planner.next_target = selected
+
+    assert combined.choose(frame(), []) == selected
+    combined.on_action_success_context(selected, frame(), [], result)
+
+    assert hatch_planner.success_contexts == [(selected.type, result.reason)]
 
 
 def test_hunt_full_scan_does_not_include_inactive_hatch_templates() -> None:

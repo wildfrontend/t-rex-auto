@@ -61,7 +61,7 @@ from dino_bot.full_hatch import (
     set_home_base_template,
 )
 from dino_bot.hatch_inventory import HatchBoostInventoryStore
-from dino_bot.models import BoundingBox, Detection, Frame, Target
+from dino_bot.models import BoundingBox, Detection, Frame, Target, VerificationResult
 from dino_bot.nests import MASS_RULE, TOP_RULE
 from dino_bot.overlays import CONFIRM_NO, CONFIRM_YES, SELECT_CONFIRM_PROMPT
 from dino_bot.parent_open import NEST_TITLE, SELECT_TITLE
@@ -700,6 +700,32 @@ def test_full_hatch_scopes_detection_by_workflow_phase() -> None:
     assert "own_hunt_path" not in nest_types
 
 
+def test_full_hatch_forwards_direct_candidate_success_to_replacement_child() -> None:
+    planner = make_full_planner()
+    planner._start_replacement("attack")
+    child = planner._replacement_child
+    child._stage = "confirm_left"
+    child._side = 0
+    selected = detection("hatch_candidate_row", 350, 435)
+    target = Target(
+        selected.type,
+        selected.x,
+        selected.y,
+        selected.confidence,
+        selected,
+    )
+
+    planner.on_action_success_context(
+        target,
+        frame(),
+        [],
+        VerificationResult(True, "previous UI disappeared: hatch_select_title"),
+    )
+
+    assert planner._stage == "attack"
+    assert child.last_stage() == "nest_right"
+
+
 def test_full_hatch_can_request_full_scan_for_every_workflow_phase() -> None:
     planner = FullHatchPlanner(
         DigitReader(GLYPHS),
@@ -1142,6 +1168,20 @@ def straw_home_frame(scale: float = 1.0, dy: int = 0) -> Frame:
     return Frame(image)
 
 
+def lava_home_frame(dx: int = 0, dy: int = 0) -> Frame:
+    """A synthetic warm-colour component with the measured live base geometry."""
+
+    image = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    cv2.rectangle(
+        image,
+        (335 + dx, 1318 + dy),
+        (563 + dx, 1472 + dy),
+        (20, 90, 220),
+        thickness=-1,
+    )
+    return Frame(image)
+
+
 def test_starter_nest_base_is_measured_by_template_when_no_cyan_exists() -> None:
     # The cyan strip belongs to the upgraded stone basin. The starter nest is
     # straw on brick, so an account that still has one measured nothing at all
@@ -1177,6 +1217,29 @@ def test_upgraded_basin_keeps_its_cyan_measurement_and_skips_the_sweep() -> None
     offset = home_pile_offset(frame())
     assert offset is not None
     assert max(abs(offset[0]), abs(offset[1])) <= 2
+
+
+def test_lava_nest_base_proves_centered_home_without_cyan() -> None:
+    offset = home_pile_offset(lava_home_frame())
+    assert offset is not None
+    assert max(abs(offset[0]), abs(offset[1])) <= 2
+    assert is_centered_home_screen(
+        lava_home_frame(),
+        [detection(hatch.HOME_ANCHOR, 59, 561)],
+    )
+
+
+def test_lava_nest_base_measures_a_shifted_home() -> None:
+    offset = home_pile_offset(lava_home_frame(dx=70, dy=-120))
+    assert offset is not None
+    assert -72 <= offset[0] <= -68
+    assert 118 <= offset[1] <= 122
+
+
+def test_regular_small_orange_nest_is_not_a_home_base() -> None:
+    image = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    cv2.rectangle(image, (709, 869), (861, 966), (20, 90, 220), thickness=-1)
+    assert home_pile_offset(Frame(image)) is None
 
 
 def test_home_base_template_absence_leaves_the_cyan_path_untouched(tmp_path) -> None:

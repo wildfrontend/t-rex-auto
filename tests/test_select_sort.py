@@ -167,6 +167,17 @@ def test_non_monotonic_ocr_tail_does_not_change_descending_direction() -> None:
     assert planner.is_complete()
 
 
+def test_single_hp_ocr_inversion_does_not_reverse_descending_list() -> None:
+    # S13 can consistently read the second visible 860 as 890. The remaining
+    # rows still provide stronger evidence that the on-screen list descends.
+    planner, frame = hp_planner_for((880, 890, 860, 840, 840, 830, 810, 810))
+    planner._tag_ready = True
+    planner._sort_ready = True
+
+    assert planner.choose(frame, select_screen()) is None
+    assert planner.is_complete()
+
+
 def test_hp_sort_uses_menu_option_then_proves_result_from_hp_values() -> None:
     planner, frame = hp_planner_for((2300, 2250, 2200))
     option = planner.choose(

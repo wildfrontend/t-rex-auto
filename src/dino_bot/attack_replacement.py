@@ -2,10 +2,11 @@
 
 For each parent, the planner opens Select Dino, converges to all-tags and
 attack-descending, compares visible candidates, and selects a higher-primary
-candidate or an equal-primary candidate with lower secondary stats. A known
-confirmation prompt is required before
-the affirmative button is allowed.  When no upgrade exists, the list closes
-through the outside mask and the current parent is preserved.
+candidate or an equal-primary candidate with lower secondary stats. Older
+game versions require a known confirmation prompt before the affirmative
+button is allowed; newer versions may apply the selection immediately and
+return directly to the nest. When no upgrade exists, the list closes through
+the outside mask and the current parent is preserved.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from collections.abc import Mapping, Sequence
 from . import nest_filter as nest_filter_feature
 from . import select_sort as select_sort_feature
 from .digits import DigitReader
-from .models import Detection, Frame, Target
+from .models import Detection, Frame, Target, VerificationResult
 from .nest_filter import NestTagFilterTestPlanner
 from .nest_readout import (
     ATTACK_PARENT_REGIONS,
@@ -74,6 +75,9 @@ DEFAULT_SUCCESS_TRANSITIONS: dict[str, tuple[str, ...]] = {
     NESTED_PARENT_YES: (SELECT_CONFIRM_PROMPT, NEST_TITLE),
     CONFIRM_YES: (NEST_TITLE,),
     SELECT_MASK_CLOSE: (NEST_TITLE,),
+}
+DEFAULT_SUCCESS_DISAPPEARANCES: dict[str, tuple[str, ...]] = {
+    CANDIDATE_ROW: (SELECT_TITLE,),
 }
 DEFAULT_CYCLE_COMPLETE_TARGETS: tuple[str, ...] = (CONFIRM_YES, SELECT_MASK_CLOSE)
 
@@ -134,6 +138,7 @@ class AttackReplacementTestPlanner:
         self._parent_consensus = ConsecutiveReadConsensus[
             tuple[Stats, Stats]
         ](minimum_consistent_stat_reads)
+        self._reuse_direct_parent_panel = False
         self._filter_planner = NestTagFilterTestPlanner(
             reference_width=reference_width,
             target_label=rule.tag,
@@ -182,6 +187,32 @@ class AttackReplacementTestPlanner:
         if self._select_planner is not None:
             self._select_planner.on_action_success(target_type)
 
+    def on_action_success_context(
+        self,
+        target: Target,
+        frame: Frame,
+        detections: Sequence[Detection],
+        result: VerificationResult,
+    ) -> None:
+        del frame
+        visible = {item.type for item in detections}
+        direct_selection = (
+            target.type == CANDIDATE_ROW
+            and result.reason.startswith("previous UI disappeared:")
+            and SELECT_TITLE not in visible
+            and SELECT_CONFIRM_PROMPT not in visible
+            and NESTED_PARENT_WARNING not in visible
+        )
+        if direct_selection:
+            self.logger.info(
+                "Hatch %s | side=%s | candidate applied directly; continuing",
+                self.rule.tag,
+                self._side_name,
+            )
+            self._advance_parent(reuse_direct_parent_panel=True)
+            return
+        self.on_action_success(target.type)
+
     def on_action_failure(self, target_type: str) -> None:
         self._stage = f"failed_{target_type}"
         self._complete = True
@@ -219,17 +250,18 @@ class AttackReplacementTestPlanner:
         if SELECT_TITLE in by_type:
             self._stage = "unexpected_select_dino"
             return None
-        if NEST_TITLE not in by_type:
-            return None
-        if any(target_type in by_type for target_type in OPEN_TAG_OPTIONS):
-            self._stage = "tag_menu_open"
-            return None
-        if not self._nest_filter_header_is_foreground(
-            frame,
-            by_type.get(self.nest_filter_header),
-        ):
-            self._stage = "target_filter_required"
-            return None
+        if not self._reuse_direct_parent_panel:
+            if NEST_TITLE not in by_type:
+                return None
+            if any(target_type in by_type for target_type in OPEN_TAG_OPTIONS):
+                self._stage = "tag_menu_open"
+                return None
+            if not self._nest_filter_header_is_foreground(
+                frame,
+                by_type.get(self.nest_filter_header),
+            ):
+                self._stage = "target_filter_required"
+                return None
 
         observed_parents = read_attack_parents(
             frame.image,
@@ -282,6 +314,14 @@ class AttackReplacementTestPlanner:
         self._parent_read_failures = 0
         self._current_parent = parents[self._side]
         self._partner_parent = parents[1 - self._side]
+        reused_direct_parent_panel = self._reuse_direct_parent_panel
+        self._reuse_direct_parent_panel = False
+        if reused_direct_parent_panel:
+            self.logger.info(
+                "Hatch %s | side=%s | reusing directly returned parent panel",
+                self.rule.tag,
+                self._side_name,
+            )
         self.logger.info(
             "Hatch %s | side=%s | parent=%s | pair=%s,%s",
             self.rule.tag,
@@ -384,6 +424,13 @@ class AttackReplacementTestPlanner:
         self,
         by_type: dict[str, list[Detection]],
     ) -> Target | None:
+        # Newer nest layouts apply an eligible candidate immediately instead
+        # of showing the legacy confirmation prompt. Reaching the nest title
+        # proves that the Select Dino modal closed and the replacement was
+        # accepted, so continue with the other parent.
+        if NEST_TITLE in by_type:
+            self._advance_parent()
+            return None
         if NESTED_PARENT_WARNING in by_type:
             yes = self._best(by_type.get(CONFIRM_YES))
             if yes is None:
@@ -428,16 +475,18 @@ class AttackReplacementTestPlanner:
             *self._scaled(frame, self.mask_close_point),
         )
 
-    def _advance_parent(self) -> None:
+    def _advance_parent(self, *, reuse_direct_parent_panel: bool = False) -> None:
         self._parent_consensus.reset()
         self._parent_read_failures = 0
         if self._side == 0:
             self._side = 1
+            self._reuse_direct_parent_panel = reuse_direct_parent_panel
             self._current_parent = None
             self._partner_parent = None
             self._select_planner = None
             self._stage = "nest_right"
         else:
+            self._reuse_direct_parent_panel = False
             self._stage = "replacement_done"
             self._complete = True
 

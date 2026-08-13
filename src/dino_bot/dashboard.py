@@ -1399,6 +1399,17 @@ class _DashboardHttpServer(ThreadingHTTPServer):
         self.dashboard = dashboard
         super().__init__(address, _DashboardHandler)
 
+    def handle_error(self, request: Any, client_address: tuple[str, int]) -> None:
+        """Ignore browsers cancelling an in-flight refresh response."""
+
+        error = sys.exc_info()[1]
+        if isinstance(
+            error,
+            (BrokenPipeError, ConnectionResetError, ConnectionAbortedError),
+        ):
+            return
+        super().handle_error(request, client_address)
+
 
 class _DashboardHandler(BaseHTTPRequestHandler):
     server: _DashboardHttpServer

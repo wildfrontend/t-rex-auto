@@ -4,6 +4,7 @@ import inspect
 import json
 import os
 import socket
+import sys
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -23,6 +24,25 @@ def write_assets(root: Path) -> None:
     (root / "index.html").write_text("<h1>dashboard</h1>", encoding="utf-8")
     (root / "dashboard.css").write_text("body{}", encoding="utf-8")
     (root / "dashboard.js").write_text("", encoding="utf-8")
+
+
+def test_dashboard_ignores_client_disconnect_tracebacks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server = object.__new__(dashboard_module._DashboardHttpServer)
+    delegated: list[BaseException | None] = []
+    monkeypatch.setattr(
+        dashboard_module.ThreadingHTTPServer,
+        "handle_error",
+        lambda self, request, address: delegated.append(sys.exc_info()[1]),
+    )
+
+    try:
+        raise ConnectionAbortedError(10053, "client cancelled request")
+    except ConnectionAbortedError:
+        server.handle_error(None, ("127.0.0.1", 12345))
+
+    assert delegated == []
 
 
 def test_dashboard_serves_assets_overview_and_health(tmp_path: Path) -> None:

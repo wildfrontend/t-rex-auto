@@ -607,6 +607,11 @@ def _create_hatch_engine(
             if hunt_during_cooldown or standalone_stage is not None
             else ()
         ),
+        success_requires_detection_disappearance=getattr(
+            defaults,
+            "DEFAULT_SUCCESS_DISAPPEARANCES",
+            None,
+        ),
     )
     observer = create_mode(
         config.mode,
