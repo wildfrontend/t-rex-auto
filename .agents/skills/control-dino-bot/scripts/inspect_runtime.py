@@ -20,6 +20,7 @@ PORTS = {
 }
 FEATURE_RE = re.compile(r"Feature \| (?P<mode>[a-z0-9-]+)")
 STATUS_PORT_RE = re.compile(r"Status API \| http://127\.0\.0\.1:(?P<port>\d+)/status")
+ADB_SERIAL_RE = re.compile(r"ADB \| device=(?P<serial>[^ |]+)")
 
 
 def _tail_text(path: Path, limit: int = 2_000_000) -> str:
@@ -52,11 +53,65 @@ def _latest_match(pattern: re.Pattern[str], text: str) -> str | None:
     if not matches:
         return None
     match = matches[-1]
-    return match.groupdict().get("mode") or match.groupdict().get("port")
+    groups = match.groupdict()
+    return groups.get("mode") or groups.get("port") or groups.get("serial")
 
 
-def inspect(runtime_root: Path, requested_mode: str) -> dict[str, Any]:
-    logs_dir = runtime_root / "app" / "logs"
+def _local_config_path(runtime_root: Path, raw_config: str) -> Path:
+    normalized = raw_config.replace("\\", "/")
+    windows_absolute = re.fullmatch(r"(?P<drive>[A-Za-z]):/(?P<path>.+)", normalized)
+    if windows_absolute:
+        return (
+            Path("/mnt")
+            / windows_absolute.group("drive").lower()
+            / windows_absolute.group("path")
+        )
+    config_path = Path(normalized)
+    return config_path if config_path.is_absolute() else runtime_root / config_path
+
+
+def _resolve_instance(
+    runtime_root: Path,
+    instance_id: str | None,
+) -> tuple[Path, dict[str, Any] | None]:
+    if not instance_id:
+        return runtime_root / "app" / "logs", None
+    registry_path = runtime_root / "instances.json"
+    try:
+        registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"cannot read instance registry: {registry_path}") from exc
+    instances = registry.get("instances") if isinstance(registry, dict) else None
+    if not isinstance(instances, list):
+        raise ValueError(f"invalid instance registry: {registry_path}")
+    for item in instances:
+        if not isinstance(item, dict) or item.get("id") != instance_id:
+            continue
+        raw_config = item.get("config")
+        if not isinstance(raw_config, str):
+            break
+        config_path = _local_config_path(runtime_root, raw_config)
+        try:
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            config = {}
+        adb = config.get("adb") if isinstance(config, dict) else {}
+        return config_path.parent / "logs", {
+            "id": instance_id,
+            "name": item.get("name"),
+            "config": str(config_path.resolve()),
+            "status_port": item.get("status_port"),
+            "serial": adb.get("serial") if isinstance(adb, dict) else None,
+        }
+    raise ValueError(f"unknown instance: {instance_id}")
+
+
+def inspect(
+    runtime_root: Path,
+    requested_mode: str,
+    instance_id: str | None = None,
+) -> dict[str, Any]:
+    logs_dir, instance = _resolve_instance(runtime_root, instance_id)
     event_files = sorted(
         [*logs_dir.glob("events-*.jsonl"), *logs_dir.glob("events-*.jsonl.gz")],
         key=lambda item: item.stat().st_mtime,
@@ -75,8 +130,10 @@ def inspect(runtime_root: Path, requested_mode: str) -> dict[str, Any]:
     detected_mode = _latest_match(FEATURE_RE, recent_text)
     detected_port_text = _latest_match(STATUS_PORT_RE, recent_text)
     detected_port = int(detected_port_text) if detected_port_text else None
+    detected_serial = _latest_match(ADB_SERIAL_RE, recent_text)
     mode = requested_mode if requested_mode != "auto" else detected_mode
-    expected_port = PORTS.get(mode) if mode else detected_port
+    registry_port = instance.get("status_port") if instance else None
+    expected_port = registry_port or (PORTS.get(mode) if mode else detected_port)
 
     last_session_action = None
     if latest_event_file:
@@ -111,6 +168,8 @@ def inspect(runtime_root: Path, requested_mode: str) -> dict[str, Any]:
         "evidence": "shared_log_fallback",
         "state": state,
         "process_identity_verified": False,
+        "instance": instance,
+        "logged_serial": detected_serial,
         "mode": mode,
         "expected_status_port": expected_port,
         "logged_status_port": detected_port,
@@ -129,9 +188,20 @@ def inspect(runtime_root: Path, requested_mode: str) -> dict[str, Any]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--runtime-root", type=Path, required=True)
+    parser.add_argument("--instance")
     parser.add_argument("--mode", choices=["auto", *PORTS], default="auto")
     args = parser.parse_args()
-    result = inspect(args.runtime_root.resolve(), args.mode)
+    try:
+        result = inspect(args.runtime_root.resolve(), args.mode, args.instance)
+    except ValueError as exc:
+        print(
+            json.dumps(
+                {"ok": False, "error": "instance_resolution_failed", "message": str(exc)},
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 2
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if result["ok"] else 1
 

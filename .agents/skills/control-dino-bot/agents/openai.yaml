@@ -1,4 +1,4 @@
 interface:
   display_name: "控制 Dino Mutant Bot"
-  short_description: "精準辨識模式、Port 並安全控制 Dino Bot"
-  default_prompt: "使用 $control-dino-bot 辨識目前模式與正確 Port，驗證 Bot 狀態後再執行已授權操作。"
+  short_description: "遠端監控並安全控制多個 Dino Bot 實例"
+  default_prompt: "使用 $control-dino-bot 核對主力與 S13 的裝置、Port、進度與健康狀態，再安全執行我授權的操作。"
