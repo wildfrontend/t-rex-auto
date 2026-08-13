@@ -281,8 +281,16 @@ def parse_fraction(text: str) -> tuple[int, int] | None:
     Kept separate from ``DigitReader.read_fraction`` so a caller that needs to
     report *why* a read failed can hold on to the raw glyph text and still
     apply the identical accept/reject rule.
+
+    A narrow readout leaves empty space inside the calibrated crop, so the
+    neighbouring HUD icon can clip in on the right and read as one more slash
+    (``174/200/``). Trailing slashes carry no value either way - a real
+    fraction never ends in one - so drop them before the shape check rather
+    than throwing away an otherwise complete number. Digits are still not
+    tolerated: a stray digit changes the value and must fail safe.
     """
 
+    text = text.rstrip("/")
     if "?" in text or text.count("/") != 1:
         return None
     left, right = text.split("/")

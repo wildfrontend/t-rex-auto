@@ -310,9 +310,7 @@
     "activity": "com.unity3d.player.UnityPlayerActivity"
   },
   "hatch": {
-    "beginner_population_limit": null,
-    "beginner_stat_upgrade_guards": {},
-    "capacity_limit": 380,
+    "capacity_limit": 350,
     "cull_threshold": 330,
     "screening_growth_interval": 20,
     "stat_upgrade_guards": {

@@ -100,6 +100,21 @@ def test_probe_names_the_reject_branch(text: str, reason: str) -> None:
     assert read.text == text
 
 
+def test_probe_reads_a_narrow_hud_clipped_by_the_next_icon() -> None:
+    # S13 的 174/200 比主力的 280/350 窄，裁切框右緣會切到隔壁圖示，多讀出一個
+    # 斜線。數字本身完整，不該因此整串作廢並讓孵蛋停機。
+    frame = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    read = probe_dino_count(frame, StubReader("174/200/"), expected_capacity=200)
+    assert read.ok
+    assert read.fraction == (174, 200)
+
+
+def test_probe_still_rejects_a_stray_digit_in_the_readout() -> None:
+    frame = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    read = probe_dino_count(frame, StubReader("174/200/1"), expected_capacity=200)
+    assert read.reason == "unparsed"
+
+
 def test_probe_accepts_configured_capacity_limit() -> None:
     frame = np.full((1600, 900, 3), 255, dtype=np.uint8)
     read = probe_dino_count(
