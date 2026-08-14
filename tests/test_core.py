@@ -170,9 +170,10 @@ def test_s13_config_uses_adb_capture() -> None:
 
     assert config.adb.serial == "127.0.0.1:16416"
     assert config.capture.backend == "adb"
-    # S13 跑主力的完整孵蛋流程，容量門檻比照主力保留餘裕。
-    assert config.hatch.capacity_limit == 200
-    assert config.hatch.cull_threshold == 180
+    # 容量上限跟著帳號進度走，讀到的分母必須與設定相符才會被採信：S13 升到 250 後，
+    # 留在 200 的設定讓每一次 preflight 都以 unexpected_capacity 收場。
+    assert config.hatch.capacity_limit == 250
+    assert config.hatch.cull_threshold == 200
     assert "forest_recenter_button" in config.planner.target_types
     assert "dinosaur" in config.planner.target_types
     assert config.planner.blocking_types == ("duplicate_hunt_alert",)
