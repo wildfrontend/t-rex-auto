@@ -1960,6 +1960,7 @@ class FullHatchPlanner:
         self._egg_pile_capacity_check_pending = False
         self._egg_pile_capacity_rechecked = False
         self._egg_pile_retry_pending = False
+        self._autoplace_without_no_button = False
         self._screening_blocked = False
         self._screening_recovery_failures: dict[str, int] = {}
         self.completed_management_cycles = 0
@@ -2535,11 +2536,25 @@ class FullHatchPlanner:
         ):
             no = _best(by_type.get(CONFIRM_NO))
             if no is None:
-                self.logger.error(
-                    "Hatch full | unexpected auto-place confirmation has no No button"
-                )
-                return None
-            return _synthetic(RECOVERY_NO, no.x, no.y)
+                # No No button is evidence against the reading, not a dead end.
+                # The layout detector is deliberately broad and a dinosaur
+                # detail card satisfies it - white panel, red action button -
+                # so returning None here parked the run on one frame it could
+                # not act on: 109 identical errors and zero actions in six
+                # minutes, invisible to the retry and stall counters because
+                # no action was ever attempted. Fall through and let the rules
+                # that know the other screens have their turn.
+                if not self._autoplace_without_no_button:
+                    self._autoplace_without_no_button = True
+                    self.logger.warning(
+                        "Hatch full | auto-place layout without a No button;"
+                        " treating it as a misread and continuing"
+                    )
+            else:
+                self._autoplace_without_no_button = False
+                return _synthetic(RECOVERY_NO, no.x, no.y)
+        else:
+            self._autoplace_without_no_button = False
         hatch_result_visible = bool(
             by_type.get(hatch_feature.CLAIM_BUTTON)
             or by_type.get(hatch_feature.EXPEL_BUTTON)

@@ -292,6 +292,24 @@ def test_full_hatch_cancels_unexpected_autoplace_confirmation() -> None:
     assert planner._stage == "recover_home"
 
 
+def test_full_hatch_autoplace_layout_without_a_no_button_keeps_planning() -> None:
+    # 廣義版面偵測會把恐龍詳情卡(白面板 + 紅色驅逐鈕)報成自動放置提示,實測信心
+    # 0.89。舊寫法在找不到「否」鈕時 return None,於是整輪停在同一幀:六分鐘、109 次
+    # 同樣的 ERROR、零動作,而且因為沒有嘗試過任何動作,重試與卡住計數器都不會累積。
+    # 沒有「否」鈕正好證明這不是自動放置框,應該讓其他規則接手。
+    planner = make_full_planner()
+    home = [detection(hatch.HOME_ANCHOR, 59, 561)]
+    expected = planner.choose(frame(), home)
+    assert expected is not None, "前置條件:這個畫面本來就該有事情可做"
+
+    chosen = planner.choose(
+        frame(),
+        [detection(AUTOPLACE_NOTICE, 450, 720), *home],
+    )
+
+    assert chosen is not None and chosen.type == expected.type
+
+
 def test_full_hatch_parent_swap_confirmation_beats_false_autoplace_notice() -> None:
     # 替換親代的確認框同樣是「青色是 + 紅色否」,廣義版面偵測會以 0.99 的信心
     # 報成自動放置提示。按下「否」會取消篩選階段剛要求的替換,階段重來後又問
