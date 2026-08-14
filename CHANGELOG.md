@@ -1,6 +1,6 @@
 # 版本紀錄
 
-## 未發布
+## v0.0.42 — 2026-08-14
 
 - 儀表板控制面板新增「孵蛋參數」:**上限人口**(`capacity_limit`)、**安全人口**
   (`cull_threshold`)與**篩選間隔**(`screening_growth_interval`)可以直接在介面調整。
