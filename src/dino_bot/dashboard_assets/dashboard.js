@@ -167,6 +167,20 @@ function render(data) {
   if (document.activeElement !== $("boostStockInput")) {
     $("boostStockInput").value = stock;
   }
+  const tuning = data.hatch_tuning || {};
+  const tuningFields = [
+    ["capacity_limit", "capacityLimitValue", "capacityLimitInput"],
+    ["cull_threshold", "cullThresholdValue", "cullThresholdInput"],
+    ["screening_growth_interval", "screeningIntervalValue", "screeningIntervalInput"],
+  ];
+  for (const [key, valueId, inputId] of tuningFields) {
+    const value = tuning[key];
+    $(valueId).textContent = value ?? "—";
+    // 只在使用者沒有正在編輯時覆寫,否則每次輪詢都會把輸入到一半的值抹掉。
+    if (document.activeElement !== $(inputId) && value != null) {
+      $(inputId).value = value;
+    }
+  }
   const metrics = data.metrics || {};
   const counters = metrics.counters || {};
   setCounter("hunt", counters.hunt);
@@ -455,3 +469,52 @@ $("boostEnabled").addEventListener("change", async () => {
 
 refresh();
 window.setInterval(refresh, 2500);
+
+$("hatchTuningUpdate").addEventListener("click", async () => {
+  const capacityLimit = Number($("capacityLimitInput").value);
+  const cullThreshold = Number($("cullThresholdInput").value);
+  const screeningInterval = Number($("screeningIntervalInput").value);
+  const result = $("commandResult");
+  const positiveInteger = (value) => Number.isInteger(value) && value > 0;
+  if (
+    !positiveInteger(capacityLimit) ||
+    !positiveInteger(cullThreshold) ||
+    !positiveInteger(screeningInterval)
+  ) {
+    result.classList.add("error");
+    result.textContent = "上限人口、安全人口與篩選間隔都必須是大於 0 的整數。";
+    return;
+  }
+  if (cullThreshold > capacityLimit) {
+    result.classList.add("error");
+    result.textContent = "安全人口不能大於上限人口。";
+    return;
+  }
+  $("hatchTuningUpdate").disabled = true;
+  result.classList.remove("error");
+  result.textContent = "儲存孵蛋參數…";
+  try {
+    const suffix = selectedInstanceId ? `?instance=${encodeURIComponent(selectedInstanceId)}` : "";
+    const response = await fetch(`/api/control/set-hatch-tuning${suffix}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Dino-Dashboard": "1",
+      },
+      body: JSON.stringify({
+        capacity_limit: capacityLimit,
+        cull_threshold: cullThreshold,
+        screening_growth_interval: screeningInterval,
+      }),
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+    result.textContent = payload.message;
+    await refresh();
+  } catch (error) {
+    result.classList.add("error");
+    result.textContent = String(error.message || error);
+  } finally {
+    $("hatchTuningUpdate").disabled = false;
+  }
+});

@@ -31,6 +31,11 @@ SUPPORTED_BOT_MODES = frozenset(
     {"hunt", "hatch-hunt", "hatch-stage"}
 )
 MODE_SWITCH_PROCESS_WAIT_SECONDS = 20
+HATCH_TUNING_FIELDS = (
+    "capacity_limit",
+    "cull_threshold",
+    "screening_growth_interval",
+)
 DEFAULT_INSTANCE_ID = "main"
 DEFAULT_INSTANCE_NAME = "主力模擬器"
 HATCH_STAGE_LABELS = {
@@ -509,6 +514,91 @@ class DashboardController:
             "instance_id": instance.instance_id,
             "configured_serial": self._instance_serial(instance),
             "devices": devices,
+            "message": message,
+        }
+
+    @staticmethod
+    def hatch_tuning(instance: BotInstance) -> dict[str, Any]:
+        """Report the hatch numbers this instance will actually run with.
+
+        Instance files carry overrides only, so the effective values come from
+        the same loader the Bot uses rather than from the raw JSON.
+        """
+
+        from .config import ConfigError, load_config
+
+        try:
+            hatch = load_config(instance.config_path).hatch
+        except (ConfigError, OSError, ValueError):
+            return dict.fromkeys(HATCH_TUNING_FIELDS)
+        return {
+            "capacity_limit": hatch.capacity_limit,
+            "cull_threshold": hatch.cull_threshold,
+            "screening_growth_interval": hatch.screening_growth_interval,
+        }
+
+    def set_hatch_tuning(
+        self,
+        instance_id: str | None,
+        capacity_limit: int,
+        cull_threshold: int,
+        screening_growth_interval: int,
+    ) -> dict[str, Any]:
+        """Persist the hatch numbers a run is tuned by, as one edit.
+
+        The cap tracks account progress, and a reading whose denominator does
+        not match it is refused outright: one that stayed at 200 after the game
+        moved to 250 ended every hatch preflight in ``unexpected_capacity``.
+        Editing these here keeps that follow-up out of a config file.
+
+        All three land together so a rejected value cannot leave the instance
+        running on half an edit.
+        """
+
+        values = {
+            "capacity_limit": capacity_limit,
+            "cull_threshold": cull_threshold,
+            "screening_growth_interval": screening_growth_interval,
+        }
+        for label, value in values.items():
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ValueError(f"{label} must be an integer")
+            if value <= 0:
+                raise ValueError(f"{label} must be greater than zero")
+        if cull_threshold > capacity_limit:
+            raise ValueError("cull_threshold cannot exceed capacity_limit")
+
+        instance = self._instance(instance_id)
+        try:
+            config = json.loads(instance.config_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise RuntimeError(f"cannot read instance config: {exc}") from exc
+        if not isinstance(config, dict):
+            raise RuntimeError("instance config must be a JSON object")
+        hatch = config.setdefault("hatch", {})
+        if not isinstance(hatch, dict):
+            raise RuntimeError("instance config hatch section must be an object")
+        hatch.update(values)
+        temporary = instance.config_path.with_suffix(".tmp")
+        temporary.write_text(
+            json.dumps(config, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        temporary.replace(instance.config_path)
+
+        running = bool(self.discover(instance.instance_id)["running"])
+        message = (
+            f"上限人口 {capacity_limit}、安全人口 {cull_threshold}、"
+            f"篩選間隔 {screening_growth_interval} 已儲存"
+        )
+        if running:
+            message += "；重新啟動 Bot 後生效"
+        return {
+            "accepted": True,
+            "action": "set-hatch-tuning",
+            "instance": instance.instance_id,
+            "hatch_tuning": dict(values),
+            "restart_required": running,
             "message": message,
         }
 
@@ -1516,6 +1606,14 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                     self.server.shutdown()
 
                 threading.Thread(target=shutdown_later, daemon=True).start()
+            elif action == "set-hatch-tuning":
+                payload = self._read_json()
+                result = self.server.controller.set_hatch_tuning(
+                    instance_id,
+                    payload.get("capacity_limit"),
+                    payload.get("cull_threshold"),
+                    payload.get("screening_growth_interval"),
+                )
             elif action == "set-boost-stock":
                 payload = self._read_json()
                 remaining = payload.get("remaining")
@@ -1669,6 +1767,7 @@ class DashboardServer:
                     "operation": self.controller.operation(definition.instance_id),
                     "metrics": metrics,
                     "hatch_boost_inventory": inventory.as_dict(),
+                    "hatch_tuning": self.controller.hatch_tuning(definition),
                 }
             )
         selected = next(
@@ -1684,6 +1783,7 @@ class DashboardServer:
             "operation": selected["operation"],
             "metrics": selected["metrics"],
             "hatch_boost_inventory": selected["hatch_boost_inventory"],
+            "hatch_tuning": selected["hatch_tuning"],
         }
 
     def start(self) -> None:

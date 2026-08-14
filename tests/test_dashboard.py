@@ -575,3 +575,200 @@ def test_dashboard_scan_reports_devices_without_choosing_between_them(
     assert json.loads(config_path.read_text(encoding="utf-8"))["adb"]["serial"] == (
         "127.0.0.1:16384"
     )
+
+
+def tuning_controller(tmp_path: Path) -> DashboardController:
+    """A controller whose single instance carries a complete runnable config."""
+
+    app = tmp_path / "app"
+    (app / "assets" / "hatch").mkdir(parents=True)
+    (app / "assets" / "hatch" / "manifest.json").write_text(
+        json.dumps({"reference_size": [900, 1600], "templates": []}),
+        encoding="utf-8",
+    )
+    (app / "assets" / "manifest.json").write_text(
+        json.dumps({"reference_size": [900, 1600], "templates": []}),
+        encoding="utf-8",
+    )
+    (app / "config.json").write_text(
+        json.dumps(
+            {
+                "hatch": {
+                    "capacity_limit": 350,
+                    "cull_threshold": 330,
+                    "screening_growth_interval": 20,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    return DashboardController(tmp_path, app / "logs")
+
+
+def test_dashboard_reports_the_effective_hatch_tuning(tmp_path: Path) -> None:
+    controller = tuning_controller(tmp_path)
+
+    limits = controller.hatch_tuning(controller.instances[0])
+
+    assert limits == {
+        "capacity_limit": 350,
+        "cull_threshold": 330,
+        "screening_growth_interval": 20,
+    }
+
+
+def test_dashboard_saves_hatch_tuning_to_the_instance_config(tmp_path: Path) -> None:
+    # 上限要跟遊戲畫面的分母一致才會被採信,而分母會隨帳號進度變動,所以這是
+    # 使用者會反覆調整的值——留在設定檔裡就得每次手動編輯。
+    controller = tuning_controller(tmp_path)
+    instance = controller.instances[0]
+
+    result = controller.set_hatch_tuning(instance.instance_id, 250, 200, 15)
+
+    assert result["accepted"] is True
+    assert result["hatch_tuning"] == {
+        "capacity_limit": 250,
+        "cull_threshold": 200,
+        "screening_growth_interval": 15,
+    }
+    saved = json.loads(instance.config_path.read_text(encoding="utf-8"))
+    assert saved["hatch"]["capacity_limit"] == 250
+    assert saved["hatch"]["cull_threshold"] == 200
+    assert saved["hatch"]["screening_growth_interval"] == 15
+    assert controller.hatch_tuning(instance) == {
+        "capacity_limit": 250,
+        "cull_threshold": 200,
+        "screening_growth_interval": 15,
+    }
+
+
+def test_dashboard_refuses_a_cull_line_above_the_population_cap(tmp_path: Path) -> None:
+    # 安全人口高於上限等於永遠不淘汰,而且畫面上看起來像設定成功了。
+    controller = tuning_controller(tmp_path)
+    instance = controller.instances[0]
+
+    with pytest.raises(ValueError, match="cull_threshold"):
+        controller.set_hatch_tuning(instance.instance_id, 250, 260, 20)
+
+    saved = json.loads(instance.config_path.read_text(encoding="utf-8"))
+    assert saved["hatch"]["capacity_limit"] == 350
+
+
+@pytest.mark.parametrize(
+    "capacity, cull, interval",
+    [(0, 200, 20), (250, 0, 20), (-1, 200, 20), (250, -5, 20), (250, 200, 0)],
+)
+def test_dashboard_refuses_non_positive_hatch_tuning(
+    tmp_path: Path,
+    capacity: int,
+    cull: int,
+    interval: int,
+) -> None:
+    controller = tuning_controller(tmp_path)
+
+    with pytest.raises(ValueError, match="greater than zero"):
+        controller.set_hatch_tuning(
+            controller.instances[0].instance_id, capacity, cull, interval
+        )
+
+
+def test_dashboard_refuses_hatch_tuning_that_is_not_integers(tmp_path: Path) -> None:
+    controller = tuning_controller(tmp_path)
+    instance_id = controller.instances[0].instance_id
+
+    for capacity, cull, interval in (
+        (250.5, 200, 20),
+        (250, "200", 20),
+        (True, 200, 20),
+        (250, 200, None),
+    ):
+        with pytest.raises(ValueError, match="must be an integer"):
+            controller.set_hatch_tuning(instance_id, capacity, cull, interval)
+
+
+def test_dashboard_serves_and_accepts_hatch_tuning_over_http(tmp_path: Path) -> None:
+    assets = tmp_path / "assets"
+    write_assets(assets)
+    app = tmp_path / "app"
+    (app / "assets" / "hatch").mkdir(parents=True)
+    for manifest in (
+        app / "assets" / "hatch" / "manifest.json",
+        app / "assets" / "manifest.json",
+    ):
+        manifest.write_text(
+            json.dumps({"reference_size": [900, 1600], "templates": []}),
+            encoding="utf-8",
+        )
+    (app / "config.json").write_text(
+        json.dumps(
+            {
+                "hatch": {
+                    "capacity_limit": 350,
+                    "cull_threshold": 330,
+                    "screening_growth_interval": 20,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    server = DashboardServer(
+        tmp_path,
+        app / "logs",
+        app / "data" / "stats.sqlite3",
+        port=0,
+        assets=assets,
+    )
+
+    with server:
+        with urlopen(f"{server.url}/api/overview", timeout=2) as response:  # noqa: S310
+            before = json.load(response)
+        update = Request(
+            f"{server.url}/api/control/set-hatch-tuning",
+            data=json.dumps(
+                {
+                    "capacity_limit": 250,
+                    "cull_threshold": 200,
+                    "screening_growth_interval": 15,
+                }
+            ).encode(),
+            method="POST",
+            headers={
+                "Content-Type": "application/json",
+                "X-Dino-Dashboard": "1",
+            },
+        )
+        with urlopen(update, timeout=2) as response:  # noqa: S310
+            result = json.load(response)
+        with urlopen(f"{server.url}/api/overview", timeout=2) as response:  # noqa: S310
+            after = json.load(response)
+        rejected = Request(
+            f"{server.url}/api/control/set-hatch-tuning",
+            data=json.dumps(
+                {
+                    "capacity_limit": 250,
+                    "cull_threshold": 300,
+                    "screening_growth_interval": 15,
+                }
+            ).encode(),
+            method="POST",
+            headers={
+                "Content-Type": "application/json",
+                "X-Dino-Dashboard": "1",
+            },
+        )
+        with pytest.raises(HTTPError) as refused:
+            urlopen(rejected, timeout=2)  # noqa: S310
+
+    expected = {
+        "capacity_limit": 250,
+        "cull_threshold": 200,
+        "screening_growth_interval": 15,
+    }
+    assert before["hatch_tuning"]["capacity_limit"] == 350
+    assert result["hatch_tuning"] == expected
+    assert after["hatch_tuning"] == expected
+    # 409 是這個 handler 對驗證錯誤的既有慣例。
+    assert refused.value.code == 409
+    # 被拒絕的請求不能留下半套設定。
+    saved = json.loads((app / "config.json").read_text(encoding="utf-8"))
+    assert saved["hatch"] == expected

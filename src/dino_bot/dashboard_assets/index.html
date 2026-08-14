@@ -163,6 +163,28 @@
             </label>
             <button id="boostStockUpdate" type="button">更新</button>
           </div>
+          <div class="inventory-control">
+            <div>
+              <span>孵蛋參數</span>
+              <strong>上限 <b id="capacityLimitValue">—</b>／安全 <b id="cullThresholdValue">—</b></strong>
+              <small>上限要和遊戲畫面的分母一致，對不上會拒讀</small>
+              <small>達到安全人口才開始淘汰</small>
+              <small>每新增 <span id="screeningIntervalValue">—</span> 隻重跑一次篩選</small>
+            </div>
+            <label>
+              <span>上限人口</span>
+              <input id="capacityLimitInput" type="number" min="1" max="9999" step="1">
+            </label>
+            <label>
+              <span>安全人口</span>
+              <input id="cullThresholdInput" type="number" min="1" max="9999" step="1">
+            </label>
+            <label>
+              <span>篩選間隔</span>
+              <input id="screeningIntervalInput" type="number" min="1" max="9999" step="1">
+            </label>
+            <button id="hatchTuningUpdate" type="button">儲存（重啟後生效）</button>
+          </div>
           <p class="control-label">只執行一個階段</p>
           <div class="control-grid stage-controls">
             <button data-action="start-stage-hatch" data-confirm="只執行一輪孵蛋並返回主畫面？">孵蛋一輪</button>
