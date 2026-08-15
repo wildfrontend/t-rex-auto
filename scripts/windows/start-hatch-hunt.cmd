@@ -16,7 +16,7 @@ echo Start this launcher from the normal home screen.
 echo.
 
 set "combined_mode=%~1"
-if "%combined_mode%"=="" set "combined_mode=debug"
+if "%combined_mode%"=="" set "combined_mode=runtime"
 
 set "combined_speed=%~2"
 if "%combined_speed%"=="" set "combined_speed=fast"

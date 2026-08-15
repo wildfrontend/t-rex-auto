@@ -18,7 +18,7 @@ echo Start this launcher from the normal home screen.
 echo.
 
 set "hatch_mode=%~1"
-if "%hatch_mode%"=="" set "hatch_mode=debug"
+if "%hatch_mode%"=="" set "hatch_mode=runtime"
 
 set "hatch_speed=%~2"
 if "%hatch_speed%"=="" set "hatch_speed=safe"
