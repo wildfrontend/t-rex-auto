@@ -8,6 +8,7 @@
   },
   "hatch": {
     "capacity_limit": 250,
-    "cull_threshold": 200
+    "cull_threshold": 200,
+    "allow_extreme_specialization_parent": true
   }
 }

@@ -614,6 +614,7 @@ def test_dashboard_reports_the_effective_hatch_tuning(tmp_path: Path) -> None:
         "capacity_limit": 350,
         "cull_threshold": 330,
         "screening_growth_interval": 20,
+        "allow_extreme_specialization_parent": False,
     }
 
 
@@ -623,22 +624,31 @@ def test_dashboard_saves_hatch_tuning_to_the_instance_config(tmp_path: Path) -> 
     controller = tuning_controller(tmp_path)
     instance = controller.instances[0]
 
-    result = controller.set_hatch_tuning(instance.instance_id, 250, 200, 15)
+    result = controller.set_hatch_tuning(
+        instance.instance_id,
+        250,
+        200,
+        15,
+        True,
+    )
 
     assert result["accepted"] is True
     assert result["hatch_tuning"] == {
         "capacity_limit": 250,
         "cull_threshold": 200,
         "screening_growth_interval": 15,
+        "allow_extreme_specialization_parent": True,
     }
     saved = json.loads(instance.config_path.read_text(encoding="utf-8"))
     assert saved["hatch"]["capacity_limit"] == 250
     assert saved["hatch"]["cull_threshold"] == 200
     assert saved["hatch"]["screening_growth_interval"] == 15
+    assert saved["hatch"]["allow_extreme_specialization_parent"] is True
     assert controller.hatch_tuning(instance) == {
         "capacity_limit": 250,
         "cull_threshold": 200,
         "screening_growth_interval": 15,
+        "allow_extreme_specialization_parent": True,
     }
 
 
@@ -686,6 +696,19 @@ def test_dashboard_refuses_hatch_tuning_that_is_not_integers(tmp_path: Path) -> 
             controller.set_hatch_tuning(instance_id, capacity, cull, interval)
 
 
+def test_dashboard_refuses_non_boolean_extreme_parent_switch(tmp_path: Path) -> None:
+    controller = tuning_controller(tmp_path)
+
+    with pytest.raises(ValueError, match="must be a boolean"):
+        controller.set_hatch_tuning(
+            controller.instances[0].instance_id,
+            250,
+            200,
+            20,
+            "true",  # type: ignore[arg-type]
+        )
+
+
 def test_dashboard_serves_and_accepts_hatch_tuning_over_http(tmp_path: Path) -> None:
     assets = tmp_path / "assets"
     write_assets(assets)
@@ -729,6 +752,7 @@ def test_dashboard_serves_and_accepts_hatch_tuning_over_http(tmp_path: Path) -> 
                     "capacity_limit": 250,
                     "cull_threshold": 200,
                     "screening_growth_interval": 15,
+                    "allow_extreme_specialization_parent": True,
                 }
             ).encode(),
             method="POST",
@@ -763,6 +787,7 @@ def test_dashboard_serves_and_accepts_hatch_tuning_over_http(tmp_path: Path) -> 
         "capacity_limit": 250,
         "cull_threshold": 200,
         "screening_growth_interval": 15,
+        "allow_extreme_specialization_parent": True,
     }
     assert before["hatch_tuning"]["capacity_limit"] == 350
     assert result["hatch_tuning"] == expected

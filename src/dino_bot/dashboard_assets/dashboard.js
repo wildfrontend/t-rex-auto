@@ -181,6 +181,17 @@ function render(data) {
       $(inputId).value = value;
     }
   }
+  const extremeParentProtection = $("extremeParentProtection");
+  const extremeParentEnabled = tuning.allow_extreme_specialization_parent === true;
+  if (document.activeElement !== extremeParentProtection) {
+    extremeParentProtection.checked = extremeParentEnabled;
+  }
+  const displayedExtremeParentEnabled = document.activeElement === extremeParentProtection
+    ? extremeParentProtection.checked
+    : extremeParentEnabled;
+  $("extremeParentProtectionLabel").textContent = displayedExtremeParentEnabled
+    ? "10/1/1 極端親代保護：開啟"
+    : "10/1/1 極端親代保護：關閉";
   const metrics = data.metrics || {};
   const counters = metrics.counters || {};
   setCounter("hunt", counters.hunt);
@@ -470,10 +481,17 @@ $("boostEnabled").addEventListener("change", async () => {
 refresh();
 window.setInterval(refresh, 2500);
 
+$("extremeParentProtection").addEventListener("change", (event) => {
+  $("extremeParentProtectionLabel").textContent = event.target.checked
+    ? "10/1/1 極端親代保護：開啟"
+    : "10/1/1 極端親代保護：關閉";
+});
+
 $("hatchTuningUpdate").addEventListener("click", async () => {
   const capacityLimit = Number($("capacityLimitInput").value);
   const cullThreshold = Number($("cullThresholdInput").value);
   const screeningInterval = Number($("screeningIntervalInput").value);
+  const allowExtremeSpecializationParent = $("extremeParentProtection").checked;
   const result = $("commandResult");
   const positiveInteger = (value) => Number.isInteger(value) && value > 0;
   if (
@@ -505,6 +523,7 @@ $("hatchTuningUpdate").addEventListener("click", async () => {
         capacity_limit: capacityLimit,
         cull_threshold: cullThreshold,
         screening_growth_interval: screeningInterval,
+        allow_extreme_specialization_parent: allowExtremeSpecializationParent,
       }),
     });
     const payload = await response.json();

@@ -35,6 +35,7 @@ HATCH_TUNING_FIELDS = (
     "capacity_limit",
     "cull_threshold",
     "screening_growth_interval",
+    "allow_extreme_specialization_parent",
 )
 DEFAULT_INSTANCE_ID = "main"
 DEFAULT_INSTANCE_NAME = "主力模擬器"
@@ -535,6 +536,9 @@ class DashboardController:
             "capacity_limit": hatch.capacity_limit,
             "cull_threshold": hatch.cull_threshold,
             "screening_growth_interval": hatch.screening_growth_interval,
+            "allow_extreme_specialization_parent": (
+                hatch.allow_extreme_specialization_parent
+            ),
         }
 
     def set_hatch_tuning(
@@ -543,6 +547,7 @@ class DashboardController:
         capacity_limit: int,
         cull_threshold: int,
         screening_growth_interval: int,
+        allow_extreme_specialization_parent: bool | None = None,
     ) -> dict[str, Any]:
         """Persist the hatch numbers a run is tuned by, as one edit.
 
@@ -551,24 +556,42 @@ class DashboardController:
         moved to 250 ended every hatch preflight in ``unexpected_capacity``.
         Editing these here keeps that follow-up out of a config file.
 
-        All three land together so a rejected value cannot leave the instance
+        All values land together so a rejected value cannot leave the instance
         running on half an edit.
         """
 
-        values = {
+        numeric_values = {
             "capacity_limit": capacity_limit,
             "cull_threshold": cull_threshold,
             "screening_growth_interval": screening_growth_interval,
         }
-        for label, value in values.items():
+        for label, value in numeric_values.items():
             if isinstance(value, bool) or not isinstance(value, int):
                 raise ValueError(f"{label} must be an integer")
             if value <= 0:
                 raise ValueError(f"{label} must be greater than zero")
         if cull_threshold > capacity_limit:
             raise ValueError("cull_threshold cannot exceed capacity_limit")
+        if (
+            allow_extreme_specialization_parent is not None
+            and not isinstance(allow_extreme_specialization_parent, bool)
+        ):
+            raise ValueError("allow_extreme_specialization_parent must be a boolean")
 
         instance = self._instance(instance_id)
+        if allow_extreme_specialization_parent is None:
+            allow_extreme_specialization_parent = bool(
+                self.hatch_tuning(instance).get(
+                    "allow_extreme_specialization_parent",
+                    False,
+                )
+            )
+        values = {
+            **numeric_values,
+            "allow_extreme_specialization_parent": (
+                allow_extreme_specialization_parent
+            ),
+        }
         try:
             config = json.loads(instance.config_path.read_text(encoding="utf-8"))
         except (OSError, ValueError) as exc:
@@ -589,7 +612,8 @@ class DashboardController:
         running = bool(self.discover(instance.instance_id)["running"])
         message = (
             f"上限人口 {capacity_limit}、安全人口 {cull_threshold}、"
-            f"篩選間隔 {screening_growth_interval} 已儲存"
+            f"篩選間隔 {screening_growth_interval}、極端親代保護"
+            f"{'開啟' if allow_extreme_specialization_parent else '關閉'} 已儲存"
         )
         if running:
             message += "；重新啟動 Bot 後生效"
@@ -1613,6 +1637,7 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                     payload.get("capacity_limit"),
                     payload.get("cull_threshold"),
                     payload.get("screening_growth_interval"),
+                    payload.get("allow_extreme_specialization_parent"),
                 )
             elif action == "set-boost-stock":
                 payload = self._read_json()

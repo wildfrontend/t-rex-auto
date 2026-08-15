@@ -135,6 +135,7 @@ h3 { font-size: 20px; }
 .inventory-control .toggle-control input:checked { border-color: transparent; background: var(--cyan); box-shadow: 0 0 14px rgba(85,214,208,.35); }
 .inventory-control .toggle-control input:checked::after { left: 20px; background: #071014; }
 .inventory-control .toggle-control input:disabled { opacity: .55; cursor: wait; }
+.inventory-control .hatch-tuning-toggle { margin-top: 8px; }
 .inventory-control button { padding-inline: 8px; }
 button { appearance: none; border: 1px solid var(--line); border-radius: 11px; padding: 11px 12px; color: var(--text); background: #1b222a; cursor: pointer; font: inherit; font-size: 12px; transition: .15s; }
 button:hover { transform: translateY(-1px); border-color: rgba(255,255,255,.18); background: #222b34; }
