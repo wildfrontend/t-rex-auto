@@ -6,6 +6,7 @@ import os
 import socket
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -212,6 +213,31 @@ def test_dashboard_builds_noninteractive_runner_commands(tmp_path: Path) -> None
     assert "hatch-stage-cave" in cave
     assert "8765" in cave
     assert cave_after_switch[-2:] == ["-WaitForExistingSeconds", "20"]
+
+
+def test_dashboard_diagnostics_includes_the_current_screenshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = tmp_path / "app"
+    app.mkdir()
+    config = app / "config.json"
+    config.write_text("{}", encoding="utf-8")
+    controller = DashboardController(tmp_path, app / "logs", config_path=config)
+    commands: list[list[str]] = []
+    monkeypatch.setattr(
+        dashboard_module.subprocess,
+        "run",
+        lambda command, **_kwargs: (
+            commands.append(command)
+            or SimpleNamespace(returncode=0, stdout="diagnostic ready", stderr="")
+        ),
+    )
+
+    result = controller.run_tool("diagnostics")
+
+    assert result["accepted"] is True
+    assert commands and commands[0][-2:] == ["diagnostics", "--include-screenshot"]
 
 
 def test_windows_launch_keeps_live_output_in_the_bot_console() -> None:

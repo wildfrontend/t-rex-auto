@@ -440,7 +440,7 @@ try {
         & $PythonExecutable `
             (Join-Path $AppRoot "main.py") `
             "--config" (Join-Path $AppRoot "config.json") `
-            "diagnostics" "--output" $BundlePath | Out-Null
+            "diagnostics" "--include-screenshot" "--output" $BundlePath | Out-Null
         if ($LASTEXITCODE -ne 0) {
             throw "Diagnostic bundle creation failed"
         }
@@ -448,7 +448,7 @@ try {
             ok = $true
             action = "diagnostics"
             output = $BundlePath
-            includes_screenshot = $false
+            includes_screenshot = $true
         }
     } elseif ($Action -eq "snapshot") {
         $PythonExecutable = Resolve-PythonExecutable

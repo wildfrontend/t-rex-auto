@@ -1300,7 +1300,14 @@ class DashboardController:
                 raise RuntimeError("Opening folders is only available on Windows and macOS")
             return {"accepted": True, "action": action}
         if action == "diagnostics":
-            command = [sys.executable, str(main_script), "--config", str(config), "diagnostics"]
+            command = [
+                sys.executable,
+                str(main_script),
+                "--config",
+                str(config),
+                "diagnostics",
+                "--include-screenshot",
+            ]
         elif action == "snapshot":
             output = self.app_root / "debug" / (
                 f"dashboard-{instance.instance_id}-"

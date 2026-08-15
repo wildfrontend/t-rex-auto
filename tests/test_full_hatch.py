@@ -54,6 +54,7 @@ from dino_bot.full_hatch import (
     CaveCullPlanner,
     FullHatchPlanner,
     HatchHomeRecoveryPlanner,
+    _egg_pile_safe_tap,
     home_pile_offset,
     is_centered_home_screen,
     is_home_screen,
@@ -1164,6 +1165,26 @@ def test_centered_home_accepts_clipped_anchor_with_forest_landmark() -> None:
     assert not is_centered_home_screen(frame(), [])
 
 
+def test_centered_home_requires_the_same_pile_proof_as_hatch_child() -> None:
+    # A very thin coloured strip is enough for the skin-specific locator to
+    # estimate a centred offset, but it is not enough to safely identify the
+    # tappable pile. Recovery must not declare home complete in this state,
+    # otherwise the hatch child becomes unknown_screen and the outer timeout
+    # starts the Back loop seen in the diagnostic.
+    image = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    image[1453:1455, 350:550] = (220, 180, 20)
+    thin_pile = frame(image)
+    home = [detection("forest_recenter_button", 841, 1296)]
+
+    assert home_pile_offset(thin_pile) is not None
+    assert not hatch.has_home_pile_structure(
+        thin_pile,
+        egg_pile_point=(450.0, 1330.0),
+        reference_width=900.0,
+    )
+    assert not is_centered_home_screen(thin_pile, home)
+
+
 def straw_home_frame(scale: float = 1.0, dy: int = 0) -> Frame:
     """A home frame carrying the starter nest's base and no cyan at all.
 
@@ -1195,6 +1216,20 @@ def lava_home_frame(dx: int = 0, dy: int = 0) -> Frame:
         (335 + dx, 1318 + dy),
         (563 + dx, 1472 + dy),
         (20, 90, 220),
+        thickness=-1,
+    )
+    return Frame(image)
+
+
+def blue_stone_home_frame(dx: int = 0, dy: int = 0) -> Frame:
+    """An unknown nest skin matching the shifted S13 base geometry."""
+
+    image = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    cv2.rectangle(
+        image,
+        (330 + dx, 1320 + dy),
+        (570 + dx, 1454 + dy),
+        (180, 60, 20),
         thickness=-1,
     )
     return Frame(image)
@@ -1254,16 +1289,45 @@ def test_lava_nest_base_measures_a_shifted_home() -> None:
     assert 118 <= offset[1] <= 122
 
 
+def test_unknown_blue_stone_base_is_measured_without_a_skin_template() -> None:
+    centered = blue_stone_home_frame()
+    offset = home_pile_offset(centered)
+    assert offset is not None
+    assert max(abs(offset[0]), abs(offset[1])) <= 1
+    assert _egg_pile_safe_tap(centered) == (450, 1355)
+    assert is_centered_home_screen(
+        centered,
+        [detection(hatch.HOME_ANCHOR, 59, 561)],
+    )
+
+
+def test_shifted_blue_stone_base_is_not_accepted_as_centered_home() -> None:
+    shifted = blue_stone_home_frame(dy=-315)
+    offset = home_pile_offset(shifted)
+    assert offset is not None
+    assert 314 <= offset[1] <= 316
+    assert _egg_pile_safe_tap(shifted) == (450, 1040)
+    assert not is_centered_home_screen(
+        shifted,
+        [
+            detection(hatch.HOME_ANCHOR, 59, 561),
+            detection("forest_recenter_button", 841, 1296),
+        ],
+    )
+
+
 def test_regular_small_orange_nest_is_not_a_home_base() -> None:
     image = np.full((1600, 900, 3), 255, dtype=np.uint8)
     cv2.rectangle(image, (709, 869), (861, 966), (20, 90, 220), thickness=-1)
     assert home_pile_offset(Frame(image)) is None
 
 
-def test_home_base_template_absence_leaves_the_cyan_path_untouched(tmp_path) -> None:
+def test_home_base_template_absence_uses_style_neutral_fallback(tmp_path) -> None:
     set_home_base_template(tmp_path / "missing.png")
     try:
-        assert home_pile_offset(straw_home_frame()) is None
+        offset = home_pile_offset(straw_home_frame())
+        assert offset is not None
+        assert max(abs(offset[0]), abs(offset[1])) <= 30
         assert home_pile_offset(frame()) is not None
     finally:
         set_home_base_template(None)
@@ -1366,6 +1430,21 @@ def test_full_flow_resumes_vertical_recovery_after_restart_mid_return() -> None:
     # taking with it the only landmark the planner can measure against.
     assert swipe["y2"] - target.y == 364
     assert abs(swipe["x2"] - target.x) <= 15
+
+
+def test_full_flow_recenters_shifted_unknown_skin_before_tapping_pile() -> None:
+    planner = make_full_planner()
+
+    target = planner.choose(
+        blue_stone_home_frame(dy=-315),
+        [detection(hatch.HOME_ANCHOR, 59, 561)],
+    )
+
+    assert target is not None and target.type == RECOVERY_RECENTER
+    assert target.type != hatch.EGG_PILE
+    swipe = target.detection.metadata["swipe"]
+    assert swipe["y2"] - target.y == 315
+    assert abs(swipe["x2"] - target.x) <= 1
 
 
 def test_full_flow_immediately_leaves_active_hunt_map_on_startup() -> None:

@@ -627,19 +627,39 @@ def is_centered_home_screen(frame: Frame, detections: Sequence[Detection]) -> bo
         return False
     if not _is_bright_outdoor_map(frame):
         return False
+    # The recovery planner and HatchPlanner must share the same proof of an
+    # actionable home pile.  The precise skin-specific locators above can
+    # recognize a narrow coloured strip that is enough to estimate the map
+    # offset, but not enough to authorize the hatch child to tap it.  Without
+    # this second gate recovery completes, HatchPlanner reports
+    # ``unknown_screen``, and the outer timeout sends Back again forever.
+    if not hatch_feature.has_home_pile_structure(
+        frame,
+        egg_pile_point=(450.0, 1330.0),
+        reference_width=900.0,
+    ):
+        return False
     offset = home_pile_offset(frame)
     if offset is None:
-        # The base locator has legacy skin-specific fallbacks for shifted
-        # cave recovery.  For a settled, default-position home screen, use
-        # the shared style-neutral structure gate instead of requiring one of
-        # those nest skins to match.
-        return hatch_feature.has_home_pile_structure(
+        return False
+    scale = frame.width / 900.0
+    return max(abs(offset[0]), abs(offset[1])) <= HOME_PILE_TOLERANCE * scale
+
+
+def _home_pile_click_blocked(
+    frame: Frame,
+    detections: Sequence[Detection],
+) -> bool:
+    """Whether home geometry is centred but the pile click falls in chat."""
+
+    return is_centered_home_screen(frame, detections) and (
+        hatch_feature.home_pile_tap_point(
             frame,
             egg_pile_point=(450.0, 1330.0),
             reference_width=900.0,
         )
-    scale = frame.width / 900.0
-    return max(abs(offset[0]), abs(offset[1])) <= HOME_PILE_TOLERANCE * scale
+        is None
+    )
 
 
 def _hatch_boost_ready(frame: Frame) -> bool:
@@ -774,10 +794,18 @@ def _egg_pile_base_center(frame: Frame) -> tuple[float, float] | None:
     lava = _lava_base_center(frame)
     if lava is not None:
         return lava
-    # No cyan or lava base means either "not home" or the starter nest, and
-    # only the template can tell those apart. Keeping it last leaves both
-    # upgraded bases off the expensive scale sweep entirely.
-    return _straw_base_center(frame)
+    straw = _straw_base_center(frame)
+    if straw is not None:
+        return straw
+    # Newer accounts can use a blue-stone base whose hue falls outside the
+    # calibrated cyan band.  The shared structure locator is deliberately
+    # last: known skins keep their more precise anchors, while an unknown skin
+    # still provides a measured recovery offset and a safe dynamic tap.
+    return hatch_feature.home_pile_structure_base(
+        frame,
+        egg_pile_point=(450.0, 1330.0),
+        reference_width=900.0,
+    )
 
 
 def _egg_pile_safe_tap(frame: Frame) -> tuple[int, int] | None:
@@ -794,7 +822,13 @@ def _egg_pile_safe_tap(frame: Frame) -> tuple[int, int] | None:
     if pile is None:
         return None
     scale = frame.width / 900.0
-    return round(pile[0]), round(pile[1] - 100 * scale)
+    x = round(pile[0])
+    y = round(pile[1] - hatch_feature.HOME_PILE_TAP_OFFSET_PX * scale)
+    if y >= frame.height - round(
+        hatch_feature.HOME_PILE_TAP_BOTTOM_EXCLUSION_PX * scale
+    ):
+        return None
+    return x, y
 
 
 def _unready_egg_detail_close(frame: Frame) -> tuple[int, int] | None:
@@ -946,7 +980,10 @@ class HatchHomeRecoveryPlanner:
             )
             self._stage = "recenter_cave_view"
             return self._swipe(RECOVERY_RECENTER, x1, y1, x2, y2, cave_leg=True)
-        if is_centered_home_screen(frame, detections):
+        if is_centered_home_screen(frame, detections) and not _home_pile_click_blocked(
+            frame,
+            detections,
+        ):
             self._home_frames += 1
             self._stage = f"confirm_home_{self._home_frames}/{self.required_home_frames}"
             if self._home_frames >= self.required_home_frames:
@@ -1137,7 +1174,23 @@ class HatchHomeRecoveryPlanner:
         if offset is None:
             return None
         scale = frame.width / 900.0
-        if max(abs(offset[0]), abs(offset[1])) <= HOME_PILE_TOLERANCE * scale:
+        pile_structure = hatch_feature.home_pile_structure_base(
+            frame,
+            egg_pile_point=(450.0, 1330.0),
+            reference_width=900.0,
+        )
+        click_blocked = pile_structure is not None and (
+            hatch_feature.home_pile_tap_point(
+                frame,
+                egg_pile_point=(450.0, 1330.0),
+                reference_width=900.0,
+            )
+            is None
+        )
+        if (
+            max(abs(offset[0]), abs(offset[1])) <= HOME_PILE_TOLERANCE * scale
+            and not click_blocked
+        ):
             return None
         if (
             self._last_offset is not None
@@ -2758,6 +2811,19 @@ class FullHatchPlanner:
     ) -> Target | None:
         by_type = _group(detections)
         if self._stage == "hatch":
+            if _home_pile_click_blocked(frame, detections):
+                if not self._capacity_checked:
+                    # The pile is temporarily in the chat band. Capacity
+                    # preflight only swipes the map, so it is safe to proceed
+                    # without issuing a pile tap first.
+                    self._begin_capacity_preflight(
+                        "home pile is in bottom chat band; swipe-only preflight"
+                    )
+                    return self._choose_current(frame, detections)
+                self._begin_home_recovery(
+                    "home pile click would land in bottom chat band"
+                )
+                return self._choose_current(frame, detections)
             if self._boost_confirmation_pending:
                 yes = _best(by_type.get(CONFIRM_YES))
                 no = _best(by_type.get(CONFIRM_NO))
@@ -2805,6 +2871,12 @@ class FullHatchPlanner:
                 safe_point = _egg_pile_safe_tap(frame)
                 if safe_point is not None:
                     return _synthetic(hatch_feature.EGG_PILE, *safe_point)
+                # The child retains its fixed point for the lightweight hatch
+                # mode, but the full workflow must never tap it blindly: a
+                # missed pile can open a roaming dinosaur and corrupt the
+                # management state. Let the outer timeout enter bounded home
+                # recovery instead.
+                return None
             return target
         if self._stage == "capacity_preflight":
             target = self._capacity_child.choose(frame, detections)

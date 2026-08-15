@@ -76,48 +76,60 @@ HATCH_TIMER_REGIONS: tuple[tuple[float, float, float, float], ...] = tuple(
     for x0, x1 in ((200.0, 350.0), (380.0, 530.0), (560.0, 710.0))
 )
 
-# The home egg pile is placed at a calibrated, stable map position.  Its
-# artwork changes between accounts, so this gate intentionally measures only
-# the large dark/coloured structure in a fixed lower-map region.  It does not
-# depend on a particular nest image or colour.
+# The home egg pile is placed in the lower half of the map, but cave/recovery
+# gestures can leave it hundreds of pixels above its calibrated position. Its
+# artwork also changes between accounts, so this locator measures the broad
+# dark/coloured structure instead of depending on a particular image or hue.
 HOME_PILE_STRUCTURE_REGION: tuple[float, float, float, float] = (
     250.0,
-    1080.0,
+    800.0,
     650.0,
-    1510.0,
+    1600.0,
 )
 HOME_PILE_MIN_STRUCTURE_AREA = 1_000.0
 HOME_PILE_MIN_STRUCTURE_WIDTH = 150.0
+# A roaming dinosaur can touch one side of the pile in a captured frame and
+# widen the connected component by roughly 100px.  Keep enough room for that
+# observed 352px union while still rejecting a component spanning almost the
+# entire 400px search strip.
+HOME_PILE_MAX_STRUCTURE_WIDTH = 370.0
 HOME_PILE_MIN_STRUCTURE_ROWS = 4
 HOME_PILE_MIN_STRUCTURE_ROW_WIDTH = 110
+HOME_PILE_TAP_OFFSET_PX = 100
+# On the 900x1600 game viewport the chat bar starts around y=1540. Keep a
+# small 20px margin above it: the lower map can still be used for swipes, but
+# no hatch tap may land in the chat bar.
+HOME_PILE_TAP_BOTTOM_EXCLUSION_PX = 80
 
 
-def has_home_pile_structure(
+def home_pile_structure_base(
     frame: Frame,
     *,
     egg_pile_point: tuple[float, float],
     reference_width: float = 900.0,
-) -> bool:
-    """Return whether the fixed home-pile region contains a nest structure.
+) -> tuple[float, float] | None:
+    """Locate a style-neutral home pile and return its bottom-centre anchor.
 
-    This is deliberately a screen gate only.  It uses the configured
-    reference coordinates and a broad structure mask, so a small icon or a
-    particular nest skin cannot authorize the egg-pile tap.
+    The returned Y coordinate is the structure's bottom edge.  On the shifted
+    blue-stone S13 pile this remains the same map anchor as the cyan centroid,
+    lava inset, and straw-template centre used by the full hatch workflow.
+    Requiring a broad component with several wide rows rejects roaming
+    dinosaurs and the small fixed incubator nests around it.
     """
 
     if frame.image.size == 0 or frame.width <= 0 or reference_width <= 0:
-        return False
+        return None
     scale = frame.width / reference_width
     rx0, ry0, rx1, ry1 = (
         round(value * scale) for value in HOME_PILE_STRUCTURE_REGION
     )
     x0 = max(rx0, round((egg_pile_point[0] - 220.0) * scale))
-    y0 = max(ry0, round((egg_pile_point[1] - 250.0) * scale))
+    y0 = max(0, ry0)
     x1 = min(rx1, round((egg_pile_point[0] + 220.0) * scale))
-    y1 = min(ry1, round((egg_pile_point[1] + 140.0) * scale))
+    y1 = min(frame.height, ry1)
     roi = frame.image[y0:y1, x0:x1]
     if roi.size == 0:
-        return False
+        return None
 
     gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
     hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
@@ -134,8 +146,10 @@ def has_home_pile_structure(
     count, _, stats, _ = cv2.connectedComponentsWithStats(mask)
     min_area = HOME_PILE_MIN_STRUCTURE_AREA * scale * scale
     min_width = HOME_PILE_MIN_STRUCTURE_WIDTH * scale
+    max_width = HOME_PILE_MAX_STRUCTURE_WIDTH * scale
     max_area = roi.shape[0] * roi.shape[1] * 0.70
     expected_x = egg_pile_point[0] * scale - x0
+    candidates: list[tuple[int, float, float]] = []
     for index in range(1, count):
         x, y, width, height, area = map(int, stats[index])
         center_x = x + width / 2.0
@@ -143,6 +157,7 @@ def has_home_pile_structure(
             area >= min_area
             and area <= max_area
             and width >= min_width
+            and width <= max_width
             and abs(center_x - expected_x) <= 180.0 * scale
         ):
             component = mask[y : y + height, x : x + width]
@@ -153,8 +168,58 @@ def has_home_pile_structure(
                 )
             )
             if structure_rows >= HOME_PILE_MIN_STRUCTURE_ROWS:
-                return True
-    return False
+                candidates.append(
+                    (
+                        area,
+                        x0 + center_x,
+                        y0 + y + height,
+                    )
+                )
+    if not candidates:
+        return None
+    _, center_x, bottom_y = max(candidates)
+    return center_x, float(bottom_y)
+
+
+def has_home_pile_structure(
+    frame: Frame,
+    *,
+    egg_pile_point: tuple[float, float],
+    reference_width: float = 900.0,
+) -> bool:
+    """Return whether the lower map contains a style-neutral home pile."""
+
+    return (
+        home_pile_structure_base(
+            frame,
+            egg_pile_point=egg_pile_point,
+            reference_width=reference_width,
+        )
+        is not None
+    )
+
+
+def home_pile_tap_point(
+    frame: Frame,
+    *,
+    egg_pile_point: tuple[float, float],
+    reference_width: float = 900.0,
+) -> tuple[int, int] | None:
+    """Return a safe egg-pile click point, excluding the bottom chat band."""
+
+    base = home_pile_structure_base(
+        frame,
+        egg_pile_point=egg_pile_point,
+        reference_width=reference_width,
+    )
+    if base is None:
+        return None
+    scale = frame.width / reference_width
+    x = round(base[0])
+    y = round(base[1] - HOME_PILE_TAP_OFFSET_PX * scale)
+    if y >= frame.height - round(HOME_PILE_TAP_BOTTOM_EXCLUSION_PX * scale):
+        return None
+    return x, y
 
 
 def parse_hatch_timer_text(text: str) -> int | None:
@@ -380,10 +445,26 @@ class HatchPlanner:
     def _scale(self, frame: Frame) -> float:
         return frame.width / self.reference_width
 
-    def _egg_pile_target(self, frame: Frame) -> Target:
+    def _egg_pile_target(self, frame: Frame) -> Target | None:
         scale = self._scale(frame)
-        x = int(self.egg_pile_point[0] * scale)
-        y = int(self.egg_pile_point[1] * scale)
+        pile = home_pile_structure_base(
+            frame,
+            egg_pile_point=self.egg_pile_point,
+            reference_width=self.reference_width,
+        )
+        if pile is None:
+            x = int(self.egg_pile_point[0] * scale)
+            y = int(self.egg_pile_point[1] * scale)
+        else:
+            point = home_pile_tap_point(
+                frame,
+                egg_pile_point=self.egg_pile_point,
+                reference_width=self.reference_width,
+            )
+            if point is None:
+                self._stage = "home_tap_blocked"
+                return None
+            x, y = point
         detection = Detection(
             type=EGG_PILE,
             x=x,

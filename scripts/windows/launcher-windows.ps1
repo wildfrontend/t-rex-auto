@@ -757,8 +757,8 @@ function Invoke-Diagnostics {
         Write-Host "  3. 顯示完整狀態 JSON"
         Write-Host "  4. 顯示最新 30 行原始日誌"
         Write-Host "  5. 開啟日誌資料夾"
-        Write-Host "  6. 產生 Codex 診斷包（不含截圖）"
-        Write-Host "  7. 產生 Codex 診斷包（包含目前畫面）"
+        Write-Host "  6. 產生 Codex 診斷包（包含目前畫面）"
+        Write-Host "  7. 產生 Codex 診斷包（不含截圖）"
         Write-Host "  B. 返回主選單"
         $Choice = (Read-Host "請選擇診斷指令 [B]").Trim().ToUpperInvariant()
         if ([string]::IsNullOrWhiteSpace($Choice) -or $Choice -eq "B") {
@@ -795,10 +795,9 @@ function Invoke-Diagnostics {
             New-Item -ItemType Directory -Force -Path $LogRoot | Out-Null
             Start-Process explorer.exe -ArgumentList $LogRoot
         } elseif ($Choice -eq "6") {
-            Export-CodexDiagnosticBundle
-        } elseif ($Choice -eq "7") {
-            Write-Host "你已選擇把目前遊戲畫面放入診斷包。" -ForegroundColor Yellow
             Export-CodexDiagnosticBundle -IncludeScreenshot
+        } elseif ($Choice -eq "7") {
+            Export-CodexDiagnosticBundle
         } else {
             Write-Host "無法辨識這個診斷指令。" -ForegroundColor Yellow
         }

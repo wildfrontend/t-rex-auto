@@ -291,7 +291,7 @@ def main(argv: list[str] | None = None) -> int:
                 / f"dino-diagnostic-{datetime.now():%Y%m%d-%H%M%S}.zip"
             )
             exit_code = run_python_command(
-                ["diagnostics", "--output", str(output)],
+                ["diagnostics", "--include-screenshot", "--output", str(output)],
                 quiet=True,
             )
             if exit_code == 0:
@@ -300,7 +300,7 @@ def main(argv: list[str] | None = None) -> int:
                         "ok": True,
                         "action": "diagnostics",
                         "output": str(output),
-                        "includes_screenshot": False,
+                        "includes_screenshot": True,
                     }
                 )
             return exit_code

@@ -306,13 +306,13 @@ D:\DinoMutantBot\python\python.exe D:\DinoMutantBot\app\main.py `
 
 ### Codex 診斷包
 
-控制視窗按 `E` 可直接產生不含截圖的安全診斷包，輸出位置為：
+控制視窗按 `E` 會產生包含目前遊戲畫面的診斷包，輸出位置為：
 
 ```text
 D:\DinoMutantBot\app\diagnostics\dino-diagnostic-YYYYMMDD-HHMMSS.zip
 ```
 
-診斷選單 `D → 7` 才會加入目前遊戲畫面，選擇前會顯示明確提示。ZIP 內含
+診斷選單 `D → 6` 預設加入目前遊戲畫面；`D → 7` 可改為不含截圖。ZIP 內含
 `summary.json`、`status.json`、`doctor.json`、遮蔽後的 `settings.json`、近期日誌及
 `README_FOR_CODEX.md`。可直接把 ZIP 上傳給 Codex，請它說明故障原因、使用者可採取的
 步驟，以及哪些問題需要修改 Bot 程式。診斷包不會建立遠端連線，也不包含任意控制接口。
@@ -324,7 +324,7 @@ D:\DinoMutantBot\python\python.exe D:\DinoMutantBot\app\main.py `
   --config D:\DinoMutantBot\app\config.json diagnostics
 ```
 
-只有在使用者同意分享畫面時才加上 `--include-screenshot`。
+從終端執行時，只有在使用者同意分享畫面才加上 `--include-screenshot`。
 
 先用 Debug 模式限制一次操作：
 

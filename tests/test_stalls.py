@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import numpy as np
 
+from dino_bot.config import StallConfig
 from dino_bot.full_hatch import HOME_PILE_BASE
 from dino_bot.models import Frame
 from dino_bot.nest_readout import ATTACK_PARENT_REGIONS
@@ -19,6 +20,45 @@ from dino_bot.stalls import (
 class UnreadableReader:
     def read(self, image: np.ndarray) -> str:
         return "?"
+
+
+def test_stall_evidence_defaults_to_three_recent_groups() -> None:
+    assert StallConfig().snapshot_limit == 3
+
+
+def test_home_recovery_snapshot_prunes_repeated_evidence_to_its_limit(tmp_path) -> None:
+    current = [0.0]
+    started = datetime(2026, 8, 8, tzinfo=UTC)
+    writer = HomeRecoverySnapshotWriter(
+        tmp_path,
+        logging.getLogger("test-home-recovery-prune"),
+        limit=3,
+        min_interval_seconds=0,
+        clock=lambda: current[0],
+        now=lambda: started + timedelta(seconds=current[0]),
+    )
+    frame = Frame(np.full((1600, 900, 3), 255, dtype=np.uint8))
+
+    for index in range(4):
+        current[0] = index * 61.0
+        assert writer.capture(
+            frame,
+            [],
+            reason="repeated unknown screen",
+            stage="recover_home_exhausted",
+            rounds=2,
+            forest_trips=1,
+            measured_base=None,
+            expected_base=HOME_PILE_BASE,
+        ) is not None
+
+    primary = [
+        path
+        for path in tmp_path.glob("home-recovery-*.png")
+        if path.with_suffix(".json").exists()
+    ]
+    assert len(primary) == 3
+    assert not (tmp_path / "home-recovery-20260808-080000.png").exists()
 
 
 def test_parent_stats_snapshot_keeps_full_frame_and_each_crop(tmp_path) -> None:

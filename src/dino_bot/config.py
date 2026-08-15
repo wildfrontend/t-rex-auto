@@ -286,7 +286,9 @@ class StallConfig:
     """
 
     snapshots_enabled: bool = True
-    snapshot_limit: int = 10
+    # Repeated recovery failures frequently show the same frame. Three recent
+    # groups preserve change over time without letting a loop consume disk.
+    snapshot_limit: int = 3
     snapshot_min_interval_seconds: float = 60.0
 
 
@@ -810,7 +812,7 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
         ),
         stalls=StallConfig(
             snapshots_enabled=bool(stalls_data.get("snapshots_enabled", True)),
-            snapshot_limit=int(stalls_data.get("snapshot_limit", 10)),
+            snapshot_limit=int(stalls_data.get("snapshot_limit", 3)),
             snapshot_min_interval_seconds=float(
                 stalls_data.get("snapshot_min_interval_seconds", 60)
             ),

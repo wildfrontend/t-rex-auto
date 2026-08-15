@@ -64,7 +64,7 @@ def test_home_structure_triggers_scaled_egg_pile_tap() -> None:
     target = planner.choose(Frame(image), [detection(hatch.HOME_ANCHOR)])
     assert target is not None
     assert target.type == hatch.EGG_PILE
-    assert (target.x, target.y) == (225, 665)
+    assert (target.x, target.y) == (226, 680)
 
 
 def test_home_structure_triggers_egg_pile_tap_without_anchor() -> None:
@@ -77,7 +77,7 @@ def test_home_structure_triggers_egg_pile_tap_without_anchor() -> None:
 
     assert target is not None
     assert target.type == hatch.EGG_PILE
-    assert (target.x, target.y) == (450, 1330)
+    assert (target.x, target.y) == (452, 1360)
 
 
 def test_home_structure_accepts_a_different_nest_skin() -> None:
@@ -88,6 +88,37 @@ def test_home_structure_accepts_a_different_nest_skin() -> None:
     target = planner.choose(Frame(image), [])
 
     assert target is not None and target.type == hatch.EGG_PILE
+
+
+def test_shifted_blue_stone_pile_uses_its_measured_position() -> None:
+    planner, _ = make_planner()
+    image = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    # This saturated blue sits outside the old cyan locator. Its bottom edge
+    # matches the shifted S13 evidence while the fixed (450,1330) point is
+    # empty snow.
+    cv2.rectangle(image, (330, 1005), (570, 1139), (180, 60, 20), thickness=-1)
+
+    target = planner.choose(Frame(image), [detection(hatch.HOME_ANCHOR)])
+
+    assert target is not None and target.type == hatch.EGG_PILE
+    assert (target.x, target.y) == (450, 1040)
+
+
+def test_shifted_pile_tolerates_a_touching_roaming_dinosaur() -> None:
+    planner, _ = make_planner()
+    image = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    cv2.rectangle(image, (330, 1005), (570, 1139), (180, 60, 20), thickness=-1)
+    # The live 00:29 failure joined the pile to nearby artwork and widened its
+    # component to 352px. It must remain measurable without accepting a blob
+    # that fills the complete 400px search strip.
+    cv2.rectangle(image, (218, 1010), (345, 1090), (70, 70, 70), thickness=-1)
+    cv2.rectangle(image, (560, 1010), (602, 1090), (70, 70, 70), thickness=-1)
+
+    target = planner.choose(Frame(image), [detection(hatch.HOME_ANCHOR)])
+
+    assert target is not None and target.type == hatch.EGG_PILE
+    assert 420 <= target.x <= 460
+    assert target.y == 1040
 
 
 def test_home_structure_ignores_small_or_off_center_shape() -> None:
