@@ -110,6 +110,14 @@ class SelectSortTestPlanner:
     def confirmed_rows(self) -> tuple[Stats, ...]:
         return self._confirmed_rows
 
+    def reset_stat_readings(self) -> None:
+        """Discard confirmed rows so the caller can perform one safe reread."""
+
+        self._row_consensus.reset()
+        self._confirmed_rows = ()
+        self._complete = False
+        self._stage = "stats_confirming"
+
     def on_action_success(self, target_type: str) -> None:
         if target_type == TAG_ALL:
             self._tag_ready = True

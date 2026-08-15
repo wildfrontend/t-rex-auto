@@ -14,6 +14,7 @@ Cooldowns and star markers never disqualify a candidate.
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
 
@@ -106,6 +107,7 @@ class AutoPlaceRule:
 
 ATTACK_RULE = ReplacementRule(tag="攻擊特化", sort_option="攻擊力", primary="attack")
 HP_RULE = ReplacementRule(tag="HP特化", sort_option="HP", primary="hp")
+EXTREME_SPECIALIZATION_PARENT = Stats(10, 1, 1)
 TOP_RULE = AutoPlaceRule(tag="頂尖", sort_option="最佳屬性組合")
 MASS_RULE = AutoPlaceRule(tag="量產", sort_option="等級")
 
@@ -120,8 +122,79 @@ ROUND_ORDER: tuple[ReplacementRule | AutoPlaceRule, ...] = (
 FINAL_TAG = "所有"
 
 
+def is_intentional_extreme_specialization_parent(
+    parent: Stats,
+    rule: ReplacementRule,
+    *,
+    enabled: bool,
+) -> bool:
+    """Whether the configured 10/1/1 parent is intentional for this round."""
+
+    return bool(
+        enabled
+        and rule in (ATTACK_RULE, HP_RULE)
+        and parent == EXTREME_SPECIALIZATION_PARENT
+    )
+
+
+def is_extreme_specialization_candidate(
+    parent: Stats,
+    candidate: Stats,
+    rule: ReplacementRule,
+) -> bool:
+    """Whether a candidate preserves the two low stats of a 10/1/1 line."""
+
+    if parent != EXTREME_SPECIALIZATION_PARENT:
+        return False
+    if primary_of(candidate, rule) <= primary_of(parent, rule):
+        return False
+    if rule == HP_RULE:
+        return candidate.attack == parent.attack and candidate.speed == parent.speed
+    if rule == ATTACK_RULE:
+        return candidate.hp == parent.hp and candidate.speed == parent.speed
+    return False
+
+
 def primary_of(stats: Stats, rule: ReplacementRule) -> int:
     return int(getattr(stats, rule.primary))
+
+
+def find_primary_ocr_conflict(
+    parent: Stats,
+    rows: list[Stats],
+    rule: ReplacementRule,
+    *,
+    minimum_repeats: int = 2,
+) -> tuple[int, int] | None:
+    """Find a repeated candidate value that looks like a 1/7 OCR flip.
+
+    This is deliberately not a growth-range check. Parent values can start at
+    different levels and rise over multiple generations, so an absolute
+    ceiling would reject legitimate parents. Instead, flag only the narrow
+    evidence pattern seen in live logs: a parent primary value and a repeated
+    candidate primary value differ in exactly one digit, and that digit is
+    ``1`` versus ``7``. The caller must re-read or fail closed.
+    """
+
+    if minimum_repeats <= 0 or not rows:
+        return None
+    parent_value = primary_of(parent, rule)
+    parent_text = str(parent_value)
+    counts = Counter(primary_of(row, rule) for row in rows)
+    for candidate_value, count in counts.items():
+        if count < minimum_repeats:
+            continue
+        candidate_text = str(candidate_value)
+        if len(parent_text) != len(candidate_text):
+            continue
+        differences = [
+            (left, right)
+            for left, right in zip(parent_text, candidate_text, strict=True)
+            if left != right
+        ]
+        if len(differences) == 1 and set(differences[0]) == {"1", "7"}:
+            return parent_value, candidate_value
+    return None
 
 
 def secondary_load(stats: Stats, rule: ReplacementRule) -> int:

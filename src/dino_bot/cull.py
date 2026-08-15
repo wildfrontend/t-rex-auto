@@ -26,6 +26,11 @@ from .models import Image
 # connected from y=239 onward at 900-wide reference scale.
 CAPACITY_REGION = (10.0, 239.0, 110.0, 258.0)
 EXPECTED_CAPACITY = 350
+# The capacity HUD is drawn over the map.  Coloured particles and dinosaurs
+# can touch the final digit and make the grayscale connected-component reader
+# merge them into ``4``/``9`` or erase the digit at the crop edge.  The HUD
+# digits themselves are grayscale, so saturated pixels are safe to discard.
+CAPACITY_MAX_SATURATION = 80
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,7 +56,7 @@ class CapacityRead:
         return self.count is not None
 
 
-def _without_truncated_ink(crop: Image) -> Image:
+def _clean_capacity_crop(crop: Image) -> tuple[Image, bool]:
     """Blank out ink that the crop's own edge cuts through.
 
     Unlike the stat panels, this HUD sits over the map, so dark scenery can
@@ -70,11 +75,73 @@ def _without_truncated_ink(crop: Image) -> Image:
     count, labels, stats, _ = cv2.connectedComponentsWithStats(ink, connectivity=8)
     width = ink.shape[1]
     cleaned = crop.copy()
+    edge_ink_removed = False
     for index in range(1, count):
         x = stats[index, cv2.CC_STAT_LEFT]
         if x == 0 or x + stats[index, cv2.CC_STAT_WIDTH] >= width:
             cleaned[labels == index] = 255
+            edge_ink_removed = True
+    return cleaned, edge_ink_removed
+
+
+def _without_truncated_ink(crop: Image) -> Image:
+    """Compatibility wrapper returning the cleaned capacity crop."""
+
+    return _clean_capacity_crop(crop)[0]
+
+
+def _without_colored_ink(crop: Image) -> Image:
+    """Remove saturated map particles before matching grayscale HUD digits."""
+
+    if crop.ndim != 3:
+        return crop.copy()
+    hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+    cleaned = crop.copy()
+    cleaned[hsv[:, :, 1] > CAPACITY_MAX_SATURATION] = 255
     return cleaned
+
+
+def _repair_truncated_denominator(
+    text: str,
+    expected_capacity: int,
+    *,
+    edge_ink_removed: bool,
+) -> str | None:
+    """Restore only a known denominator suffix lost at the crop edge.
+
+    This is deliberately narrower than accepting any OCR value near the
+    configured capacity.  A repair is allowed only when the visible
+    denominator is an exact prefix of the configured value and the image
+    contained ink touching the crop edge, which is the signature of the
+    observed ``380`` -> ``38`` failure.
+    """
+
+    if not edge_ink_removed or text.count("/") != 1:
+        return None
+    numerator, denominator = text.split("/")
+    expected = str(expected_capacity)
+    if (
+        not numerator.isdigit()
+        or not denominator.isdigit()
+        or not denominator
+        or len(denominator) >= len(expected)
+        or not expected.startswith(denominator)
+    ):
+        return None
+    return f"{numerator}/{expected}"
+
+
+def _capacity_text_candidates(
+    crop: Image,
+    reader: DigitReader,
+) -> list[tuple[str, bool]]:
+    """Read raw and colour-cleaned variants, preserving edge evidence."""
+
+    candidates: list[tuple[str, bool]] = []
+    for variant in (crop, _without_colored_ink(crop)):
+        cleaned, edge_ink_removed = _clean_capacity_crop(variant)
+        candidates.append((reader.read(cleaned), edge_ink_removed))
+    return candidates
 
 
 def probe_dino_count(
@@ -98,7 +165,37 @@ def probe_dino_count(
     # empty array and read as an ordinary unparsed miss.
     if x0 >= x1 or y0 >= y1 or x1 > width or y1 > height:
         return CapacityRead(None, "", None, region, "region_outside_frame")
-    text = reader.read(_without_truncated_ink(image[y0:y1, x0:x1]))
+    crop = image[y0:y1, x0:x1]
+    candidates = _capacity_text_candidates(crop, reader)
+    text = candidates[0][0]
+
+    # Prefer an exact read from any preprocessing variant.  This handles the
+    # observed coloured obstruction turning the final 0 into a 4 or 9.
+    for candidate_text, _ in candidates:
+        fraction = parse_fraction(candidate_text)
+        if fraction is None:
+            continue
+        count, capacity = fraction
+        if capacity == expected_capacity and 0 <= count <= capacity:
+            return CapacityRead(count, candidate_text, fraction, region, "ok")
+
+    # If the final glyph was erased together with an edge-touching obstruction,
+    # restore it only when the visible denominator is an exact prefix of the
+    # configured capacity.  This keeps foreign or malformed values fail-safe.
+    for candidate_text, edge_ink_removed in candidates:
+        repaired = _repair_truncated_denominator(
+            candidate_text,
+            expected_capacity,
+            edge_ink_removed=edge_ink_removed,
+        )
+        if repaired is None:
+            continue
+        fraction = parse_fraction(repaired)
+        assert fraction is not None
+        count, capacity = fraction
+        if 0 <= count <= capacity:
+            return CapacityRead(count, repaired, fraction, region, "ok")
+
     fraction = parse_fraction(text)
     if fraction is None:
         return CapacityRead(None, text, None, region, "unparsed")

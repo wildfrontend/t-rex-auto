@@ -115,7 +115,11 @@ def finish_main_filter(planner: AttackReplacementTestPlanner) -> None:
     planner.on_action_success(nest_filter.TAG_ATTACK)
 
 
-def hp_planner(reader: EncodedReader) -> AttackReplacementTestPlanner:
+def hp_planner(
+    reader: EncodedReader,
+    *,
+    allow_extreme_specialization_parent: bool = False,
+) -> AttackReplacementTestPlanner:
     return AttackReplacementTestPlanner(
         reader,  # type: ignore[arg-type]
         rule=HP_RULE,
@@ -124,6 +128,7 @@ def hp_planner(reader: EncodedReader) -> AttackReplacementTestPlanner:
         select_sort_option=select_sort.SORT_HP,
         select_sort_header=select_sort.SORT_HP,
         select_sort_menu_point=(650.0, 501.0),
+        allow_extreme_specialization_parent=allow_extreme_specialization_parent,
     )
 
 
@@ -228,6 +233,103 @@ def test_candidate_stats_require_two_matching_frames_before_a_tap() -> None:
     candidate = planner.choose(candidates, select_detections())
 
     assert candidate is not None and candidate.type == attack_replacement.CANDIDATE_ROW
+
+
+def test_suspicious_parent_candidate_ocr_is_reread_then_fails_closed() -> None:
+    reader = EncodedReader()
+    parent_frame = nest_frame(reader, Stats(970, 716, 115), Stats(970, 716, 115))
+    candidates = select_frame(
+        reader,
+        [Stats(970, 116, 115), Stats(970, 116, 115), Stats(970, 116, 115)],
+    )
+    planner = AttackReplacementTestPlanner(reader)  # type: ignore[arg-type]
+    finish_main_filter(planner)
+
+    parent = planner.choose(parent_frame, nest_detections())
+    assert parent is not None and parent.type == attack_replacement.PARENT_LEFT
+    planner.on_action_success(parent.type)
+
+    # The first conflict requests a fresh candidate read and never taps.
+    assert planner.choose(candidates, select_detections()) is None
+    assert planner.last_stage() == "select_left"
+    assert not planner.is_complete()
+
+    # A stable repeat of the same conflict is treated as unsafe, not as an
+    # instruction to replace the parent.
+    assert planner.choose(candidates, select_detections()) is None
+    assert planner.last_stage() == "suspicious_ocr_left"
+    assert planner.is_complete()
+
+
+def test_extreme_hp_parent_requires_one_high_and_two_low_candidate() -> None:
+    reader = EncodedReader()
+    parents = nest_frame(reader, Stats(10, 1, 1), Stats(10, 1, 1))
+    ordinary = select_frame(reader, [Stats(1300, 68, 20), Stats(1200, 68, 20)])
+    specialized = select_frame(reader, [Stats(1300, 1, 1), Stats(1200, 1, 1)])
+    planner = hp_planner(reader, allow_extreme_specialization_parent=True)
+    planner.on_action_success(nest_filter.TAG_HP)
+
+    parent = planner.choose(parents, hp_nest_detections())
+    assert parent is not None and parent.type == attack_replacement.PARENT_LEFT
+    planner.on_action_success(parent.type)
+    close = planner.choose(ordinary, hp_select_detections())
+    assert close is not None and close.type == attack_replacement.SELECT_MASK_CLOSE
+    planner.on_action_success(close.type)
+
+    right = planner.choose(parents, hp_nest_detections())
+    assert right is not None and right.type == attack_replacement.PARENT_RIGHT
+    planner.on_action_success(right.type)
+    candidate = planner.choose(specialized, hp_select_detections())
+    assert candidate is not None and candidate.type == attack_replacement.CANDIDATE_ROW
+
+
+def test_extreme_attack_parent_accepts_attack_specialized_candidate() -> None:
+    reader = EncodedReader()
+    parents = nest_frame(reader, Stats(10, 1, 1), Stats(10, 1, 1))
+    candidates = select_frame(reader, [Stats(10, 72, 1), Stats(10, 68, 1)])
+    planner = AttackReplacementTestPlanner(
+        reader,  # type: ignore[arg-type]
+        allow_extreme_specialization_parent=True,
+    )
+    finish_main_filter(planner)
+
+    parent = planner.choose(parents, nest_detections())
+    assert parent is not None and parent.type == attack_replacement.PARENT_LEFT
+    planner.on_action_success(parent.type)
+    candidate = planner.choose(candidates, select_detections())
+    assert candidate is not None and candidate.type == attack_replacement.CANDIDATE_ROW
+
+
+def test_extreme_condition_unlocks_normal_flow_after_specialized_candidate() -> None:
+    reader = EncodedReader()
+    parents = nest_frame(reader, Stats(10, 1, 1), Stats(10, 1, 1))
+    specialized = select_frame(reader, [Stats(1300, 1, 1)])
+    normal = select_frame(reader, [Stats(900, 68, 20)])
+    planner = hp_planner(reader, allow_extreme_specialization_parent=True)
+    planner.on_action_success(nest_filter.TAG_HP)
+
+    parent = planner.choose(parents, hp_nest_detections())
+    assert parent is not None
+    planner.on_action_success(parent.type)
+    candidate = planner.choose(specialized, hp_select_detections())
+    assert candidate is not None and candidate.type == attack_replacement.CANDIDATE_ROW
+    planner.on_action_success(candidate.type)
+
+    prompt = planner.choose(
+        specialized,
+        [
+            detection(SELECT_CONFIRM_PROMPT, 450, 660),
+            detection(CONFIRM_YES, 350, 850),
+        ],
+    )
+    assert prompt is not None and prompt.type == CONFIRM_YES
+    planner.on_action_success(prompt.type)
+    right = planner.choose(parents, hp_nest_detections())
+    assert right is not None and right.type == attack_replacement.PARENT_RIGHT
+    planner.on_action_success(right.type)
+    normal_candidate = planner.choose(normal, hp_select_detections())
+    assert normal_candidate is not None
+    assert normal_candidate.type == attack_replacement.CANDIDATE_ROW
 
 
 def test_equal_attack_keeps_both_parents_and_closes_each_list() -> None:

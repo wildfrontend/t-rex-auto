@@ -112,6 +112,31 @@ def test_probe_accepts_configured_capacity_limit() -> None:
     assert read.fraction == (369, 380)
 
 
+def test_probe_repairs_a_denominator_erased_at_the_crop_edge() -> None:
+    frame = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    # An obstruction touching the crop's right edge is what makes the live
+    # HUD's final 0 disappear as ``380`` -> ``38``.
+    frame[240, int(CAPACITY_REGION[2]) - 1] = 0
+    read = probe_dino_count(
+        frame,
+        StubReader("290/38"),
+        expected_capacity=380,
+    )
+    assert read.ok
+    assert read.text == "290/380"
+    assert read.fraction == (290, 380)
+
+
+def test_probe_does_not_repair_a_short_denominator_without_edge_evidence() -> None:
+    frame = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    read = probe_dino_count(
+        frame,
+        StubReader("290/38"),
+        expected_capacity=380,
+    )
+    assert read.reason == "unexpected_capacity"
+
+
 def test_probe_rejects_a_count_above_its_own_capacity() -> None:
     frame = np.full((1600, 900, 3), 255, dtype=np.uint8)
     read = probe_dino_count(frame, StubReader("999/350"))

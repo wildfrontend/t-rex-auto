@@ -1845,6 +1845,7 @@ class FullHatchPlanner:
         max_scrolls: int = 0,
         rescan_interval_seconds: float = 600.0,
         stat_upgrade_guards: Mapping[str, StatUpgradeGuard] = DEFAULT_STAT_UPGRADE_GUARDS,
+        allow_extreme_specialization_parent: bool = False,
         minimum_consistent_stat_reads: int = 1,
         stat_read_retries: int = 1,
         boost_inventory: HatchBoostInventoryStore | None = None,
@@ -1876,6 +1877,9 @@ class FullHatchPlanner:
         self.capacity_limit = capacity_limit
         self.cull_threshold = cull_threshold
         self.stat_upgrade_guards = dict(stat_upgrade_guards)
+        self.allow_extreme_specialization_parent = bool(
+            allow_extreme_specialization_parent
+        )
         self.minimum_consistent_stat_reads = minimum_consistent_stat_reads
         self.stat_read_retries = stat_read_retries
         # Nest management is driven only by estimated total dinosaur growth.
@@ -3329,6 +3333,7 @@ class FullHatchPlanner:
                 reference_width=self.reference_width,
                 rule=ATTACK_RULE,
                 stat_guards=self.stat_upgrade_guards,
+                allow_extreme_specialization_parent=self.allow_extreme_specialization_parent,
                 minimum_consistent_stat_reads=self.minimum_consistent_stat_reads,
                 stat_read_retries=self.stat_read_retries,
                 parent_stats_snapshots=self.parent_stats_snapshots,
@@ -3346,6 +3351,7 @@ class FullHatchPlanner:
             select_sort_header=select_sort_feature.SORT_HP,
             select_sort_menu_point=(650.0, 501.0),
             stat_guards=self.stat_upgrade_guards,
+            allow_extreme_specialization_parent=self.allow_extreme_specialization_parent,
             minimum_consistent_stat_reads=self.minimum_consistent_stat_reads,
             stat_read_retries=self.stat_read_retries,
             parent_stats_snapshots=self.parent_stats_snapshots,

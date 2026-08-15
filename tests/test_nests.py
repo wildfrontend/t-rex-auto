@@ -3,12 +3,16 @@ from __future__ import annotations
 from dino_bot import nests
 from dino_bot.nests import (
     ATTACK_RULE,
+    EXTREME_SPECIALIZATION_PARENT,
     HP_RULE,
     MASS_RULE,
     TOP_RULE,
     Stats,
     descending_prefix,
+    find_primary_ocr_conflict,
+    is_extreme_specialization_candidate,
     is_descending,
+    is_intentional_extreme_specialization_parent,
     pick_replacement,
     secondary_load,
 )
@@ -34,6 +38,53 @@ def test_replacement_sort_options() -> None:
     assert ATTACK_RULE.primary == "attack"
     assert HP_RULE.sort_option == "HP"
     assert HP_RULE.primary == "hp"
+
+
+def test_primary_ocr_conflict_flags_repeated_one_seven_flip() -> None:
+    parent = Stats(970, 716, 115)
+    rows = [
+        Stats(970, 116, 115),
+        Stats(970, 116, 115),
+        Stats(970, 115, 115),
+    ]
+
+    assert find_primary_ocr_conflict(parent, rows, ATTACK_RULE) == (716, 116)
+
+
+def test_primary_ocr_conflict_does_not_apply_growth_or_other_digit_rules() -> None:
+    parent = Stats(970, 716, 115)
+
+    assert find_primary_ocr_conflict(
+        parent,
+        [Stats(970, 616, 115), Stats(970, 616, 115)],
+        ATTACK_RULE,
+    ) is None
+
+
+def test_extreme_specialization_parent_is_opt_in() -> None:
+    assert EXTREME_SPECIALIZATION_PARENT == Stats(10, 1, 1)
+    assert is_intentional_extreme_specialization_parent(
+        EXTREME_SPECIALIZATION_PARENT, HP_RULE, enabled=True
+    )
+    assert is_intentional_extreme_specialization_parent(
+        EXTREME_SPECIALIZATION_PARENT, ATTACK_RULE, enabled=True
+    )
+    assert not is_intentional_extreme_specialization_parent(
+        EXTREME_SPECIALIZATION_PARENT, HP_RULE, enabled=False
+    )
+
+
+def test_extreme_specialization_candidate_has_one_high_and_two_low_stats() -> None:
+    parent = EXTREME_SPECIALIZATION_PARENT
+    assert is_extreme_specialization_candidate(parent, Stats(1300, 1, 1), HP_RULE)
+    assert not is_extreme_specialization_candidate(parent, Stats(1300, 68, 20), HP_RULE)
+    assert is_extreme_specialization_candidate(parent, Stats(10, 68, 1), ATTACK_RULE)
+    assert not is_extreme_specialization_candidate(parent, Stats(20, 68, 1), ATTACK_RULE)
+    assert find_primary_ocr_conflict(
+        parent,
+        [Stats(970, 116, 115)],
+        ATTACK_RULE,
+    ) is None
 
 
 def test_secondary_load_excludes_primary() -> None:

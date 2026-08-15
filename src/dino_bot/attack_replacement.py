@@ -32,6 +32,9 @@ from .nests import (
     Stats,
     StatUpgradeGuard,
     descending_prefix,
+    find_primary_ocr_conflict,
+    is_intentional_extreme_specialization_parent,
+    is_extreme_specialization_candidate,
     pick_replacement,
     primary_of,
 )
@@ -102,6 +105,7 @@ class AttackReplacementTestPlanner:
         select_sort_header: str = select_sort_feature.SORT_HDR_ATTACK,
         select_sort_menu_point: tuple[float, float] = (649.0, 550.0),
         stat_guards: Mapping[str, StatUpgradeGuard] = DEFAULT_STAT_UPGRADE_GUARDS,
+        allow_extreme_specialization_parent: bool = False,
         minimum_consistent_stat_reads: int = 1,
         stat_read_retries: int = 1,
         parent_stats_snapshots: ParentStatsSnapshot | None = None,
@@ -126,6 +130,9 @@ class AttackReplacementTestPlanner:
         self.select_sort_header = select_sort_header
         self.select_sort_menu_point = select_sort_menu_point
         self.stat_guards = dict(stat_guards)
+        self.allow_extreme_specialization_parent = bool(
+            allow_extreme_specialization_parent
+        )
         self.minimum_consistent_stat_reads = minimum_consistent_stat_reads
         self.stat_read_retries = stat_read_retries
         self.parent_stats_snapshots = parent_stats_snapshots
@@ -146,6 +153,9 @@ class AttackReplacementTestPlanner:
             target_header_type=nest_filter_header,
         )
         self._select_planner: SelectSortTestPlanner | None = None
+        self._suspicious_ocr_retries = 0
+        self._extreme_specialization_unlock_pending = False
+        self._extreme_specialization_unlocked = False
         self._complete = False
 
     def last_stage(self) -> str:
@@ -176,6 +186,14 @@ class AttackReplacementTestPlanner:
             )
             return
         if target_type == CANDIDATE_ROW:
+            if self._extreme_specialization_unlock_pending:
+                self._extreme_specialization_unlock_pending = False
+                self._extreme_specialization_unlocked = True
+                self.logger.info(
+                    "Hatch OCR | extreme specialization condition satisfied"
+                    " | rule=%s | mode=normal replacement flow",
+                    self.rule.tag,
+                )
             self._stage = self._side_stage("confirm")
             return
         if target_type == NESTED_PARENT_YES:
@@ -204,6 +222,14 @@ class AttackReplacementTestPlanner:
             and NESTED_PARENT_WARNING not in visible
         )
         if direct_selection:
+            if self._extreme_specialization_unlock_pending:
+                self._extreme_specialization_unlock_pending = False
+                self._extreme_specialization_unlocked = True
+                self.logger.info(
+                    "Hatch OCR | extreme specialization condition satisfied"
+                    " | rule=%s | mode=normal replacement flow",
+                    self.rule.tag,
+                )
             self.logger.info(
                 "Hatch %s | side=%s | candidate applied directly; continuing",
                 self.rule.tag,
@@ -387,6 +413,84 @@ class AttackReplacementTestPlanner:
                 [primary_of(row, self.rule) for row in raw_rows],
                 [primary_of(row, self.rule) for row in rows],
             )
+        intentional_extreme_parent = is_intentional_extreme_specialization_parent(
+            self._current_parent,
+            self.rule,
+            enabled=(
+                self.allow_extreme_specialization_parent
+                and not self._extreme_specialization_unlocked
+            ),
+        )
+        if intentional_extreme_parent:
+            extreme_rows = [
+                row
+                for row in rows
+                if is_extreme_specialization_candidate(
+                    self._current_parent,
+                    row,
+                    self.rule,
+                )
+            ]
+            if not extreme_rows:
+                self._suspicious_ocr_retries = 0
+                self.logger.info(
+                    "Hatch %s | side=%s | parent=%s | candidates=%s"
+                    " | decision=keep parent"
+                    " | reason=extreme parent requires specialized primary"
+                    " with two low stats",
+                    self.rule.tag,
+                    self._side_name,
+                    self._format_stats(self._current_parent),
+                    [self._format_stats(row) for row in rows],
+                )
+                return self._close_list(frame)
+            rows = extreme_rows
+            self._extreme_specialization_unlock_pending = True
+            self.logger.info(
+                "Hatch OCR | intentional extreme specialization parent allowed"
+                " | side=%s | rule=%s | parent=%s"
+                " | candidates=%s",
+                self._side_name,
+                self.rule.tag,
+                self._format_stats(self._current_parent),
+                [self._format_stats(row) for row in rows],
+            )
+        conflict = find_primary_ocr_conflict(self._current_parent, rows, self.rule)
+        if conflict is not None:
+            parent_value, candidate_value = conflict
+            if self._suspicious_ocr_retries < 1:
+                self._suspicious_ocr_retries += 1
+                self._select_planner.reset_stat_readings()
+                self._stage = self._side_stage("select")
+                self.logger.warning(
+                    "Hatch OCR | suspicious %s parent/candidate conflict"
+                    " | side=%s | parent=%s | candidates=%s"
+                    " | parent_primary=%d | repeated_candidate_primary=%d"
+                    " | action=reread",
+                    self.rule.sort_option,
+                    self._side_name,
+                    self._format_stats(self._current_parent),
+                    [self._format_stats(row) for row in rows],
+                    parent_value,
+                    candidate_value,
+                )
+                return None
+            self._stage = self._side_stage("suspicious_ocr")
+            self._complete = True
+            self.logger.error(
+                "Hatch OCR | repeated suspicious %s parent/candidate conflict"
+                " | side=%s | parent=%s | candidates=%s"
+                " | parent_primary=%d | repeated_candidate_primary=%d"
+                " | refusing replacement",
+                self.rule.sort_option,
+                self._side_name,
+                self._format_stats(self._current_parent),
+                [self._format_stats(row) for row in rows],
+                parent_value,
+                candidate_value,
+            )
+            return None
+        self._suspicious_ocr_retries = 0
         replacement_index = pick_replacement(
             self._current_parent,
             rows,

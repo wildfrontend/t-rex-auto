@@ -329,6 +329,7 @@
       }
     },
     "stat_consistent_reads": 2,
-    "stat_read_retries": 3
+    "stat_read_retries": 3,
+    "allow_extreme_specialization_parent": false
   }
 }
