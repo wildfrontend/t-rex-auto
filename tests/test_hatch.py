@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import cv2
 import numpy as np
 import pytest
 
@@ -56,12 +57,46 @@ def test_unknown_screen_yields_no_target() -> None:
     assert planner.last_stage == "unknown_screen"
 
 
-def test_home_anchor_triggers_scaled_egg_pile_tap() -> None:
+def test_home_structure_triggers_scaled_egg_pile_tap() -> None:
     planner, _ = make_planner()
-    target = planner.choose(make_frame(width=450, height=800), [detection(hatch.HOME_ANCHOR)])
+    image = np.full((800, 450, 3), 255, dtype=np.uint8)
+    cv2.rectangle(image, (165, 724), (286, 729), (70, 70, 70), thickness=-1)
+    target = planner.choose(Frame(image), [detection(hatch.HOME_ANCHOR)])
     assert target is not None
     assert target.type == hatch.EGG_PILE
     assert (target.x, target.y) == (225, 665)
+
+
+def test_home_structure_triggers_egg_pile_tap_without_anchor() -> None:
+    planner, _ = make_planner()
+    image = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    # A coloured nest skin is enough; the detector does not inspect its image.
+    cv2.rectangle(image, (330, 1448), (573, 1459), (220, 180, 20), thickness=-1)
+
+    target = planner.choose(Frame(image), [])
+
+    assert target is not None
+    assert target.type == hatch.EGG_PILE
+    assert (target.x, target.y) == (450, 1330)
+
+
+def test_home_structure_accepts_a_different_nest_skin() -> None:
+    planner, _ = make_planner()
+    image = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    cv2.rectangle(image, (350, 1390), (550, 1470), (70, 70, 70), thickness=-1)
+
+    target = planner.choose(Frame(image), [])
+
+    assert target is not None and target.type == hatch.EGG_PILE
+
+
+def test_home_structure_ignores_small_or_off_center_shape() -> None:
+    planner, _ = make_planner()
+    image = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    cv2.rectangle(image, (700, 1200), (760, 1240), (220, 180, 20), thickness=-1)
+
+    assert planner.choose(Frame(image), []) is None
+    assert planner.last_stage == "unknown_screen"
 
 
 def test_incubator_prefers_leftmost_label_in_top_row() -> None:

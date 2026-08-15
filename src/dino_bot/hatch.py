@@ -12,6 +12,9 @@ import logging
 import time
 from collections.abc import Callable, Sequence
 
+import cv2
+import numpy as np
+
 from .digits import DigitReader
 from .models import Detection, Frame, Image, Target
 
@@ -72,6 +75,86 @@ HATCH_TIMER_REGIONS: tuple[tuple[float, float, float, float], ...] = tuple(
     for y0, y1 in ((608.0, 638.0), (873.0, 903.0), (1138.0, 1168.0))
     for x0, x1 in ((200.0, 350.0), (380.0, 530.0), (560.0, 710.0))
 )
+
+# The home egg pile is placed at a calibrated, stable map position.  Its
+# artwork changes between accounts, so this gate intentionally measures only
+# the large dark/coloured structure in a fixed lower-map region.  It does not
+# depend on a particular nest image or colour.
+HOME_PILE_STRUCTURE_REGION: tuple[float, float, float, float] = (
+    250.0,
+    1080.0,
+    650.0,
+    1510.0,
+)
+HOME_PILE_MIN_STRUCTURE_AREA = 1_000.0
+HOME_PILE_MIN_STRUCTURE_WIDTH = 150.0
+HOME_PILE_MIN_STRUCTURE_ROWS = 4
+HOME_PILE_MIN_STRUCTURE_ROW_WIDTH = 110
+
+
+def has_home_pile_structure(
+    frame: Frame,
+    *,
+    egg_pile_point: tuple[float, float],
+    reference_width: float = 900.0,
+) -> bool:
+    """Return whether the fixed home-pile region contains a nest structure.
+
+    This is deliberately a screen gate only.  It uses the configured
+    reference coordinates and a broad structure mask, so a small icon or a
+    particular nest skin cannot authorize the egg-pile tap.
+    """
+
+    if frame.image.size == 0 or frame.width <= 0 or reference_width <= 0:
+        return False
+    scale = frame.width / reference_width
+    rx0, ry0, rx1, ry1 = (
+        round(value * scale) for value in HOME_PILE_STRUCTURE_REGION
+    )
+    x0 = max(rx0, round((egg_pile_point[0] - 220.0) * scale))
+    y0 = max(ry0, round((egg_pile_point[1] - 250.0) * scale))
+    x1 = min(rx1, round((egg_pile_point[0] + 220.0) * scale))
+    y1 = min(ry1, round((egg_pile_point[1] + 140.0) * scale))
+    roi = frame.image[y0:y1, x0:x1]
+    if roi.size == 0:
+        return False
+
+    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+    # Snow is bright and low-saturation.  The nest base, regardless of skin,
+    # contains either dark outlines or saturated material.  Closing joins the
+    # separate painted pieces without turning the whole map into one blob.
+    mask = np.where((gray <= 205) | (hsv[:, :, 1] >= 45), 255, 0).astype(np.uint8)
+    kernel_size = max(3, round(9 * scale) | 1)
+    mask = cv2.morphologyEx(
+        mask,
+        cv2.MORPH_CLOSE,
+        np.ones((kernel_size, kernel_size), dtype=np.uint8),
+    )
+    count, _, stats, _ = cv2.connectedComponentsWithStats(mask)
+    min_area = HOME_PILE_MIN_STRUCTURE_AREA * scale * scale
+    min_width = HOME_PILE_MIN_STRUCTURE_WIDTH * scale
+    max_area = roi.shape[0] * roi.shape[1] * 0.70
+    expected_x = egg_pile_point[0] * scale - x0
+    for index in range(1, count):
+        x, y, width, height, area = map(int, stats[index])
+        center_x = x + width / 2.0
+        if (
+            area >= min_area
+            and area <= max_area
+            and width >= min_width
+            and abs(center_x - expected_x) <= 180.0 * scale
+        ):
+            component = mask[y : y + height, x : x + width]
+            occupied_rows = np.count_nonzero(component, axis=1)
+            structure_rows = int(
+                np.count_nonzero(
+                    occupied_rows >= HOME_PILE_MIN_STRUCTURE_ROW_WIDTH * scale
+                )
+            )
+            if structure_rows >= HOME_PILE_MIN_STRUCTURE_ROWS:
+                return True
+    return False
 
 
 def parse_hatch_timer_text(text: str) -> int | None:
@@ -244,7 +327,15 @@ class HatchPlanner:
                 return self._target(close)
             self._stage = "grid_no_close"
             return None
-        if HOME_ANCHOR in by_type or not self.require_home_anchor:
+        if (
+            HOME_ANCHOR in by_type
+            or not self.require_home_anchor
+            or has_home_pile_structure(
+                frame,
+                egg_pile_point=self.egg_pile_point,
+                reference_width=self.reference_width,
+            )
+        ):
             self._stage = "home"
             return self._egg_pile_target(frame)
         self._stage = "unknown_screen"

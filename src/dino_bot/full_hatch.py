@@ -629,7 +629,15 @@ def is_centered_home_screen(frame: Frame, detections: Sequence[Detection]) -> bo
         return False
     offset = home_pile_offset(frame)
     if offset is None:
-        return False
+        # The base locator has legacy skin-specific fallbacks for shifted
+        # cave recovery.  For a settled, default-position home screen, use
+        # the shared style-neutral structure gate instead of requiring one of
+        # those nest skins to match.
+        return hatch_feature.has_home_pile_structure(
+            frame,
+            egg_pile_point=(450.0, 1330.0),
+            reference_width=900.0,
+        )
     scale = frame.width / 900.0
     return max(abs(offset[0]), abs(offset[1])) <= HOME_PILE_TOLERANCE * scale
 
