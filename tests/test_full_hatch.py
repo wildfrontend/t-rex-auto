@@ -1222,13 +1222,14 @@ def lava_home_frame(dx: int = 0, dy: int = 0) -> Frame:
 
 
 def blue_stone_home_frame(dx: int = 0, dy: int = 0) -> Frame:
-    """The desaturated blue-stone growth stage used by S13."""
+    """The desaturated blue-stone growth stage measured on centred S13."""
 
     image = np.full((1600, 900, 3), 255, dtype=np.uint8)
     cv2.rectangle(
         image,
-        (375 + dx, 1427 + dy),
-        (525 + dx, 1483 + dy),
+        # Its colour centroid is 40px above the shared structural anchor.
+        (375 + dx, 1387 + dy),
+        (525 + dx, 1443 + dy),
         (212, 149, 108),
         thickness=-1,
     )
@@ -1299,6 +1300,16 @@ def test_blue_stone_base_is_measured_by_stable_colour() -> None:
         centered,
         [detection(hatch.HOME_ANCHOR, 59, 561)],
     )
+
+
+def test_blue_stone_and_upgraded_basin_share_the_same_pile_hitbox() -> None:
+    # Nest skins and egg artwork differ by growth stage, but the large home
+    # pile keeps one map position and one interactive footprint.
+    blue_point = _egg_pile_safe_tap(blue_stone_home_frame())
+    upgraded_point = _egg_pile_safe_tap(frame())
+    assert blue_point is not None and upgraded_point is not None
+    assert abs(blue_point[0] - upgraded_point[0]) <= 2
+    assert abs(blue_point[1] - upgraded_point[1]) <= 2
 
 
 def test_shifted_blue_stone_base_is_not_accepted_as_centered_home() -> None:

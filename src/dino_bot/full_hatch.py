@@ -357,6 +357,12 @@ BLUE_STONE_HSV_UPPER = (120, 255, 255)
 BLUE_STONE_MIN_AREA = 1_000.0
 BLUE_STONE_WIDTH_RANGE = (120.0, 280.0)
 BLUE_STONE_HEIGHT_RANGE = (25.0, 120.0)
+# The blue pixels describe the cloth/stone face above the structural base,
+# while the cyan locator describes the lower common map anchor.  Normalize
+# the skin-specific colour centroid before any shared centering or tap logic
+# consumes it.  Live centred S13 evidence measures the blue centroid at
+# y~=1415, 40px above HOME_PILE_BASE.
+BLUE_STONE_ANCHOR_Y_OFFSET = 40.0
 _HOME_BASE_TEMPLATE_PATH = (
     Path(__file__).resolve().parents[2]
     / "assets"
@@ -779,7 +785,7 @@ def _lava_base_center(frame: Frame) -> tuple[float, float] | None:
 
 
 def _blue_stone_base_center(frame: Frame) -> tuple[float, float] | None:
-    """Locate the S13 blue-stone growth-stage base by its stable colour."""
+    """Locate blue stone and return the common structural base anchor."""
 
     image = frame.image
     if image.size == 0:
@@ -809,7 +815,7 @@ def _blue_stone_base_center(frame: Frame) -> tuple[float, float] | None:
     # The main pile is the lowest qualifying wide blue base.  Small fixed
     # nests and blue map decorations fail the width/area gates above.
     _, center_x, center_y = max(candidates, key=lambda item: (item[2], item[0]))
-    return center_x, center_y
+    return center_x, center_y + BLUE_STONE_ANCHOR_Y_OFFSET * scale
 
 
 def _egg_pile_base_center(frame: Frame) -> tuple[float, float] | None:
