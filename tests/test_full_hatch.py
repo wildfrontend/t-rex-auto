@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from pathlib import Path
 
 import cv2
@@ -7,6 +8,7 @@ import numpy as np
 
 from dino_bot import hatch, nest_filter
 from dino_bot.cull import CAPACITY_REGION, CapacityRead
+from dino_bot.detection import OpenCvDetector
 from dino_bot.digits import DigitReader
 from dino_bot.full_hatch import (
     AUTOPLACE_BUTTON,
@@ -763,6 +765,42 @@ def test_full_hatch_scopes_detection_by_workflow_phase() -> None:
     assert len(collect_types) < 55
     assert "dinosaur" not in nest_types
     assert "own_hunt_path" not in nest_types
+
+
+def test_s9_live_home_anchor_variant_is_recognized() -> None:
+    """The real S9 entrance crop scored 0.833 against the original asset."""
+
+    encoded = (
+        FIXTURES / "s9-home-anchor-20260816.png.b64"
+    ).read_text(encoding="ascii")
+    crop = cv2.imdecode(
+        np.frombuffer(base64.b64decode(encoded), dtype=np.uint8),
+        cv2.IMREAD_COLOR,
+    )
+    assert crop is not None
+    image = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    image[540:585, 24:74] = crop
+    detector = OpenCvDetector(REPO / "assets" / "hatch" / "manifest.json")
+
+    found = detector.detect_types(Frame(image), {hatch.HOME_ANCHOR})
+
+    assert len(found) == 1
+    assert (found[0].x, found[0].y) == (49, 562)
+    assert 0.82 <= found[0].confidence < 0.85
+
+
+def test_open_nest_visual_match_requires_unobscured_centered_home() -> None:
+    planner = make_full_planner()
+    planner._stage = "open_nest"
+    home_anchor = [detection(hatch.HOME_ANCHOR, 49, 562)]
+
+    target = planner.choose(frame(), home_anchor)
+    assert target is not None and target.type == OPEN_NEST
+
+    planner = make_full_planner()
+    planner._stage = "open_nest"
+    dimmed = frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    assert planner.choose(dimmed, home_anchor) is None
 
 
 def test_full_hatch_forwards_direct_candidate_success_to_replacement_child() -> None:

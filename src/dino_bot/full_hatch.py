@@ -3115,7 +3115,17 @@ class FullHatchPlanner:
                     self._start_next_screening_stage()
                 return self._choose_current(frame, detections)
             anchor = _best(by_type.get(hatch_feature.HOME_ANCHOR))
-            return _synthetic(OPEN_NEST, anchor.x, anchor.y) if anchor is not None else None
+            if anchor is None:
+                return None
+            # The S9 entrance artwork changes slightly with the nest state.
+            # Its live 2026-08-16 variant scores 0.833 against the canonical
+            # image, so the manifest accepts it at 0.82.  A lower visual
+            # threshold must not turn into permission to tap a matching egg
+            # behind a dimmed item/detail overlay: require the independently
+            # measured, bright and centred home map before using the match.
+            if not is_centered_home_screen(frame, detections):
+                return None
+            return _synthetic(OPEN_NEST, anchor.x, anchor.y)
         if self._stage in ("attack", "hp"):
             target = self._replacement_child.choose(frame, detections)
             if target is None:
