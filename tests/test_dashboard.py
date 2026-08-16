@@ -196,6 +196,7 @@ def test_dashboard_builds_noninteractive_runner_commands(tmp_path: Path) -> None
 
     hunt = controller._runner_command("hunt")
     combined = controller._runner_command("hatch-hunt")
+    custom = controller._runner_command("custom-workflow")
     cave = controller._runner_command("hatch-stage", stage="cave")
     cave_after_switch = controller._runner_command(
         "hatch-stage",
@@ -209,6 +210,8 @@ def test_dashboard_builds_noninteractive_runner_commands(tmp_path: Path) -> None
     assert "run-hatch-windows.ps1" in combined[6]
     assert "hatch-hunt" in combined
     assert combined[-4:] == ["-MaxActions", "0", "-MaxCycles", "0"]
+    assert "run-hatch-windows.ps1" in custom[6]
+    assert "custom-workflow" in custom
     assert "run-hatch-windows.ps1" in cave[6]
     assert "hatch-stage-cave" in cave
     assert "8765" in cave
@@ -478,11 +481,61 @@ def test_dashboard_can_update_instance_settings_without_manual_file_edits(
         "config": "app/config.json",
         "status_port": 8786,
         "allowed_modes": [
+            "custom-workflow",
             "hatch-hunt",
             "hatch-stage",
             "hunt",
         ],
     }
+
+
+def test_dashboard_saves_a_canonical_per_instance_custom_workflow(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = tmp_path / "app"
+    app.mkdir()
+    config_path = app / "config.json"
+    config_path.write_text("{}", encoding="utf-8")
+    controller = DashboardController(tmp_path, app / "logs", config_path=config_path)
+    monkeypatch.setattr(controller, "discover", lambda instance_id=None: {"running": False})
+
+    result = controller.set_custom_workflow(
+        "main",
+        ["hunt", "cave", "hatch", "collect", "attack"],
+    )
+
+    assert result["custom_workflow"]["stages"] == [
+        "attack",
+        "collect",
+        "cave",
+        "hatch",
+        "hunt",
+    ]
+    assert result["restart_required"] is False
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["workflow"]["custom_stages"] == result["custom_workflow"]["stages"]
+    assert controller.custom_workflow(controller.instances[0]) == result["custom_workflow"]
+
+
+@pytest.mark.parametrize(
+    "stages",
+    [
+        [],
+        ["collect", "hatch"],
+        ["collect", "hunt"],
+        ["collect", "hatch", "hunt", "hunt"],
+        ["collect", "unknown", "hatch", "hunt"],
+    ],
+)
+def test_dashboard_rejects_unsafe_custom_workflow(
+    tmp_path: Path,
+    stages: list[str],
+) -> None:
+    controller = DashboardController(tmp_path, tmp_path / "logs")
+
+    with pytest.raises(ValueError):
+        controller.set_custom_workflow("main", stages)
 
 
 def test_dashboard_rejects_unknown_standalone_stage(tmp_path: Path) -> None:

@@ -6,6 +6,7 @@ param(
         "scan-adb",
         "start-hunt",
         "start-hatch-hunt",
+        "start-custom-workflow",
         "start-stage-hatch",
         "start-stage-attack",
         "start-stage-hp",

@@ -137,6 +137,11 @@ h3 { font-size: 20px; }
 .inventory-control .toggle-control input:disabled { opacity: .55; cursor: wait; }
 .inventory-control .hatch-tuning-toggle { margin-top: 8px; }
 .inventory-control button { padding-inline: 8px; }
+.custom-workflow-control { grid-template-columns: 1fr; align-items: stretch; }
+.workflow-stage-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px 12px; }
+.inventory-control .workflow-stage-options label { display: flex; align-items: center; gap: 7px; color: var(--text); font-size: 11px; }
+.inventory-control .workflow-stage-options input { width: auto; margin: 0; padding: 0; accent-color: var(--cyan); }
+.inventory-control .workflow-stage-options input:disabled { opacity: .7; cursor: not-allowed; }
 button { appearance: none; border: 1px solid var(--line); border-radius: 11px; padding: 11px 12px; color: var(--text); background: #1b222a; cursor: pointer; font: inherit; font-size: 12px; transition: .15s; }
 button:hover { transform: translateY(-1px); border-color: rgba(255,255,255,.18); background: #222b34; }
 button:disabled { opacity: .45; cursor: wait; transform: none; }

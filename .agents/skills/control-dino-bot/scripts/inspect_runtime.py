@@ -17,6 +17,7 @@ PORTS = {
     "hatch-full": 8772,
     "hatch-hunt": 8773,
     "hatch-stage": 8774,
+    "custom-workflow": 8776,
 }
 FEATURE_RE = re.compile(r"Feature \| (?P<mode>[a-z0-9-]+)")
 STATUS_PORT_RE = re.compile(r"Status API \| http://127\.0\.0\.1:(?P<port>\d+)/status")

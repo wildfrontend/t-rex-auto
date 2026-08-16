@@ -11,6 +11,16 @@ const eventNames = {
   game_restart: "遊戲已重新啟動",
   cull_decision: "洞穴容量判定",
 };
+const customWorkflowStageLabels = {
+  attack: "攻擊親代",
+  hp: "HP 親代",
+  top: "頂尖配置",
+  mass: "量產配置",
+  collect: "收集巢蛋",
+  cave: "洞穴淘汰",
+  hatch: "孵蛋",
+  hunt: "狩獵",
+};
 
 function setCounter(name, value) {
   const data = value || { session: 0, today: 0, total: 0 };
@@ -68,6 +78,7 @@ function renderInstances(items) {
       <div class="instance-card-actions">
         <button type="button" data-instance-action="select" data-instance-id="${escapeHtml(item.id)}">檢視</button>
         ${startButton("hatch-hunt", "孵蛋＋狩獵")}
+        ${startButton("custom-workflow", "自訂循環")}
         ${startButton("hunt", "純狩獵")}
         <button type="button" data-instance-action="edit" data-instance-id="${escapeHtml(item.id)}">設定</button>
         <button type="button" class="danger" data-instance-action="stop" data-instance-id="${escapeHtml(item.id)}">停止</button>
@@ -192,6 +203,18 @@ function render(data) {
   $("extremeParentProtectionLabel").textContent = displayedExtremeParentEnabled
     ? "10/1/1 極端親代保護：開啟"
     : "10/1/1 極端親代保護：關閉";
+  const customWorkflow = data.custom_workflow || {};
+  const selectedStages = new Set(customWorkflow.stages || ["collect", "hatch", "hunt"]);
+  document.querySelectorAll("input[data-custom-stage]").forEach((input) => {
+    if (document.activeElement !== input && !input.disabled) {
+      input.checked = selectedStages.has(input.dataset.customStage);
+    }
+  });
+  const orderedStages = Object.keys(customWorkflowStageLabels)
+    .filter((stage) => selectedStages.has(stage));
+  $("customWorkflowSummary").textContent = orderedStages
+    .map((stage) => customWorkflowStageLabels[stage])
+    .join(" → ");
   const metrics = data.metrics || {};
   const counters = metrics.counters || {};
   setCounter("hunt", counters.hunt);
@@ -535,5 +558,35 @@ $("hatchTuningUpdate").addEventListener("click", async () => {
     result.textContent = String(error.message || error);
   } finally {
     $("hatchTuningUpdate").disabled = false;
+  }
+});
+
+$("customWorkflowSave").addEventListener("click", async () => {
+  const stages = Array.from(document.querySelectorAll("input[data-custom-stage]"))
+    .filter((input) => input.checked)
+    .map((input) => input.dataset.customStage);
+  const result = $("commandResult");
+  $("customWorkflowSave").disabled = true;
+  result.classList.remove("error");
+  result.textContent = "儲存自訂循環流程…";
+  try {
+    const suffix = selectedInstanceId ? `?instance=${encodeURIComponent(selectedInstanceId)}` : "";
+    const response = await fetch(`/api/control/set-custom-workflow${suffix}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Dino-Dashboard": "1",
+      },
+      body: JSON.stringify({ stages }),
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+    result.textContent = payload.message;
+    await refresh();
+  } catch (error) {
+    result.classList.add("error");
+    result.textContent = String(error.message || error);
+  } finally {
+    $("customWorkflowSave").disabled = false;
   }
 });

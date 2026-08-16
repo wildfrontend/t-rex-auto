@@ -22,13 +22,19 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlparse
 from urllib.request import Request, urlopen
 
+from .config import CUSTOM_WORKFLOW_STAGE_ORDER
 from .hatch_inventory import HatchBoostInventoryStore
 from .metrics import MetricsStore
 
 DASHBOARD_VERSION = 1
-DEFAULT_BOT_PORTS = {"hatch-hunt": 8773, "hunt": 8765, "hatch-stage": 8774}
+DEFAULT_BOT_PORTS = {
+    "hatch-hunt": 8773,
+    "hunt": 8765,
+    "hatch-stage": 8774,
+    "custom-workflow": 8776,
+}
 SUPPORTED_BOT_MODES = frozenset(
-    {"hunt", "hatch-hunt", "hatch-stage"}
+    {"hunt", "hatch-hunt", "hatch-stage", "custom-workflow"}
 )
 MODE_SWITCH_PROCESS_WAIT_SECONDS = 20
 HATCH_TUNING_FIELDS = (
@@ -45,6 +51,16 @@ HATCH_STAGE_LABELS = {
     "hp": "HP 親代",
     "collect": "收集所有巢蛋",
     "cave": "洞穴容量與淘汰",
+}
+CUSTOM_WORKFLOW_STAGE_LABELS = {
+    "attack": "攻擊親代",
+    "hp": "HP 親代",
+    "top": "頂尖配置",
+    "mass": "量產配置",
+    "collect": "收集巢蛋",
+    "cave": "洞穴淘汰",
+    "hatch": "孵蛋",
+    "hunt": "狩獵",
 }
 _ASSET_TYPES = {
     ".css": "text/css; charset=utf-8",
@@ -627,6 +643,76 @@ class DashboardController:
         }
 
     @staticmethod
+    def custom_workflow(instance: BotInstance) -> dict[str, Any]:
+        """Return the effective per-instance custom cooldown workflow."""
+
+        from .config import ConfigError, load_config
+
+        try:
+            stages = load_config(instance.config_path).workflow.custom_stages
+        except (ConfigError, OSError, ValueError):
+            stages = ("collect", "hatch", "hunt")
+        return {
+            "stages": list(stages),
+            "labels": [CUSTOM_WORKFLOW_STAGE_LABELS[stage] for stage in stages],
+        }
+
+    def set_custom_workflow(
+        self,
+        instance_id: str | None,
+        stages: Any,
+    ) -> dict[str, Any]:
+        """Persist a canonical, safe custom workflow for one instance."""
+
+        if not isinstance(stages, list) or not stages:
+            raise ValueError("stages must be a non-empty list")
+        if any(not isinstance(stage, str) for stage in stages):
+            raise ValueError("every custom workflow stage must be a string")
+        if len(set(stages)) != len(stages):
+            raise ValueError("custom workflow stages cannot contain duplicates")
+        unknown = set(stages) - set(CUSTOM_WORKFLOW_STAGE_ORDER)
+        if unknown:
+            raise ValueError(
+                "unsupported custom workflow stages: " + ", ".join(sorted(unknown))
+            )
+        if "hatch" not in stages or "hunt" not in stages:
+            raise ValueError("custom workflow must include hatch and hunt")
+        selected = set(stages)
+        ordered = [stage for stage in CUSTOM_WORKFLOW_STAGE_ORDER if stage in selected]
+
+        instance = self._instance(instance_id)
+        try:
+            config = json.loads(instance.config_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise RuntimeError(f"cannot read instance config: {exc}") from exc
+        if not isinstance(config, dict):
+            raise RuntimeError("instance config must be a JSON object")
+        workflow = config.setdefault("workflow", {})
+        if not isinstance(workflow, dict):
+            raise RuntimeError("instance config workflow section must be an object")
+        workflow["custom_stages"] = ordered
+        temporary = instance.config_path.with_suffix(".tmp")
+        temporary.write_text(
+            json.dumps(config, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        temporary.replace(instance.config_path)
+
+        running = bool(self.discover(instance.instance_id)["running"])
+        labels = [CUSTOM_WORKFLOW_STAGE_LABELS[stage] for stage in ordered]
+        message = "自訂流程已儲存：" + " → ".join(labels)
+        if running:
+            message += "；重新啟動 Bot 後生效"
+        return {
+            "accepted": True,
+            "action": "set-custom-workflow",
+            "instance": instance.instance_id,
+            "custom_workflow": {"stages": ordered, "labels": labels},
+            "restart_required": running,
+            "message": message,
+        }
+
+    @staticmethod
     def _instance_serial(instance: BotInstance) -> str | None:
         try:
             payload = json.loads(instance.config_path.read_text(encoding="utf-8"))
@@ -642,6 +728,8 @@ class DashboardController:
             return "hunt", "純狩獵"
         if feature == "hatch-hunt":
             return "hatch-hunt", "自動孵蛋＋狩獵"
+        if feature == "custom-workflow":
+            return "custom-workflow", "自訂循環流程"
         if feature and feature.startswith("hatch-stage-"):
             return "hatch-stage", "單階段孵化"
         return None, "執行中"
@@ -896,7 +984,7 @@ class DashboardController:
                 str(instance.status_port),
                 "--verbose",
             ]
-        elif mode == "hatch-hunt":
+        elif mode in {"hatch-hunt", "custom-workflow"}:
             command += [
                 "run",
                 "--feature",
@@ -964,7 +1052,7 @@ class DashboardController:
                 "-StatusPort",
                 str(instance.status_port),
             ]
-        elif mode == "hatch-hunt":
+        elif mode in {"hatch-hunt", "custom-workflow"}:
             runner = scripts / "run-hatch-windows.ps1"
             arguments = [
                 "-Feature",
@@ -1029,7 +1117,7 @@ class DashboardController:
         instance_id: str | None = None,
     ) -> dict[str, Any]:
         instance = self._instance(instance_id)
-        if mode not in {"hunt", "hatch-hunt", "hatch-stage"}:
+        if mode not in {"hunt", "hatch-hunt", "hatch-stage", "custom-workflow"}:
             raise RuntimeError("Unsupported Bot mode")
         if mode not in instance.allowed_modes:
             raise RuntimeError(f"{instance.name} 不允許啟動 {mode}")
@@ -1487,7 +1575,7 @@ class DashboardController:
                 if stage not in HATCH_STAGE_LABELS:
                     stage = "hatch"
                 self.start("hatch-stage", stage=stage, instance_id=instance_id)
-            elif mode in {"hunt", "hatch-hunt"}:
+            elif mode in {"hunt", "hatch-hunt", "custom-workflow"}:
                 self.start(str(mode), instance_id=instance_id)
             restarted = True
         return {
@@ -1612,6 +1700,10 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 result = self.server.controller.start("hunt", instance_id=instance_id)
             elif action == "start-hatch-hunt":
                 result = self.server.controller.start("hatch-hunt", instance_id=instance_id)
+            elif action == "start-custom-workflow":
+                result = self.server.controller.start(
+                    "custom-workflow", instance_id=instance_id
+                )
             elif action.startswith("start-stage-"):
                 stage = action.removeprefix("start-stage-")
                 result = self.server.controller.start(
@@ -1645,6 +1737,12 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                     payload.get("cull_threshold"),
                     payload.get("screening_growth_interval"),
                     payload.get("allow_extreme_specialization_parent"),
+                )
+            elif action == "set-custom-workflow":
+                payload = self._read_json()
+                result = self.server.controller.set_custom_workflow(
+                    instance_id,
+                    payload.get("stages"),
                 )
             elif action == "set-boost-stock":
                 payload = self._read_json()
@@ -1800,6 +1898,7 @@ class DashboardServer:
                     "metrics": metrics,
                     "hatch_boost_inventory": inventory.as_dict(),
                     "hatch_tuning": self.controller.hatch_tuning(definition),
+                    "custom_workflow": self.controller.custom_workflow(definition),
                 }
             )
         selected = next(
@@ -1816,6 +1915,7 @@ class DashboardServer:
             "metrics": selected["metrics"],
             "hatch_boost_inventory": selected["hatch_boost_inventory"],
             "hatch_tuning": selected["hatch_tuning"],
+            "custom_workflow": selected["custom_workflow"],
         }
 
     def start(self) -> None:

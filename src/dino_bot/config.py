@@ -10,6 +10,18 @@ from typing import Any, Literal
 from .models import ExclusionZone
 from .nests import StatUpgradeGuard, default_stat_upgrade_guards
 
+CUSTOM_WORKFLOW_STAGE_ORDER: tuple[str, ...] = (
+    "attack",
+    "hp",
+    "top",
+    "mass",
+    "collect",
+    "cave",
+    "hatch",
+    "hunt",
+)
+DEFAULT_CUSTOM_WORKFLOW_STAGES: tuple[str, ...] = ("collect", "hatch", "hunt")
+
 
 class ConfigError(ValueError):
     pass
@@ -256,6 +268,7 @@ class TrainingConfig:
 class WorkflowConfig:
     max_cycles: int = 0
     complete_on: tuple[str, ...] = ()
+    custom_stages: tuple[str, ...] = DEFAULT_CUSTOM_WORKFLOW_STAGES
 
 
 @dataclass(frozen=True, slots=True)
@@ -766,6 +779,13 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
         workflow=WorkflowConfig(
             max_cycles=int(workflow_data.get("max_cycles", 0)),
             complete_on=tuple(workflow_data.get("complete_on", [])),
+            custom_stages=tuple(
+                str(stage)
+                for stage in workflow_data.get(
+                    "custom_stages",
+                    DEFAULT_CUSTOM_WORKFLOW_STAGES,
+                )
+            ),
         ),
         recovery=RecoveryConfig(
             enabled=bool(recovery_data.get("enabled", True)),
@@ -933,6 +953,21 @@ def _validate(config: AppConfig) -> None:
         raise ConfigError("training.max_images must be between 1 and 500")
     if config.workflow.max_cycles < 0:
         raise ConfigError("workflow.max_cycles cannot be negative")
+    custom_stages = config.workflow.custom_stages
+    if not custom_stages:
+        raise ConfigError("workflow.custom_stages cannot be empty")
+    if len(set(custom_stages)) != len(custom_stages):
+        raise ConfigError("workflow.custom_stages cannot contain duplicates")
+    unknown_custom_stages = set(custom_stages) - set(CUSTOM_WORKFLOW_STAGE_ORDER)
+    if unknown_custom_stages:
+        raise ConfigError(
+            "workflow.custom_stages contains unsupported stages: "
+            + ", ".join(sorted(unknown_custom_stages))
+        )
+    if "hatch" not in custom_stages or "hunt" not in custom_stages:
+        raise ConfigError(
+            "workflow.custom_stages must include hatch and hunt for cooldown cycling"
+        )
     if config.planner.dedup_radius < 0 or config.planner.history_limit <= 0:
         raise ConfigError("planner dedup_radius/history_limit are invalid")
     if config.planner.recenter_every <= 0:

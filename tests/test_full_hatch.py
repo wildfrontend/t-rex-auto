@@ -632,6 +632,52 @@ def make_full_planner() -> FullHatchPlanner:
     )
 
 
+def test_custom_full_hatch_runs_only_selected_management_stages() -> None:
+    planner = FullHatchPlanner(
+        DigitReader(GLYPHS),
+        egg_pile_point=(450, 1330),
+        max_scrolls=0,
+        enabled_stages=("collect", "hatch"),
+    )
+
+    assert planner.enabled_stages == {"collect", "hatch"}
+    assert planner._missing_screening_stages() == ()
+    assert planner._collect_enabled is True
+    assert planner._cave_enabled is False
+
+
+def test_custom_full_hatch_skips_idle_collection_when_collect_is_disabled() -> None:
+    planner = FullHatchPlanner(
+        DigitReader(GLYPHS),
+        egg_pile_point=(450, 1330),
+        max_scrolls=0,
+        enabled_stages=("hatch",),
+    )
+    planner._start_empty_rescan_wait()
+
+    assert planner.is_hunt_cooldown_active()
+    assert planner.begin_interim_collection() is False
+    assert planner._stage == "hatch"
+
+
+def test_custom_full_hatch_stops_hatching_at_safe_population_without_cave() -> None:
+    planner = FullHatchPlanner(
+        DigitReader(GLYPHS),
+        egg_pile_point=(450, 1330),
+        enabled_stages=("collect", "hatch"),
+    )
+    planner._child = planner._new_hatch()
+    planner._start_hatch_cycle()
+    planner._cave_population = planner.cull_threshold - 1
+    planner._screening_baseline_population = planner.cull_threshold - 1
+    planner._hatch_child.hatched = 1
+
+    planner.on_action_success(hatch.CLOSE_BUTTON)
+
+    assert planner.is_hatch_blocked()
+    assert planner._capacity_blocked is True
+
+
 def test_full_hatch_repeated_action_failure_enters_safe_home_recovery() -> None:
     planner = make_full_planner()
     failed = detection(COLLECT_EGGS_BUTTON, 450, 1300)

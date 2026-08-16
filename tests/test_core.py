@@ -14,11 +14,12 @@ import pytest
 import action as action_facade
 import capture as capture_facade
 import detector as detector_facade
+import dino_bot.application as application_module
 import planner as planner_facade
 from dino_bot.actions import AdbActionDriver, AdbClient, RecordingActionDriver
 from dino_bot.assets import create_template
 from dino_bot.cli import apply_run_timing, build_parser
-from dino_bot.config import AppConfig, ConfigError, load_config
+from dino_bot.config import AppConfig, ConfigError, WorkflowConfig, load_config
 from dino_bot.cull import CapacityRead
 from dino_bot.detection import (
     DetectorAssetError,
@@ -110,6 +111,65 @@ def test_config_requires_positive_empty_supply_recenter_frames(tmp_path: Path) -
         load_config(config_file)
 
 
+def test_config_defaults_custom_workflow_to_collect_hatch_and_hunt(
+    tmp_path: Path,
+) -> None:
+    config_file = tmp_path / "config.json"
+    config_file.write_text("{}", encoding="utf-8")
+
+    assert load_config(config_file).workflow.custom_stages == (
+        "collect",
+        "hatch",
+        "hunt",
+    )
+
+
+def test_config_accepts_selected_custom_workflow_in_safe_order(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.json"
+    config_file.write_text(
+        json.dumps(
+            {
+                "workflow": {
+                    "custom_stages": ["attack", "collect", "cave", "hatch", "hunt"]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert load_config(config_file).workflow.custom_stages == (
+        "attack",
+        "collect",
+        "cave",
+        "hatch",
+        "hunt",
+    )
+
+
+@pytest.mark.parametrize(
+    "stages",
+    [
+        [],
+        ["collect", "hatch"],
+        ["collect", "hunt"],
+        ["collect", "hatch", "hunt", "hunt"],
+        ["collect", "dance", "hatch", "hunt"],
+    ],
+)
+def test_config_rejects_unsafe_custom_workflow(
+    tmp_path: Path,
+    stages: list[str],
+) -> None:
+    config_file = tmp_path / "config.json"
+    config_file.write_text(
+        json.dumps({"workflow": {"custom_stages": stages}}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="workflow.custom_stages"):
+        load_config(config_file)
+
+
 def test_cli_fast_speed_profile_reduces_hunt_delays() -> None:
     config = AppConfig(
         root=Path("."),
@@ -164,6 +224,38 @@ def test_cli_leaves_speed_unset_for_config_default() -> None:
     assert args.speed is None
 
 
+def test_custom_workflow_wires_selected_stages_into_cooldown_cycle(
+    tmp_path: Path,
+) -> None:
+    config = AppConfig(
+        root=tmp_path,
+        workflow=WorkflowConfig(
+            custom_stages=("attack", "collect", "hatch", "hunt"),
+        ),
+    )
+    engine = object()
+
+    with patch.object(
+        application_module,
+        "_create_hatch_engine",
+        return_value=engine,
+    ) as create_hatch:
+        result = application_module.create_engine(
+            config,
+            verbose=True,
+            feature="custom-workflow",
+        )
+
+    assert result is engine
+    create_hatch.assert_called_once_with(
+        config,
+        verbose=True,
+        full=True,
+        hunt_during_cooldown=True,
+        enabled_stages=("attack", "collect", "hatch"),
+    )
+
+
 def test_s13_config_uses_adb_capture() -> None:
     config_path = Path(__file__).resolve().parents[1] / "instances" / "s13" / "config.json"
     config = load_config(config_path)
@@ -202,8 +294,13 @@ def test_s13_instance_allows_single_hatch_stages_without_changing_main() -> None
     }
 
     assert config_paths["main"] == "instances/s9/config.json"
-    assert modes["main"] == {"hunt", "hatch-hunt"}
-    assert modes["s13"] == {"hunt", "hatch-hunt", "hatch-stage"}
+    assert modes["main"] == {"hunt", "hatch-hunt", "custom-workflow"}
+    assert modes["s13"] == {
+        "hunt",
+        "hatch-hunt",
+        "custom-workflow",
+        "hatch-stage",
+    }
 
 
 def test_packaged_instance_config_inherits_shared_app_config(tmp_path: Path) -> None:

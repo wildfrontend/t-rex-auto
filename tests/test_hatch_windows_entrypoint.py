@@ -49,6 +49,12 @@ def test_hatch_runner_allows_dashboard_standalone_stages() -> None:
     assert '"hatch-stage-mass"' not in runner
 
 
+def test_hatch_runner_allows_custom_cooldown_workflow() -> None:
+    runner = (REPO / "scripts/windows/run-hatch-windows.ps1").read_text(encoding="utf-8")
+
+    assert '"custom-workflow"' in runner
+
+
 def test_windows_runners_wait_for_a_previous_bot_during_mode_switch() -> None:
     for script in ("run-windows.ps1", "run-hatch-windows.ps1"):
         runner = (REPO / "scripts/windows" / script).read_text(encoding="utf-8")

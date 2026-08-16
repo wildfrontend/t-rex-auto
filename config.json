@@ -286,6 +286,11 @@
   },
   "workflow": {
     "max_cycles": 0,
+    "custom_stages": [
+      "collect",
+      "hatch",
+      "hunt"
+    ],
     "complete_on": [
       "mail_reward_collect_button"
     ]

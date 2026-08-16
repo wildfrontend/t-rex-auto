@@ -47,6 +47,7 @@ only after that authorization:
 ```powershell
 ... -Action start-hunt       -Instance main -Confirm
 ... -Action start-hatch-hunt -Instance s13  -Confirm
+... -Action start-custom-workflow -Instance s13 -Confirm
 ... -Action start-stage-hp   -Instance s13  -Confirm
 ... -Action stop             -Instance s13  -Confirm
 ... -Action restart-bot      -Instance main -Confirm

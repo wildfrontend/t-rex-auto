@@ -146,6 +146,9 @@ STANDALONE_STAGES: frozenset[str] = frozenset(
     {"hatch", "attack", "hp", "collect", "cave"}
 )
 SCREENING_STAGES: tuple[str, ...] = ("attack", "hp", "top", "mass")
+FULL_HATCH_STAGES: frozenset[str] = frozenset(
+    {*SCREENING_STAGES, "collect", "cave", "hatch"}
+)
 
 PLACE_SORT_BEST = "hatch_place_sort_best"
 PLACE_SORT_LEVEL = "hatch_place_sort_level"
@@ -2045,6 +2048,7 @@ class FullHatchPlanner:
         home_recovery_snapshots: HomeRecoverySnapshot | None = None,
         stage_scoped_scan: bool = True,
         standalone_stage: str | None = None,
+        enabled_stages: Sequence[str] | None = None,
         logger: logging.Logger | None = None,
         clock: Callable[[], float] | None = None,
     ) -> None:
@@ -2079,6 +2083,22 @@ class FullHatchPlanner:
         if standalone_stage is not None and standalone_stage not in STANDALONE_STAGES:
             raise ValueError(f"unsupported standalone hatch stage: {standalone_stage}")
         self.standalone_stage = standalone_stage
+        selected_stages = (
+            FULL_HATCH_STAGES if enabled_stages is None else frozenset(enabled_stages)
+        )
+        unknown_stages = selected_stages - FULL_HATCH_STAGES
+        if unknown_stages:
+            raise ValueError(
+                "unsupported full hatch stages: " + ", ".join(sorted(unknown_stages))
+            )
+        if standalone_stage is None and "hatch" not in selected_stages:
+            raise ValueError("full hatch stages must include hatch")
+        self.enabled_stages = selected_stages
+        self._screening_stages = tuple(
+            stage for stage in SCREENING_STAGES if stage in selected_stages
+        )
+        self._collect_enabled = "collect" in selected_stages
+        self._cave_enabled = "cave" in selected_stages
         self.clock = clock or time.monotonic
         self._hatch_kwargs = dict(
             egg_pile_point=egg_pile_point,
@@ -2144,6 +2164,7 @@ class FullHatchPlanner:
         self._egg_pile_retry_pending = False
         self._autoplace_without_no_button = False
         self._screening_blocked = False
+        self._capacity_blocked = False
         self._screening_recovery_failures: dict[str, int] = {}
         self.completed_management_cycles = 0
         self._start_hatch_cycle()
@@ -2165,12 +2186,21 @@ class FullHatchPlanner:
     def is_complete(self) -> bool:
         # A standalone/full-only run has no hunt owner to fall back to. Stop
         # safely after calibration is blocked instead of spinning forever.
-        return self._complete or self._egg_pile_blocked or self._screening_blocked
+        return (
+            self._complete
+            or self._egg_pile_blocked
+            or self._screening_blocked
+            or self._capacity_blocked
+        )
 
     def is_hatch_blocked(self) -> bool:
-        """Whether egg-pile recovery exhausted its safe retry budget."""
+        """Whether calibration or a disabled safety stage blocks hatching."""
 
-        return self._egg_pile_blocked or self._screening_blocked
+        return (
+            self._egg_pile_blocked
+            or self._screening_blocked
+            or self._capacity_blocked
+        )
 
     def next_ready_delay_ms(self) -> int:
         method = getattr(self._child, "next_ready_delay_ms", None)
@@ -2225,7 +2255,7 @@ class FullHatchPlanner:
         沒有 observed 值時退回整段設定時間)。
         """
 
-        if not self.is_hunt_cooldown_active():
+        if not self._collect_enabled or not self.is_hunt_cooldown_active():
             return False
         if self._observed_cooldown_until is None:
             self._observed_cooldown_until = (
@@ -2277,6 +2307,7 @@ class FullHatchPlanner:
         self._egg_pile_capacity_rechecked = False
         self._egg_pile_retry_pending = False
         self._screening_blocked = False
+        self._capacity_blocked = False
         self._screening_recovery_failures.clear()
         if self.standalone_stage is not None:
             self._stage = "recover_home"
@@ -2434,18 +2465,38 @@ class FullHatchPlanner:
                             population=estimate,
                             cave_cleanup_after=capacity_trigger,
                         )
-                    self._enter_open_nest(collect_only=not management_trigger)
+                    if capacity_trigger and not self._cave_enabled:
+                        self._capacity_blocked = True
+                        self.logger.error(
+                            "Hatch custom | safe population reached but cave stage"
+                            " is disabled | estimate=%s/%d | switching to hunt",
+                            "?" if estimate is None else estimate,
+                            self.capacity_limit,
+                        )
+                        return
+                    if management_trigger:
+                        self._begin_queued_management()
+                    elif self._collect_enabled:
+                        self._enter_open_nest(collect_only=True)
+                    else:
+                        self._start_empty_rescan_wait()
                 else:
                     if self._collect_done_for_cycle:
                         # 加速回訪的收尾:本週期已收過蛋,直接進入等待。
                         self._collect_done_for_cycle = False
                         self._start_empty_rescan_wait()
                         return
-                    self.logger.info(
-                        "Hatch full | no ready incubator eggs | "
-                        "collect all nest eggs before cooldown"
-                    )
-                    self._enter_open_nest(collect_only=True)
+                    if self._collect_enabled:
+                        self.logger.info(
+                            "Hatch full | no ready incubator eggs | "
+                            "collect all nest eggs before cooldown"
+                        )
+                        self._enter_open_nest(collect_only=True)
+                    else:
+                        self.logger.info(
+                            "Hatch custom | collect stage disabled | entering cooldown"
+                        )
+                        self._start_empty_rescan_wait()
             return
         if self._stage == "open_nest" and target_type == OPEN_NEST:
             if self.standalone_stage is not None:
@@ -3017,26 +3068,29 @@ class FullHatchPlanner:
                     self._egg_pile_capacity_check_pending = False
                     self._egg_pile_capacity_rechecked = False
                     self._egg_pile_retry_pending = False
-                    self._stage = "open_nest"
-                    self._child = object()
-                    self._collect_only_after_empty = False
-                    self._no_target_since = None
+                    if self._capacity_blocked:
+                        return None
+                    self._begin_queued_management()
                     return self._choose_current(frame, detections)
                 self._capacity_checked = True
                 if self._screening_baseline_population is None:
                     self.logger.info(
-                        "Hatch capacity | starting initial screening | capacity=%d/%d",
+                        "Hatch capacity | starting initial selected management"
+                        " | capacity=%d/%d | stages=%s",
                         self._cave_population,
                         self.capacity_limit,
+                        ",".join(
+                            stage
+                            for stage in (*self._screening_stages, "collect")
+                            if stage in self.enabled_stages
+                        )
+                        or "none",
                     )
                     self._queue_management(
                         population=self._cave_population,
                         cave_cleanup_after=False,
                     )
-                    self._stage = "open_nest"
-                    self._child = object()
-                    self._collect_only_after_empty = False
-                    self._no_target_since = None
+                    self._begin_queued_management()
                     return self._choose_current(frame, detections)
                 if self._egg_pile_capacity_check_pending:
                     self._egg_pile_capacity_check_pending = False
@@ -3274,6 +3328,13 @@ class FullHatchPlanner:
     def _start_cave_cleanup(self) -> None:
         """Enter the guarded cave cleanup stage after collection is complete."""
 
+        if not self._cave_enabled:
+            self._capacity_blocked = True
+            self.logger.error(
+                "Hatch custom | cave cleanup required but cave stage is disabled"
+                " | switching to hunt"
+            )
+            return
         self.logger.info(
             "Hatch full | screening gate passed; cave cleanup permitted"
             " | completed=%s",
@@ -3305,6 +3366,17 @@ class FullHatchPlanner:
         self._pending_screening_population = population
         self._cave_cleanup_after_management = cave_cleanup_after
         self._screening_completed.clear()
+
+    def _begin_queued_management(self) -> None:
+        """Start only the selected safe management stages for this cycle."""
+
+        if self._screening_stages or self._collect_enabled:
+            self._enter_open_nest(collect_only=False)
+            return
+        if self._cave_cleanup_after_management:
+            self._start_cave_cleanup()
+            return
+        self._finish_management_after_collection()
 
     def _finish_management_after_collection(self) -> None:
         """Continue after a completed screening and its egg collection."""
@@ -3341,11 +3413,20 @@ class FullHatchPlanner:
         self._cave_population = reading
         self._hatched_since_cave_read = 0
         if child.cull_required:
+            if not self._cave_enabled:
+                self._capacity_blocked = True
+                self.logger.error(
+                    "Hatch custom | capacity=%d/%d requires cleanup, but cave"
+                    " stage is disabled | hatching stopped; hunt remains active",
+                    reading,
+                    self.capacity_limit,
+                )
+                return
             if not self._management_pending:
                 self.logger.warning(
                     "Hatch capacity | cleanup blocked until screening completes"
                     " | required=%s",
-                    self._format_screening_stages(SCREENING_STAGES),
+                    self._format_screening_stages(self._screening_stages),
                 )
                 self._queue_management(
                     population=reading,
@@ -3562,7 +3643,11 @@ class FullHatchPlanner:
                 "Hatch full | screening complete | completed=%s",
                 self._format_screening_stages(self._screening_completed),
             )
-            self._start_collect()
+            if self._collect_enabled:
+                self._start_collect()
+            else:
+                self.logger.info("Hatch custom | collect stage disabled | skipping")
+                self._finish_management_after_collection()
             return
         next_stage = missing[0]
         self.logger.info(
@@ -3583,7 +3668,7 @@ class FullHatchPlanner:
 
     def _missing_screening_stages(self) -> tuple[str, ...]:
         return tuple(
-            stage for stage in SCREENING_STAGES
+            stage for stage in self._screening_stages
             if stage not in self._screening_completed
         )
 

@@ -144,7 +144,27 @@
           <h3>控制指令</h3>
           <div class="control-group">
             <button class="primary" data-action="start-hatch-hunt" data-mode="hatch-hunt">啟動孵蛋＋狩獵</button>
+            <button data-action="start-custom-workflow" data-mode="custom-workflow">啟動自訂循環</button>
             <button data-action="start-hunt" data-mode="hunt">啟動純狩獵</button>
+          </div>
+          <div class="inventory-control custom-workflow-control">
+            <div>
+              <span>自訂循環流程</span>
+              <strong id="customWorkflowSummary">收集巢蛋 → 孵蛋 → 狩獵</strong>
+              <small>依安全順序執行；孵蛋冷卻期間狩獵，到期後自動循環</small>
+              <small>關閉洞穴時，達安全人口會停止孵化並只繼續狩獵</small>
+            </div>
+            <div class="workflow-stage-options" aria-label="自訂流程階段">
+              <label><input type="checkbox" data-custom-stage="attack">攻擊親代</label>
+              <label><input type="checkbox" data-custom-stage="hp">HP 親代</label>
+              <label><input type="checkbox" data-custom-stage="top">頂尖配置</label>
+              <label><input type="checkbox" data-custom-stage="mass">量產配置</label>
+              <label><input type="checkbox" data-custom-stage="collect">收集巢蛋</label>
+              <label><input type="checkbox" data-custom-stage="cave">洞穴淘汰</label>
+              <label><input type="checkbox" data-custom-stage="hatch" checked disabled>孵蛋（循環必要）</label>
+              <label><input type="checkbox" data-custom-stage="hunt" checked disabled>狩獵（循環必要）</label>
+            </div>
+            <button id="customWorkflowSave" type="button">儲存自訂流程</button>
           </div>
           <div class="inventory-control">
             <div>

@@ -76,6 +76,16 @@ def create_engine(
             full=True,
             hunt_during_cooldown=True,
         )
+    if feature == "custom-workflow":
+        return _create_hatch_engine(
+            config,
+            verbose=verbose,
+            full=True,
+            hunt_during_cooldown=True,
+            enabled_stages=tuple(
+                stage for stage in config.workflow.custom_stages if stage != "hunt"
+            ),
+        )
     if feature == "hatch-filter-test":
         return _create_hatch_engine(config, verbose=verbose, filter_test=True)
     if feature == "hatch-sort-test":
@@ -305,6 +315,7 @@ def _create_hatch_engine(
     full: bool = False,
     hunt_during_cooldown: bool = False,
     standalone_stage: str | None = None,
+    enabled_stages: tuple[str, ...] | None = None,
 ) -> BotEngine:
     """Wire the Auto Hatch feature onto the shared capture/act/verify core.
 
@@ -326,6 +337,11 @@ def _create_hatch_engine(
         logger.info(
             "Feature | hatch-stage | stage=%s | bounded preflight + run + return",
             standalone_stage,
+        )
+    elif enabled_stages is not None:
+        logger.info(
+            "Feature | custom-workflow | stages=%s | cooldown cycle | handoff=30s",
+            ",".join((*enabled_stages, "hunt")),
         )
     elif hunt_during_cooldown:
         logger.info(
@@ -501,6 +517,7 @@ def _create_hatch_engine(
             home_recovery_snapshots=home_recovery_snapshots,
             stage_scoped_scan=config.planner.stage_scoped_scan,
             standalone_stage=standalone_stage,
+            enabled_stages=enabled_stages,
             logger=logger,
         )
         planner = (
