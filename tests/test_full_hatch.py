@@ -1928,6 +1928,31 @@ def test_home_recovery_uses_forest_round_trip_when_home_anchor_is_clipped() -> N
     assert target is not None and target.type == RECOVERY_MAP_EXIT
 
 
+def test_home_recovery_keeps_correcting_a_damped_but_converging_camera_move() -> None:
+    """S13 needs more than two measured drags when the camera damps a swipe.
+
+    The production trace reduced the vertical offset from 474px to 227px,
+    then 161px.  Each move was safe and measurably better, but the old two
+    move budget diverted into the Forest round trip before the next measured
+    correction could finish centring the visible home pile.
+    """
+
+    def shifted_home(offset_y: int) -> Frame:
+        image = np.full((1600, 900, 3), 255, dtype=np.uint8)
+        image[1448 - offset_y : 1460 - offset_y, 330:573] = (220, 180, 20)
+        return frame(image)
+
+    planner = HatchHomeRecoveryPlanner()
+    home = [
+        detection(hatch.HOME_ANCHOR, 59, 561),
+        detection("forest_recenter_button", 841, 1296),
+    ]
+    for offset_y in (474, 227, 161):
+        target = planner.choose(shifted_home(offset_y), home)
+        assert target is not None and target.type == RECOVERY_RECENTER
+        planner.on_action_success(target.type)
+
+
 def _forest_round_trip(planner: HatchHomeRecoveryPlanner) -> str | None:
     """Run one home -> forest -> home cycle; return the map-switch target used.
 

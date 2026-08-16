@@ -891,7 +891,12 @@ class HatchHomeRecoveryPlanner:
         max_back_attempts: int = 2,
         required_home_frames: int = 2,
         max_forest_trips: int = 1,
-        max_measured_corrections: int = 2,
+        # ADB map drags can be damped by the game's camera inertia.  The S13
+        # recovery trace reduced a 474px vertical error to 161px in two
+        # strictly improving moves, but two was not enough to cross the 100px
+        # acceptance tolerance.  Four remains bounded; a non-improving move
+        # still stops immediately below rather than spending the extra budget.
+        max_measured_corrections: int = 4,
         max_hunt_dialog_dismissals: int = 3,
     ) -> None:
         self.reference_width = reference_width
