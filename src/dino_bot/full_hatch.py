@@ -348,6 +348,15 @@ LAVA_BASE_MIN_AREA = 8_000.0
 LAVA_BASE_WIDTH_RANGE = (190.0, 280.0)
 LAVA_BASE_HEIGHT_RANGE = (110.0, 220.0)
 LAVA_BASE_BOTTOM_INSET = 18.0
+# The S13 growth-stage pile uses desaturated blue stone.  Its coloured strip
+# is narrower and bluer than the upgraded cyan basin, but unlike the generic
+# dark-structure fallback it cannot merge with roaming dinosaurs below the
+# pile.  Production pixels sit tightly around OpenCV hue 108.
+BLUE_STONE_HSV_LOWER = (100, 70, 70)
+BLUE_STONE_HSV_UPPER = (120, 255, 255)
+BLUE_STONE_MIN_AREA = 1_000.0
+BLUE_STONE_WIDTH_RANGE = (120.0, 280.0)
+BLUE_STONE_HEIGHT_RANGE = (25.0, 120.0)
 _HOME_BASE_TEMPLATE_PATH = (
     Path(__file__).resolve().parents[2]
     / "assets"
@@ -769,6 +778,40 @@ def _lava_base_center(frame: Frame) -> tuple[float, float] | None:
     )
 
 
+def _blue_stone_base_center(frame: Frame) -> tuple[float, float] | None:
+    """Locate the S13 blue-stone growth-stage base by its stable colour."""
+
+    image = frame.image
+    if image.size == 0:
+        return None
+    scale = frame.width / 900.0
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    blue = cv2.inRange(hsv, BLUE_STONE_HSV_LOWER, BLUE_STONE_HSV_UPPER)
+    count, _, stats, centers = cv2.connectedComponentsWithStats(blue)
+    candidates: list[tuple[int, float, float]] = []
+    for index in range(1, count):
+        x, y, width, height, area = map(int, stats[index])
+        center_x, center_y = centers[index]
+        if (
+            area >= BLUE_STONE_MIN_AREA * scale * scale
+            and BLUE_STONE_WIDTH_RANGE[0] * scale
+            <= width
+            <= BLUE_STONE_WIDTH_RANGE[1] * scale
+            and BLUE_STONE_HEIGHT_RANGE[0] * scale
+            <= height
+            <= BLUE_STONE_HEIGHT_RANGE[1] * scale
+            and y >= 650 * scale
+            and 150 * scale <= center_x <= 750 * scale
+        ):
+            candidates.append((area, float(center_x), float(center_y)))
+    if not candidates:
+        return None
+    # The main pile is the lowest qualifying wide blue base.  Small fixed
+    # nests and blue map decorations fail the width/area gates above.
+    _, center_x, center_y = max(candidates, key=lambda item: (item[2], item[0]))
+    return center_x, center_y
+
+
 def _egg_pile_base_center(frame: Frame) -> tuple[float, float] | None:
     """Locate the stable base of the variable-looking home egg pile."""
 
@@ -791,25 +834,24 @@ def _egg_pile_base_center(frame: Frame) -> tuple[float, float] | None:
             candidates.append((float(center_x), float(center_y)))
     if candidates:
         return max(candidates, key=lambda center: center[1])
+    blue_stone = _blue_stone_base_center(frame)
+    if blue_stone is not None:
+        return blue_stone
     lava = _lava_base_center(frame)
     if lava is not None:
         return lava
     straw = _straw_base_center(frame)
     if straw is not None:
         return straw
-    # Newer accounts can use a blue-stone base whose hue falls outside the
-    # calibrated cyan band.  The shared structure locator is deliberately
-    # last: known skins keep their more precise anchors, while an unknown skin
-    # still provides a measured recovery offset and a safe dynamic tap.
-    return hatch_feature.home_pile_structure_base(
-        frame,
-        egg_pile_point=(450.0, 1330.0),
-        reference_width=900.0,
-    )
+    # Never use the style-neutral dark structure as a camera measurement.  On
+    # crowded S13 screens it joins the pile to moving dinosaurs, shifting the
+    # reported base by hundreds of pixels between frames.  An unknown future
+    # style must fail closed until it gets its own stable visual anchor.
+    return None
 
 
 def _egg_pile_safe_tap(frame: Frame) -> tuple[int, int] | None:
-    """Choose a point on the eggs from the pile's stable cyan base.
+    """Choose a point on the eggs from a known stable pile base.
 
     Cave-return swipes do not always move the map by exactly the requested
     distance.  A fixed home coordinate can consequently land just above the

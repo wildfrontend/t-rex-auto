@@ -1222,14 +1222,14 @@ def lava_home_frame(dx: int = 0, dy: int = 0) -> Frame:
 
 
 def blue_stone_home_frame(dx: int = 0, dy: int = 0) -> Frame:
-    """An unknown nest skin matching the shifted S13 base geometry."""
+    """The desaturated blue-stone growth stage used by S13."""
 
     image = np.full((1600, 900, 3), 255, dtype=np.uint8)
     cv2.rectangle(
         image,
-        (330 + dx, 1320 + dy),
-        (570 + dx, 1454 + dy),
-        (180, 60, 20),
+        (375 + dx, 1427 + dy),
+        (525 + dx, 1483 + dy),
+        (212, 149, 108),
         thickness=-1,
     )
     return Frame(image)
@@ -1289,7 +1289,7 @@ def test_lava_nest_base_measures_a_shifted_home() -> None:
     assert 118 <= offset[1] <= 122
 
 
-def test_unknown_blue_stone_base_is_measured_without_a_skin_template() -> None:
+def test_blue_stone_base_is_measured_by_stable_colour() -> None:
     centered = blue_stone_home_frame()
     offset = home_pile_offset(centered)
     assert offset is not None
@@ -1316,18 +1316,30 @@ def test_shifted_blue_stone_base_is_not_accepted_as_centered_home() -> None:
     )
 
 
+def test_blue_stone_measurement_ignores_dark_roaming_dinosaur_group() -> None:
+    shifted = blue_stone_home_frame(dy=-500)
+    # A large dark connected group below the pile satisfies the old generic
+    # structure fallback and changes shape as dinosaurs roam.  The blue-stone
+    # colour anchor must remain tied to the pile itself.
+    cv2.rectangle(shifted.image, (300, 1050), (650, 1260), (40, 40, 40), -1)
+
+    offset = home_pile_offset(shifted)
+
+    assert offset is not None
+    assert abs(offset[0]) <= 1
+    assert 499 <= offset[1] <= 501
+
+
 def test_regular_small_orange_nest_is_not_a_home_base() -> None:
     image = np.full((1600, 900, 3), 255, dtype=np.uint8)
     cv2.rectangle(image, (709, 869), (861, 966), (20, 90, 220), thickness=-1)
     assert home_pile_offset(Frame(image)) is None
 
 
-def test_home_base_template_absence_uses_style_neutral_fallback(tmp_path) -> None:
+def test_home_base_template_absence_fails_closed_for_unknown_style(tmp_path) -> None:
     set_home_base_template(tmp_path / "missing.png")
     try:
-        offset = home_pile_offset(straw_home_frame())
-        assert offset is not None
-        assert max(abs(offset[0]), abs(offset[1])) <= 30
+        assert home_pile_offset(straw_home_frame()) is None
         assert home_pile_offset(frame()) is not None
     finally:
         set_home_base_template(None)
