@@ -4,7 +4,12 @@ set -euo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 app_root="$(cd -- "${script_dir}/.." && pwd)"
+runtime_root="$(cd -- "${app_root}/.." && pwd)"
 python_executable="${app_root}/.venv/bin/python"
+s9_config="${runtime_root}/instances/s9/config.json"
+if [[ ! -f "${s9_config}" ]]; then
+  s9_config="${app_root}/config.json"
+fi
 speed="${1:-fast}"
 status_port="${2:-8765}"
 
@@ -35,7 +40,7 @@ cd "${app_root}"
 exec /usr/bin/caffeinate -i \
   "${python_executable}" \
   "${app_root}/main.py" \
-  --config "${app_root}/config.json" \
+  --config "${s9_config}" \
   run \
   --mode runtime \
   --speed "${speed}" \

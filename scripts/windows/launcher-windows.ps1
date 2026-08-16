@@ -22,7 +22,12 @@ $AppRoot = Split-Path -Parent $PSScriptRoot
 $RuntimeRoot = Split-Path -Parent $AppRoot
 $RunnerScript = Join-Path $PSScriptRoot "run-windows.ps1"
 $LogRoot = Join-Path $AppRoot "logs"
-$ConfigPath = Join-Path $AppRoot "config.json"
+$S9ConfigPath = Join-Path $RuntimeRoot "instances\s9\config.json"
+$ConfigPath = if (Test-Path -LiteralPath $S9ConfigPath) {
+    $S9ConfigPath
+} else {
+    Join-Path $AppRoot "config.json"
+}
 $UserSettingsPath = Join-Path $RuntimeRoot "user-settings.json"
 $Host.UI.RawUI.WindowTitle = "猛龍計畫 - 互動控制台"
 
@@ -503,7 +508,7 @@ function Invoke-EnvironmentCheck {
     try {
         & $PythonExecutable `
             (Join-Path $AppRoot "main.py") `
-            "--config" (Join-Path $AppRoot "config.json") `
+            "--config" $ConfigPath `
             "doctor"
         $DoctorExitCode = $LASTEXITCODE
     } finally {
@@ -730,7 +735,7 @@ function Export-CodexDiagnosticBundle {
     $PythonExecutable = Resolve-PythonExecutable
     $DiagnosticArguments = @(
         (Join-Path $AppRoot "main.py"),
-        "--config", (Join-Path $AppRoot "config.json"),
+        "--config", $ConfigPath,
         "diagnostics"
     )
     if ($IncludeScreenshot) {
@@ -770,7 +775,7 @@ function Invoke-Diagnostics {
             $Output = Join-Path $AppRoot ("debug\manual-" + (Get-Date -Format "yyyyMMdd-HHmmss") + ".png")
             & $PythonExecutable `
                 (Join-Path $AppRoot "main.py") `
-                "--config" (Join-Path $AppRoot "config.json") `
+                "--config" $ConfigPath `
                 "snapshot" "--backend" "adb" "--output" $Output
             if ($LASTEXITCODE -eq 0) {
                 Write-Host "畫面已儲存：$Output" -ForegroundColor Green

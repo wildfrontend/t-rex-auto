@@ -3,7 +3,7 @@
     {
       "id": "main",
       "name": "S9",
-      "config": "app/config.json",
+      "config": "instances/s9/config.json",
       "status_port": 8765,
       "allowed_modes": ["hunt", "hatch-hunt"]
     },

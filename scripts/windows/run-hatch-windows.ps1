@@ -44,7 +44,12 @@ $AppRoot = Split-Path -Parent $PSScriptRoot
 $RuntimeRoot = Split-Path -Parent $AppRoot
 $PythonExecutable = Join-Path $RuntimeRoot "python\python.exe"
 $MainScript = Join-Path $AppRoot "main.py"
-$DefaultConfigPath = Join-Path $AppRoot "config.json"
+$S9ConfigPath = Join-Path $RuntimeRoot "instances\s9\config.json"
+$DefaultConfigPath = if (Test-Path -LiteralPath $S9ConfigPath) {
+    $S9ConfigPath
+} else {
+    Join-Path $AppRoot "config.json"
+}
 if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
     $ConfigPath = $DefaultConfigPath
 } else {

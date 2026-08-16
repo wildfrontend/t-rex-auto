@@ -5,6 +5,10 @@ set -euo pipefail
 runtime_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 app_root="${runtime_root}/app"
 runtime_python="${app_root}/.venv/bin/python"
+s9_config="${runtime_root}/instances/s9/config.json"
+if [[ ! -f "${s9_config}" ]]; then
+  s9_config="${app_root}/config.json"
+fi
 speed="${1:-fast}"
 status_port="${2:-8765}"
 
@@ -18,7 +22,7 @@ fi
 echo
 echo "正在檢查 Python、ADB、裝置與辨識素材……"
 if ! "${runtime_python}" "${app_root}/main.py" \
-  --config "${app_root}/config.json" doctor; then
+  --config "${s9_config}" doctor; then
   echo
   echo "環境檢查失敗，Bot 未啟動。"
   if [[ -t 0 ]]; then

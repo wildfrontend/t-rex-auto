@@ -108,9 +108,13 @@ cp -a \
   "${project_root}/tools" \
   "${package_app}/"
 
-# Keep additional instance roots aligned with the Lite package.  Each
-# instance needs its own config and assets so its runtime logs/data remain
-# isolated and its detector can resolve templates from that root.
+# Keep instance roots aligned with the Lite package.  Each instance needs its
+# own config and assets so its runtime logs/data remain isolated and its
+# detector can resolve templates from that root.
+package_s9="${package_root}/instances/s9"
+mkdir -p "${package_s9}"
+cp -a "${project_root}/instances/s9/config.json" "${package_s9}/config.json"
+cp -a "${project_root}/assets" "${package_s9}/assets"
 package_s13="${package_root}/instances/s13"
 mkdir -p "${package_s13}"
 cp -a "${project_root}/instances/s13/config.json" "${package_s13}/config.json"

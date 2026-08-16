@@ -34,7 +34,8 @@ ALLOWED_MAIN_SCRIPTS = frozenset(
         (DEPLOYED_APP_ROOT / "main.py").resolve(),
     }
 )
-CONFIG_FILE = APP_ROOT / "config.json"
+S9_CONFIG_FILE = APP_ROOT.parent / "instances" / "s9" / "config.json"
+CONFIG_FILE = S9_CONFIG_FILE if S9_CONFIG_FILE.is_file() else APP_ROOT / "config.json"
 LOG_FILE = APP_ROOT / "logs" / "macos-launcher.log"
 SERVICE_NAME = "dino-mutant-bot-status"
 

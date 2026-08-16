@@ -20,7 +20,12 @@ $RuntimeRoot = Split-Path -Parent $AppRoot
 $LauncherScript = Join-Path $PSScriptRoot "launcher-windows.ps1"
 $ApiRoot = "http://127.0.0.1:$StatusPort"
 $MainScript = Join-Path $AppRoot "main.py"
-$ConfigPath = Join-Path $AppRoot "config.json"
+$S9ConfigPath = Join-Path $RuntimeRoot "instances\s9\config.json"
+$ConfigPath = if (Test-Path -LiteralPath $S9ConfigPath) {
+    $S9ConfigPath
+} else {
+    Join-Path $AppRoot "config.json"
+}
 $StopWaitSeconds = 20
 $StartWaitSeconds = 60
 
@@ -429,7 +434,7 @@ try {
         $PythonExecutable = Resolve-PythonExecutable
         & $PythonExecutable `
             (Join-Path $AppRoot "main.py") `
-            "--config" (Join-Path $AppRoot "config.json") `
+            "--config" $ConfigPath `
             "doctor"
         exit $LASTEXITCODE
     } elseif ($Action -eq "diagnostics") {
@@ -439,7 +444,7 @@ try {
         )
         & $PythonExecutable `
             (Join-Path $AppRoot "main.py") `
-            "--config" (Join-Path $AppRoot "config.json") `
+            "--config" $ConfigPath `
             "diagnostics" "--include-screenshot" "--output" $BundlePath | Out-Null
         if ($LASTEXITCODE -ne 0) {
             throw "Diagnostic bundle creation failed"
@@ -455,7 +460,7 @@ try {
         $Output = Join-Path $AppRoot ("debug\ai-" + (Get-Date -Format "yyyyMMdd-HHmmss") + ".png")
         & $PythonExecutable `
             (Join-Path $AppRoot "main.py") `
-            "--config" (Join-Path $AppRoot "config.json") `
+            "--config" $ConfigPath `
             "snapshot" "--backend" "adb" "--output" $Output
         if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE

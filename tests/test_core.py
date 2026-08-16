@@ -170,14 +170,24 @@ def test_s13_config_uses_adb_capture() -> None:
 
     assert config.adb.serial == "127.0.0.1:16416"
     assert config.capture.backend == "adb"
-    # 容量上限跟著帳號進度走，讀到的分母必須與設定相符才會被採信：S13 升到 250 後，
-    # 留在 200 的設定讓每一次 preflight 都以 unexpected_capacity 收場。
-    assert config.hatch.capacity_limit == 250
-    assert config.hatch.cull_threshold == 200
+    # 容量上限跟著帳號進度走，讀到的分母必須與設定相符才會被採信：S13 已升到 300，
+    # 留在 250 的設定讓每一次 preflight 都以 unexpected_capacity 收場。
+    assert config.hatch.capacity_limit == 300
+    assert config.hatch.cull_threshold == 260
     assert "forest_recenter_button" in config.planner.target_types
     assert "dinosaur" in config.planner.target_types
     assert config.planner.blocking_types == ("duplicate_hunt_alert",)
     assert config.planner.deduplicate_types == ("dinosaur",)
+
+
+def test_s9_config_inherits_the_shared_windows_base() -> None:
+    config_path = Path(__file__).resolve().parents[1] / "instances" / "s9" / "config.json"
+    config = load_config(config_path)
+
+    assert config.adb.serial == "127.0.0.1:16384"
+    assert config.capture.backend == "adb"
+    assert config.root == config_path.parent
+    assert config.detector.manifest == config_path.parent / "assets" / "manifest.json"
 
 
 def test_s13_instance_allows_single_hatch_stages_without_changing_main() -> None:
@@ -187,7 +197,11 @@ def test_s13_instance_allows_single_hatch_stages_without_changing_main() -> None
         instance["id"]: set(instance["allowed_modes"])
         for instance in registry["instances"]
     }
+    config_paths = {
+        instance["id"]: instance["config"] for instance in registry["instances"]
+    }
 
+    assert config_paths["main"] == "instances/s9/config.json"
     assert modes["main"] == {"hunt", "hatch-hunt"}
     assert modes["s13"] == {"hunt", "hatch-hunt", "hatch-stage"}
 

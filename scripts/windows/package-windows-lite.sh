@@ -33,8 +33,12 @@ cp -a \
   "${project_root}/tools" \
   "${package_app}/"
 
-# Every extra instance owns its config root.  Logs, data, screenshots and
-# templates then remain isolated instead of interleaving in app/logs.
+# Every instance owns its config root.  Logs, data, screenshots and templates
+# then remain isolated instead of interleaving in app/logs.
+package_s9="${package_root}/instances/s9"
+mkdir -p "${package_s9}"
+cp -a "${project_root}/instances/s9/config.json" "${package_s9}/config.json"
+cp -a "${project_root}/assets" "${package_s9}/assets"
 package_s13="${package_root}/instances/s13"
 mkdir -p "${package_s13}"
 cp -a "${project_root}/instances/s13/config.json" "${package_s13}/config.json"
