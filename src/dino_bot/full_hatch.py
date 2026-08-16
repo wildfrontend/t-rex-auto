@@ -919,9 +919,12 @@ class HatchHomeRecoveryPlanner:
         self._last_offset: tuple[float, float] | None = None
         self._autoplace_notice_without_no = False
         self._applied_swipes: list[tuple[int, int, int, int]] = []
-        self._undone_swipes = 0
+        self._applied_offsets: list[tuple[float, float] | None] = []
         self._pending_swipe: tuple[int, int, int, int] | None = None
+        self._pending_measured_offset: tuple[float, float] | None = None
+        self._pending_undo_swipe: tuple[int, int, int, int] | None = None
         self._pending_cave_leg = False
+        self._missing_measured_landmark_frames = 0
         self._complete = False
         self._failed = False
 
@@ -951,17 +954,39 @@ class HatchHomeRecoveryPlanner:
                 # loses the home reference can only be undone by replaying the
                 # exact vector backwards.
                 self._applied_swipes.append(self._pending_swipe)
+                self._applied_offsets.append(self._pending_measured_offset)
         elif target_type == RECOVERY_UNDO:
-            self._undone_swipes += 1
+            # Treat successful corrections as a real LIFO stack.  A numeric
+            # "undo count" is not sufficient: after undoing B and applying C,
+            # the next rollback must remove C, not select B a second time.
+            if (
+                self._pending_undo_swipe is not None
+                and self._applied_swipes
+                and self._applied_swipes[-1] == self._pending_undo_swipe
+            ):
+                self._applied_swipes.pop()
+                self._applied_offsets.pop()
+                self._last_offset = next(
+                    (
+                        offset
+                        for offset in reversed(self._applied_offsets)
+                        if offset is not None
+                    ),
+                    None,
+                )
         elif target_type == RECOVERY_FOREST:
             self._forest_trips += 1
         self._pending_swipe = None
+        self._pending_measured_offset = None
+        self._pending_undo_swipe = None
         self._pending_cave_leg = False
         self._stage = f"verify_{target_type}"
 
     def on_action_failure(self, target_type: str) -> None:
         self.logger.error("Hatch recovery | action failed | target=%s", target_type)
         self._pending_swipe = None
+        self._pending_measured_offset = None
+        self._pending_undo_swipe = None
         self._pending_cave_leg = False
         self._stage = f"failed_{target_type}"
         self._failed = True
@@ -1128,6 +1153,33 @@ class HatchHomeRecoveryPlanner:
             return recenter
 
         forest = _best(by_type.get(FOREST_RECENTER))
+        if forest is not None and notice_misread and any(
+            offset is not None for offset in self._applied_offsets
+        ):
+            # The Forest control proves this is still the home map.  Directly
+            # after a measured drag, the pile can be hidden for one scan by a
+            # task toast or camera animation.  Entering Forest here destroys
+            # the continuity of the measurements and previously led to an
+            # unnecessary rollback.  Give the same map two settled scans,
+            # then reverse only the latest correction if its landmark really
+            # did disappear.
+            self._missing_measured_landmark_frames += 1
+            if self._missing_measured_landmark_frames <= 2:
+                self._stage = (
+                    "await_measured_landmark_"
+                    f"{self._missing_measured_landmark_frames}/2"
+                )
+                self.logger.info(
+                    "Hatch recovery | measured landmark temporarily hidden"
+                    " | waiting on the home map | frame=%d/2",
+                    self._missing_measured_landmark_frames,
+                )
+                return None
+            undo = self._undo_target(
+                reason="measured landmark stayed hidden on the home map"
+            )
+            if undo is not None:
+                return undo
         if forest is not None and self._forest_trips < self.max_forest_trips:
             # The bottom-right Forest button survives positions where the
             # hatch home anchor is clipped off-screen. Entering Forest and
@@ -1175,11 +1227,13 @@ class HatchHomeRecoveryPlanner:
         y2: int,
         *,
         cave_leg: bool = False,
+        measured_offset: tuple[float, float] | None = None,
     ) -> Target:
         """Issue a camera gesture, holding it until the action is confirmed."""
 
         if target_type == RECOVERY_RECENTER:
             self._pending_swipe = (x1, y1, x2, y2)
+            self._pending_measured_offset = measured_offset
             self._pending_cave_leg = cave_leg
         return _swipe_target(target_type, x1, y1, x2, y2)
 
@@ -1217,6 +1271,7 @@ class HatchHomeRecoveryPlanner:
         offset = home_pile_offset(frame)
         if offset is None:
             return None
+        self._missing_measured_landmark_frames = 0
         scale = frame.width / 900.0
         pile_structure = hatch_feature.home_pile_structure_base(
             frame,
@@ -1240,9 +1295,9 @@ class HatchHomeRecoveryPlanner:
             self._last_offset is not None
             and _hypot(offset) >= _hypot(self._last_offset)
         ):
-            # Two corrections that do not converge mean the map is not
-            # responding to the gesture the way the measurement assumes.
-            # Repeating it walks the camera further from home, not closer.
+            # The latest correction did not converge.  Reverse that exact
+            # gesture before trying another measurement; continuing from the
+            # regressed camera position walks the map further from home.
             self.logger.error(
                 "Hatch recovery | measured correction did not reduce the offset"
                 " | before=(%.0f,%.0f) | after=(%.0f,%.0f)",
@@ -1251,7 +1306,7 @@ class HatchHomeRecoveryPlanner:
                 offset[0],
                 offset[1],
             )
-            return None
+            return self._undo_target(reason="measured correction regressed")
         if self._measured_corrections >= self.max_measured_corrections:
             self.logger.error(
                 "Hatch recovery | egg pile still off by (%.0f,%.0f)px"
@@ -1280,7 +1335,14 @@ class HatchHomeRecoveryPlanner:
             self._measured_corrections,
             self.max_measured_corrections,
         )
-        return self._swipe(RECOVERY_RECENTER, x1, y1, x2, y2)
+        return self._swipe(
+            RECOVERY_RECENTER,
+            x1,
+            y1,
+            x2,
+            y2,
+            measured_offset=offset,
+        )
 
     def _nudge(
         self,
@@ -1307,7 +1369,7 @@ class HatchHomeRecoveryPlanner:
         y1, y2 = leg(frame.height, dy)
         return x1, y1, x2, y2
 
-    def _undo_target(self) -> Target | None:
+    def _undo_target(self, *, reason: str = "no home landmark") -> Target | None:
         """Reverse this planner's own camera move once the landmarks are gone.
 
         Every branch that can prove or measure the home position needs either
@@ -1318,15 +1380,15 @@ class HatchHomeRecoveryPlanner:
         restores something to measure against.
         """
 
-        if self._undone_swipes >= len(self._applied_swipes):
+        if not self._applied_swipes:
             return None
-        x1, y1, x2, y2 = self._applied_swipes[-1 - self._undone_swipes]
-        self._stage = (
-            f"undo_recenter_{self._undone_swipes + 1}/{len(self._applied_swipes)}"
-        )
+        x1, y1, x2, y2 = self._applied_swipes[-1]
+        self._pending_undo_swipe = self._applied_swipes[-1]
+        self._stage = f"undo_recenter_latest/{len(self._applied_swipes)}"
         self.logger.warning(
-            "Hatch recovery | no home landmark after own camera move"
+            "Hatch recovery | %s after own camera move"
             " | replaying (%d,%d)->(%d,%d) backwards",
+            reason,
             x1,
             y1,
             x2,

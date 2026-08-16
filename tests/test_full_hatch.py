@@ -1947,6 +1947,31 @@ def test_home_recovery_ignores_a_notice_without_no_button_and_recenters() -> Non
     assert not planner.is_failed()
 
 
+def test_home_recovery_waits_when_task_toast_hides_a_measured_pile() -> None:
+    """A transient task toast must not interrupt one coordinate system."""
+
+    planner = HatchHomeRecoveryPlanner()
+    shifted = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    shifted[974:986, 330:573] = (220, 180, 20)
+    home = [detection(hatch.HOME_ANCHOR, 59, 561)]
+
+    nudge = planner.choose(frame(shifted), home)
+    assert nudge is not None and nudge.type == RECOVERY_RECENTER
+    planner.on_action_success(nudge.type)
+
+    hidden = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    hidden[1085:1097, 342:585] = (220, 180, 20)
+    obscured = [
+        detection(AUTOPLACE_NOTICE, 450, 720),
+        detection("forest_recenter_button", 841, 1296),
+    ]
+
+    assert planner.choose(frame(hidden), obscured) is None
+    assert planner.choose(frame(hidden), obscured) is None
+    assert planner.forest_trips() == 0
+    assert planner.last_stage() == "recover_home_await_measured_landmark_2/2"
+
+
 def test_home_recovery_keeps_exact_prompt_without_no_button_as_a_safe_failure() -> None:
     planner = HatchHomeRecoveryPlanner()
 
@@ -2062,6 +2087,54 @@ def test_home_recovery_undoes_its_own_swipe_when_the_landmark_disappears() -> No
     planner.on_action_success(undo.type)
     assert planner.choose(blind, home) is None
     assert planner.is_failed()
+
+
+def test_home_recovery_undoes_latest_swipe_after_undo_then_new_nudge() -> None:
+    """Regression trace: apply A/B, undo B, apply C, then undo C."""
+
+    def shifted_home(offset_y: int) -> Frame:
+        image = np.full((1600, 900, 3), 255, dtype=np.uint8)
+        image[1448 - offset_y : 1460 - offset_y, 330:573] = (220, 180, 20)
+        return frame(image)
+
+    planner = HatchHomeRecoveryPlanner()
+    home = [detection(hatch.HOME_ANCHOR, 59, 561)]
+
+    first = planner.choose(shifted_home(474), home)
+    assert first is not None and first.type == RECOVERY_RECENTER
+    planner.on_action_success(first.type)
+
+    second = planner.choose(shifted_home(216), home)
+    assert second is not None and second.type == RECOVERY_RECENTER
+    planner.on_action_success(second.type)
+
+    undo_second = planner._undo_target(reason="test rollback")
+    assert undo_second is not None and undo_second.type == RECOVERY_UNDO
+    planner.on_action_success(undo_second.type)
+
+    third = planner.choose(shifted_home(149), home)
+    assert third is not None and third.type == RECOVERY_RECENTER
+    third_swipe = third.detection.metadata["swipe"]
+    planner.on_action_success(third.type)
+
+    undo_regression = planner.choose(shifted_home(520), home)
+    assert undo_regression is not None and undo_regression.type == RECOVERY_UNDO
+    assert (undo_regression.x, undo_regression.y) == (
+        third_swipe["x2"],
+        third_swipe["y2"],
+    )
+    assert undo_regression.detection.metadata["swipe"]["x2"] == third.x
+    assert undo_regression.detection.metadata["swipe"]["y2"] == third.y
+
+    planner.on_action_success(undo_regression.type)
+    assert planner._applied_swipes == [
+        (
+            first.x,
+            first.y,
+            first.detection.metadata["swipe"]["x2"],
+            first.detection.metadata["swipe"]["y2"],
+        )
+    ]
 
 
 def test_home_recovery_cave_route_still_starts_at_its_first_leg_after_a_nudge() -> None:
