@@ -631,6 +631,32 @@ def home_pile_offset(frame: Frame) -> tuple[float, float] | None:
     )
 
 
+def is_centered_home_frame(frame: Frame) -> bool:
+    """Prove centred, unobscured home from frame structure alone.
+
+    Post-action verification deliberately scans only the expected successor
+    templates.  S9's animated My Nest icon scored 0.833 and then 0.809 on two
+    otherwise identical home frames, so requiring that single template made a
+    successful incubator close look like a failure and reopened it.  The
+    bright side strips plus a known, centred large pile are independent of the
+    changing HUD artwork and reject the dimmed item-information overlay.
+    """
+
+    if not _is_bright_outdoor_map(frame):
+        return False
+    if not hatch_feature.has_home_pile_structure(
+        frame,
+        egg_pile_point=(450.0, 1330.0),
+        reference_width=900.0,
+    ):
+        return False
+    offset = home_pile_offset(frame)
+    if offset is None:
+        return False
+    scale = frame.width / 900.0
+    return max(abs(offset[0]), abs(offset[1])) <= HOME_PILE_TOLERANCE * scale
+
+
 def is_centered_home_screen(frame: Frame, detections: Sequence[Detection]) -> bool:
     """Return whether the normal home map (not the shifted cave view) is ready."""
 
@@ -643,25 +669,10 @@ def is_centered_home_screen(frame: Frame, detections: Sequence[Detection]) -> bo
     # instead of accepting an arbitrary bright screen with cyan pixels.
     if hatch_feature.HOME_ANCHOR not in types and FOREST_RECENTER not in types:
         return False
-    if not _is_bright_outdoor_map(frame):
-        return False
     # The recovery planner and HatchPlanner must share the same proof of an
-    # actionable home pile.  The precise skin-specific locators above can
-    # recognize a narrow coloured strip that is enough to estimate the map
-    # offset, but not enough to authorize the hatch child to tap it.  Without
-    # this second gate recovery completes, HatchPlanner reports
-    # ``unknown_screen``, and the outer timeout sends Back again forever.
-    if not hatch_feature.has_home_pile_structure(
-        frame,
-        egg_pile_point=(450.0, 1330.0),
-        reference_width=900.0,
-    ):
-        return False
-    offset = home_pile_offset(frame)
-    if offset is None:
-        return False
-    scale = frame.width / 900.0
-    return max(abs(offset[0]), abs(offset[1])) <= HOME_PILE_TOLERANCE * scale
+    # actionable home pile. Without this gate recovery can complete while the
+    # hatch child still sees an unknown screen and starts a Back loop.
+    return is_centered_home_frame(frame)
 
 
 def _home_pile_click_blocked(

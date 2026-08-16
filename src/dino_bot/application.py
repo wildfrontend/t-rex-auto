@@ -613,7 +613,10 @@ def _create_hatch_engine(
             {
                 hatch_feature.CLAIM_BUTTON: (
                     full_hatch_feature.is_unready_egg_detail
-                )
+                ),
+                hatch_feature.CLOSE_BUTTON: (
+                    full_hatch_feature.is_centered_home_frame
+                ),
             }
             if full
             else None

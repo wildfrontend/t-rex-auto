@@ -41,7 +41,7 @@
     {
       "type": "hatch_home_anchor",
       "file": "templates/hatch-home-anchor.png",
-      "threshold": 0.82
+      "threshold": 0.78
     },
     {
       "type": "hatch_tag_all",

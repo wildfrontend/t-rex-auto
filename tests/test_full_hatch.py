@@ -58,6 +58,7 @@ from dino_bot.full_hatch import (
     HatchHomeRecoveryPlanner,
     _egg_pile_safe_tap,
     home_pile_offset,
+    is_centered_home_frame,
     is_centered_home_screen,
     is_home_screen,
     is_unready_egg_detail,
@@ -68,6 +69,7 @@ from dino_bot.models import BoundingBox, Detection, Frame, Target, VerificationR
 from dino_bot.nests import MASS_RULE, TOP_RULE
 from dino_bot.overlays import CONFIRM_NO, CONFIRM_YES, SELECT_CONFIRM_PROMPT
 from dino_bot.parent_open import NEST_TITLE, SELECT_TITLE
+from dino_bot.verification import TargetChangedVerifier
 
 REPO = Path(__file__).resolve().parent.parent
 GLYPHS = REPO / "assets" / "hatch" / "digits"
@@ -767,26 +769,29 @@ def test_full_hatch_scopes_detection_by_workflow_phase() -> None:
     assert "own_hunt_path" not in nest_types
 
 
-def test_s9_live_home_anchor_variant_is_recognized() -> None:
-    """The real S9 entrance crop scored 0.833 against the original asset."""
+def test_s9_live_home_anchor_variants_are_recognized() -> None:
+    """Real S9 entrance frames varied from 0.833 down to 0.809."""
 
-    encoded = (
-        FIXTURES / "s9-home-anchor-20260816.png.b64"
-    ).read_text(encoding="ascii")
-    crop = cv2.imdecode(
-        np.frombuffer(base64.b64decode(encoded), dtype=np.uint8),
-        cv2.IMREAD_COLOR,
-    )
-    assert crop is not None
-    image = np.full((1600, 900, 3), 255, dtype=np.uint8)
-    image[540:585, 24:74] = crop
+    fixtures = {
+        "s9-home-anchor-20260816.png.b64": (0.82, 0.85),
+        "s9-home-anchor-20260816-late.png.b64": (0.79, 0.82),
+    }
     detector = OpenCvDetector(REPO / "assets" / "hatch" / "manifest.json")
+    for fixture, expected_range in fixtures.items():
+        encoded = (FIXTURES / fixture).read_text(encoding="ascii")
+        crop = cv2.imdecode(
+            np.frombuffer(base64.b64decode(encoded), dtype=np.uint8),
+            cv2.IMREAD_COLOR,
+        )
+        assert crop is not None
+        image = np.full((1600, 900, 3), 255, dtype=np.uint8)
+        image[540:585, 24:74] = crop
 
-    found = detector.detect_types(Frame(image), {hatch.HOME_ANCHOR})
+        found = detector.detect_types(Frame(image), {hatch.HOME_ANCHOR})
 
-    assert len(found) == 1
-    assert (found[0].x, found[0].y) == (49, 562)
-    assert 0.82 <= found[0].confidence < 0.85
+        assert len(found) == 1, fixture
+        assert (found[0].x, found[0].y) == (49, 562)
+        assert expected_range[0] <= found[0].confidence < expected_range[1]
 
 
 def test_open_nest_visual_match_requires_unobscured_centered_home() -> None:
@@ -801,6 +806,37 @@ def test_open_nest_visual_match_requires_unobscured_centered_home() -> None:
     planner._stage = "open_nest"
     dimmed = frame(np.zeros((1600, 900, 3), dtype=np.uint8))
     assert planner.choose(dimmed, home_anchor) is None
+
+
+def test_incubator_close_accepts_centered_home_structure_without_anchor() -> None:
+    close = detection(hatch.CLOSE_BUTTON, 798, 1384)
+    target = Target(close.type, close.x, close.y, close.confidence, close)
+    verifier = TargetChangedVerifier(
+        success_transitions={hatch.CLOSE_BUTTON: (hatch.HOME_ANCHOR,)},
+        success_frame_predicates={
+            hatch.CLOSE_BUTTON: is_centered_home_frame,
+        },
+    )
+
+    result = verifier.verify(
+        frame(np.zeros((1600, 900, 3), dtype=np.uint8)),
+        frame(),
+        target,
+        [close],
+        [],
+    )
+
+    assert result.success
+    assert "frame structure" in result.reason
+
+
+def test_incubator_close_rejects_dimmed_or_shifted_home_structure() -> None:
+    assert not is_centered_home_frame(
+        frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    )
+    shifted = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    shifted[1248:1260, 330:573] = (220, 180, 20)
+    assert not is_centered_home_frame(frame(shifted))
 
 
 def test_full_hatch_forwards_direct_candidate_success_to_replacement_child() -> None:
