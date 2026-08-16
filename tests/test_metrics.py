@@ -30,6 +30,7 @@ def test_metrics_persist_verified_hunts_hatches_and_records(tmp_path: Path) -> N
 18:00:05 | INFO | Verify | Success | next UI detected: hatch_button
 18:00:06 | INFO | Hatch 攻擊特化 | side=left | parent=40/290/1 | pair=40/290/1,40/290/1
 18:00:07 | INFO | Hatch 攻擊特化 | side=left | candidates=[] | decision=select row 1 (30/291/1)
+18:00:07 | INFO | Hatch HP特化 | side=left | parent=2340/143/150 | pair=2340/143/150,10/1/1
 18:00:08 | INFO | Planning | hatch_confirm_yes at (366,828) confidence=1.0
 18:00:09 | INFO | Verify | Success | next UI detected: hatch_nest_title
 18:00:10 | INFO | Hatch auto-place | tag=頂尖 | sort=最佳屬性組合 | completed with confirmation
@@ -53,10 +54,63 @@ def test_metrics_persist_verified_hunts_hatches_and_records(tmp_path: Path) -> N
     assert first["counters"]["autoplace_top"]["total"] == 1
     assert first["counters"]["cull_removed"]["total"] == 40
     assert first["counters"]["verification_failure"]["total"] == 1
-    assert first["records"]["hp"]["value"] == 40
+    assert first["records"]["hp"]["value"] == 2340
     assert first["records"]["attack"]["value"] == 291
-    assert first["records"]["speed"]["value"] == 1
+    assert first["records"]["speed"]["value"] == 150
     assert second["counters"] == first["counters"], "refresh must be idempotent"
+
+
+def test_metrics_keeps_secondary_hp_attack_out_of_attack_record(tmp_path: Path) -> None:
+    logs = tmp_path / "logs"
+    today = datetime.now().astimezone().date()
+    append_log(
+        logs / f"{today:%Y%m%d}.log",
+        """
+17:23:33 | INFO | Hatch HP特化 | side=left | parent=1410/737/134 | pair=1410/737/134,10/1/1
+18:10:17 | INFO | Hatch 攻擊特化 | side=left | parent=1320/158/134 | pair=1320/158/134,10/1/1
+""",
+    )
+    store = MetricsStore(tmp_path / "data" / "stats.sqlite3", logs)
+
+    result = store.snapshot()
+
+    assert result["records"]["hp"]["value"] == 1410
+    assert result["records"]["attack"]["value"] == 158
+    assert result["records"]["speed"]["value"] == 134
+    with sqlite3.connect(store.database) as connection:
+        raw_attacks = [
+            json.loads(row[0])["attack"]
+            for row in connection.execute(
+                "SELECT payload_json FROM metric_events WHERE kind = 'stat_observation'"
+            )
+        ]
+    assert 737 in raw_attacks, "raw evidence remains available for diagnosis"
+
+
+def test_metrics_repairs_legacy_cross_specialization_record(tmp_path: Path) -> None:
+    logs = tmp_path / "logs"
+    today = datetime.now().astimezone().date()
+    append_log(
+        logs / f"{today:%Y%m%d}.log",
+        "18:10:17 | INFO | Hatch 攻擊特化 | side=left | "
+        "parent=1320/158/134 | pair=1320/158/134,10/1/1",
+    )
+    store = MetricsStore(tmp_path / "data" / "stats.sqlite3", logs)
+    store.snapshot()
+    bad_payload = json.dumps(
+        {"hp": 1410, "attack": 737, "speed": 134, "tag": "HP特化", "role": "parent"},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    with sqlite3.connect(store.database) as connection:
+        connection.execute(
+            "UPDATE stat_records SET value = 737, payload_json = ? WHERE name = 'attack'",
+            (bad_payload,),
+        )
+
+    result = store.snapshot()
+
+    assert result["records"]["attack"]["value"] == 158
 
 
 def test_metrics_does_not_count_cave_claim_as_hatched_dinosaur(tmp_path: Path) -> None:

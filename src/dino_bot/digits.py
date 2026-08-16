@@ -30,8 +30,17 @@ INK_THRESHOLD = 110
 GLYPH_SIZE = (24, 32)
 MIN_GLYPH_AREA = 12
 MIN_MATCH_SCORE = 0.60
-NARROW_ONE_MAX_ASPECT = 0.45
-NARROW_ONE_MAX_SCORE_GAP = 0.05
+# ``1`` and ``7`` are the one recurring topology-neutral ambiguity in the
+# hand-drawn stat font.  Width alone fixed narrow list-row ones, but an
+# anti-aliased cap can widen a real ``1`` enough to bypass that rule.  Resolve
+# close matches from the original aspect ratio *and* the lower stroke's drift:
+# a one stays vertical while a seven travels diagonally across the glyph.
+ONE_SEVEN_MAX_SCORE_GAP = 0.12
+ONE_SEVEN_MAX_ONE_ASPECT = 0.70
+ONE_SEVEN_MAX_ONE_BODY_DRIFT = 0.14
+ONE_SEVEN_MIN_SEVEN_BODY_DRIFT = 0.24
+ONE_SEVEN_MIN_SEVEN_TOP_BAR = 0.14
+ONE_SEVEN_TOP_BAR_WIDTH = 0.80
 # Anti-aliasing varies slightly between Select Dino rows.  A live ``6`` can
 # consequently score a few points closer to the single shipped ``5`` or ``8``
 # template.  Their enclosed-hole counts are stable, so prefer the matching
@@ -113,30 +122,76 @@ def _prefer_matching_topology(
     return best_char, best_score
 
 
-def _prefer_narrow_one(
+def _one_seven_geometry(raster: np.ndarray) -> tuple[float, float]:
+    """Return top-bar run and lower-stroke drift as raster-size ratios."""
+
+    height, width = raster.shape[:2]
+    if height <= 0 or width <= 0:
+        return 0.0, 1.0
+    row_widths = np.count_nonzero(raster, axis=1)
+    maximum_width = int(row_widths.max(initial=0))
+    top_run = 0
+    if maximum_width:
+        top_threshold = maximum_width * ONE_SEVEN_TOP_BAR_WIDTH
+        for row_width in row_widths:
+            if row_width < top_threshold:
+                break
+            top_run += 1
+
+    body_centers: list[float] = []
+    for row in raster[round(height * 0.30) :]:
+        columns = np.flatnonzero(row)
+        if columns.size:
+            body_centers.append(float(columns.mean()))
+    body_drift = (
+        (max(body_centers) - min(body_centers)) / width
+        if body_centers
+        else 1.0
+    )
+    return top_run / height, body_drift
+
+
+def _resolve_one_seven(
     best_char: str,
     best_score: float,
     scores: dict[str, float],
     bbox: tuple[int, int, int, int],
+    raster: np.ndarray,
 ) -> tuple[str, float]:
-    """Correct close 1/7 matches using the source glyph's aspect ratio.
+    """Resolve close 1/7 matches without converting genuine sevens.
 
-    Canonical resizing intentionally removes size differences, but in the
-    game's small stat font ``1`` is roughly half as wide as ``7``.  Lower
-    Select Dino rows can otherwise turn 2310 into 2370 by a tiny score margin.
+    A vertical lower body proves ``1`` even when anti-aliasing widens its cap;
+    a sustained top bar plus diagonal body proves ``7``.  When neither shape
+    is proven, return ``?`` so repeated captures cannot promote the same
+    systematic OCR mistake into a trusted stat.
     """
 
-    _, _, width, height = bbox
+    if best_char not in {"1", "7"}:
+        return best_char, best_score
     one_score = scores.get("1", 0.0)
+    seven_score = scores.get("7", 0.0)
     if (
-        best_char == "7"
-        and height > 0
-        and width / height <= NARROW_ONE_MAX_ASPECT
-        and one_score >= MIN_MATCH_SCORE
-        and best_score - one_score <= NARROW_ONE_MAX_SCORE_GAP
+        min(one_score, seven_score) < MIN_MATCH_SCORE
+        or abs(one_score - seven_score) > ONE_SEVEN_MAX_SCORE_GAP
     ):
+        return best_char, best_score
+
+    _, _, width, height = bbox
+    aspect = width / height if height > 0 else 1.0
+    top_bar, body_drift = _one_seven_geometry(raster)
+    looks_like_one = (
+        aspect <= ONE_SEVEN_MAX_ONE_ASPECT
+        and body_drift <= ONE_SEVEN_MAX_ONE_BODY_DRIFT
+    )
+    looks_like_seven = (
+        top_bar >= ONE_SEVEN_MIN_SEVEN_TOP_BAR
+        and body_drift >= ONE_SEVEN_MIN_SEVEN_BODY_DRIFT
+    )
+    if looks_like_one and not looks_like_seven:
         return "1", one_score
-    return best_char, best_score
+    if looks_like_seven and not looks_like_one:
+        return "7", seven_score
+    return "?", max(one_score, seven_score)
 
 
 def _prefer_tall_hole_zero(
@@ -246,11 +301,12 @@ class DigitReader:
                 glyph_holes,
                 _count_enclosed_holes(raster),
             )
-            best_char, best_score = _prefer_narrow_one(
+            best_char, best_score = _resolve_one_seven(
                 best_char,
                 best_score,
                 scores,
                 bbox,
+                raster,
             )
             best_char, best_score = _prefer_tall_hole_zero(
                 best_char,

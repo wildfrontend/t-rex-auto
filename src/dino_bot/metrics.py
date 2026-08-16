@@ -93,6 +93,25 @@ def _valid_stats(values: tuple[int, int, int]) -> bool:
     return 1 <= hp <= 6000 and 1 <= attack <= 1000 and 1 <= speed <= 500
 
 
+def _record_stat_names(payload: dict[str, Any]) -> tuple[str, ...]:
+    """Return record fields trusted for this specialization observation.
+
+    Attack and HP rounds deliberately optimize one primary field.  Secondary
+    values still remain in the raw observation for diagnosis and tie-breaking,
+    but must not become a Dashboard high score: a stable 1/7 OCR error in an
+    HP parent's attack once promoted 137 to a fictitious 737 record.
+    Speed has no dedicated specialization round, so retain its guarded value
+    from either source.
+    """
+
+    tag = payload.get("tag")
+    if tag == "HP特化":
+        return ("hp", "speed")
+    if tag == "攻擊特化":
+        return ("attack", "speed")
+    return ("hp", "attack", "speed")
+
+
 class MetricsStore:
     """Incrementally import rotated text logs into a durable SQLite event store."""
 
@@ -163,6 +182,7 @@ class MetricsStore:
                     ON metric_events(occurred_at, kind, value, payload_json);
                 """
             )
+            self._repair_stat_record_scope(connection)
 
     def refresh(self) -> None:
         with self._lock:
@@ -178,6 +198,7 @@ class MetricsStore:
                 for path in paths:
                     self._ingest_path(connection, path)
                 self._compact_history(connection, today)
+                self._repair_stat_record_scope(connection)
 
     def _compact_history(self, connection: sqlite3.Connection, today: str) -> None:
         """Keep raw events only for today; retain older days as tiny totals."""
@@ -375,7 +396,7 @@ class MetricsStore:
         payload: dict[str, Any],
     ) -> None:
         payload_json = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-        for name in ("hp", "attack", "speed"):
+        for name in _record_stat_names(payload):
             value = int(payload.get(name, 0))
             connection.execute(
                 """
@@ -388,6 +409,37 @@ class MetricsStore:
                 WHERE excluded.value > stat_records.value
                 """,
                 (name, value, occurred_at, payload_json),
+            )
+
+    @classmethod
+    def _repair_stat_record_scope(cls, connection: sqlite3.Connection) -> None:
+        """Remove legacy cross-specialization records and rebuild their field."""
+
+        rows = connection.execute(
+            "SELECT name, payload_json FROM stat_records"
+        ).fetchall()
+        removed = False
+        for row in rows:
+            payload = json.loads(row["payload_json"])
+            if row["name"] not in _record_stat_names(payload):
+                connection.execute(
+                    "DELETE FROM stat_records WHERE name = ?",
+                    (row["name"],),
+                )
+                removed = True
+        if not removed:
+            return
+        observations = connection.execute(
+            """
+            SELECT occurred_at, payload_json FROM metric_events
+            WHERE kind = 'stat_observation' ORDER BY occurred_at
+            """
+        ).fetchall()
+        for row in observations:
+            cls._update_stat_records(
+                connection,
+                str(row["occurred_at"]),
+                json.loads(row["payload_json"]),
             )
 
     def _ingest_line(
@@ -622,7 +674,7 @@ class MetricsStore:
             ).fetchall()
             for row in rows:
                 payload = json.loads(row["payload_json"])
-                for name in ("hp", "attack", "speed"):
+                for name in _record_stat_names(payload):
                     value = int(payload.get(name, 0))
                     current = records.get(name)
                     if current is None or value > int(current["value"]):

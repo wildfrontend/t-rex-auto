@@ -11,9 +11,10 @@ from dino_bot.digits import (
     DigitReader,
     DigitReadError,
     _count_enclosed_holes,
+    _one_seven_geometry,
     _prefer_matching_topology,
-    _prefer_narrow_one,
     _prefer_tall_hole_zero,
+    _resolve_one_seven,
     segment_glyphs,
 )
 
@@ -81,28 +82,80 @@ def test_reader_marks_low_scores_unknown(tmp_path) -> None:
     assert reader.read_int(image) is None
 
 
-def test_close_narrow_1_7_match_prefers_one() -> None:
-    assert _prefer_narrow_one(
-        "7",
-        0.730,
-        {"1": 0.717, "7": 0.730},
-        (29, 4, 5, 14),
-    ) == ("1", 0.717)
+def glyph_image(rows: tuple[str, ...]) -> np.ndarray:
+    image = np.full((len(rows) + 4, len(rows[0]) + 4), 255, dtype=np.uint8)
+    for y, row in enumerate(rows, 2):
+        for x, pixel in enumerate(row, 2):
+            if pixel == "#":
+                image[y, x] = 0
+    return image
 
 
-def test_wide_or_unconvincing_7_match_stays_seven() -> None:
-    assert _prefer_narrow_one(
+def test_close_widened_1_7_match_uses_vertical_body_to_prefer_one() -> None:
+    image = glyph_image(
+        (
+            "#####",
+            "#####",
+            "..##.",
+            "..##.",
+            "..##.",
+            "..##.",
+            "..##.",
+            "..##.",
+            "..##.",
+        )
+    )
+    bbox, raster = segment_glyphs(image)[0]
+
+    assert _resolve_one_seven(
         "7",
-        0.800,
-        {"1": 0.780, "7": 0.800},
-        (10, 4, 10, 14),
-    ) == ("7", 0.800)
-    assert _prefer_narrow_one(
+        0.743,
+        {"1": 0.730, "7": 0.743},
+        bbox,
+        raster,
+    ) == ("1", 0.730)
+    assert _one_seven_geometry(raster)[1] == 0.0
+
+
+def test_close_true_seven_match_keeps_seven_from_diagonal_body() -> None:
+    image = glyph_image(
+        (
+            "######",
+            "######",
+            "....##",
+            "....##",
+            "...##.",
+            "...##.",
+            "...#..",
+            "..##..",
+            "..##..",
+            ".##...",
+            "..#...",
+        )
+    )
+    bbox, raster = segment_glyphs(image)[0]
+
+    assert _resolve_one_seven(
         "7",
-        0.700,
-        {"1": 0.590, "7": 0.700},
-        (0, 6, 4, 10),
-    ) == ("7", 0.700)
+        0.750,
+        {"1": 0.730, "7": 0.750},
+        bbox,
+        raster,
+    ) == ("7", 0.750)
+
+
+def test_unconvincing_one_seven_match_is_rejected() -> None:
+    raster = np.zeros(GLYPH_SIZE[::-1], dtype=np.uint8)
+    cv2.rectangle(raster, (3, 2), (20, 8), 255, thickness=-1)
+    cv2.line(raster, (18, 9), (14, 31), 255, thickness=3)
+
+    assert _resolve_one_seven(
+        "7",
+        0.720,
+        {"1": 0.700, "7": 0.720},
+        (0, 0, 12, 20),
+        raster,
+    )[0] == "?"
 
 
 def test_counts_only_fully_enclosed_glyph_holes() -> None:
@@ -178,6 +231,42 @@ def test_live_hp_zero_with_antialiased_tail_is_not_read_as_six(
                 image[y, x] = 0
 
     assert reader.read(image) == "0"
+
+
+def test_reader_reads_widened_vertical_one_without_changing_real_seven(
+    reader: DigitReader,
+) -> None:
+    widened_one = glyph_image(
+        (
+            "#####",
+            "#####",
+            "..##.",
+            "..##.",
+            "..##.",
+            "..##.",
+            "..##.",
+            "..##.",
+            "..##.",
+        )
+    )
+    true_seven = glyph_image(
+        (
+            "######",
+            "######",
+            "....##",
+            "....##",
+            "...##.",
+            "...##.",
+            "...#..",
+            "..##..",
+            "..##..",
+            ".##...",
+            "..#...",
+        )
+    )
+
+    assert reader.read(widened_one) == "1"
+    assert reader.read(true_seven) == "7"
 
 
 # -- regression against shipped glyphs (offline T6) ---------------------------
