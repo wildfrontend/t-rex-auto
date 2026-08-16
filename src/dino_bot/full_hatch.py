@@ -890,7 +890,7 @@ class HatchHomeRecoveryPlanner:
         logger: logging.Logger | None = None,
         max_back_attempts: int = 2,
         required_home_frames: int = 2,
-        max_forest_trips: int = 1,
+        max_forest_trips: int = 0,
         # ADB map drags can be damped by the game's camera inertia.  The S13
         # recovery trace reduced a 474px vertical error to 161px in two
         # strictly improving moves, but two was not enough to cross the 100px
@@ -903,7 +903,10 @@ class HatchHomeRecoveryPlanner:
         self.logger = logger or logging.getLogger("dino_bot")
         self.max_back_attempts = max(0, max_back_attempts)
         self.required_home_frames = max(1, required_home_frames)
-        self.max_forest_trips = max(0, max_forest_trips)
+        # Kept as a compatibility argument for callers built against older
+        # releases.  Entering Forest never recentres the home camera; recovery
+        # must stay on one measurable map instead.
+        self.max_forest_trips = 0
         self.max_hunt_dialog_dismissals = max(0, max_hunt_dialog_dismissals)
         self.max_measured_corrections = max(0, max_measured_corrections)
         self._stage = "inspect"
@@ -913,7 +916,6 @@ class HatchHomeRecoveryPlanner:
         self._cave_recovery_required = False
         self._recenter_end = 0
         self._forest_trips = 0
-        self._forest_refused = False
         self._hunt_dialog_dismissals = 0
         self._measured_corrections = 0
         self._last_offset: tuple[float, float] | None = None
@@ -924,7 +926,6 @@ class HatchHomeRecoveryPlanner:
         self._pending_measured_offset: tuple[float, float] | None = None
         self._pending_undo_swipe: tuple[int, int, int, int] | None = None
         self._pending_cave_leg = False
-        self._missing_measured_landmark_frames = 0
         self._complete = False
         self._failed = False
 
@@ -1153,51 +1154,15 @@ class HatchHomeRecoveryPlanner:
             return recenter
 
         forest = _best(by_type.get(FOREST_RECENTER))
-        if forest is not None and notice_misread and any(
-            offset is not None for offset in self._applied_offsets
-        ):
-            # The Forest control proves this is still the home map.  Directly
-            # after a measured drag, the pile can be hidden for one scan by a
-            # task toast or camera animation.  Entering Forest here destroys
-            # the continuity of the measurements and previously led to an
-            # unnecessary rollback.  Give the same map two settled scans,
-            # then reverse only the latest correction if its landmark really
-            # did disappear.
-            self._missing_measured_landmark_frames += 1
-            if self._missing_measured_landmark_frames <= 2:
-                self._stage = (
-                    "await_measured_landmark_"
-                    f"{self._missing_measured_landmark_frames}/2"
-                )
-                self.logger.info(
-                    "Hatch recovery | measured landmark temporarily hidden"
-                    " | waiting on the home map | frame=%d/2",
-                    self._missing_measured_landmark_frames,
-                )
-                return None
+        if forest is not None and self._applied_swipes:
+            # This control proves we are already on the home map; it is not a
+            # recenter command.  If our own last measured drag made the pile
+            # disappear, reverse that exact drag without leaving the map.
             undo = self._undo_target(
-                reason="measured landmark stayed hidden on the home map"
+                reason="measured landmark disappeared on the home map"
             )
             if undo is not None:
                 return undo
-        if forest is not None and self._forest_trips < self.max_forest_trips:
-            # The bottom-right Forest button survives positions where the
-            # hatch home anchor is clipped off-screen. Entering Forest and
-            # immediately using its named map-exit control has been observed
-            # to restore a clipped anchor, but it returns to the *previous*
-            # home camera position, so it cannot fix a panned map.  One trip
-            # proves which case this is; repeating it only burns wall clock.
-            self._stage = "enter_forest_for_recenter"
-            return _synthetic(RECOVERY_FOREST, forest.x, forest.y)
-        if forest is not None and not self._forest_refused:
-            self._forest_refused = True
-            self.logger.error(
-                "Hatch recovery | home still unproven and the forest round trip"
-                " is spent (trips=%d, budget=%d); it does not move the camera"
-                " on this screen",
-                self._forest_trips,
-                self.max_forest_trips,
-            )
 
         if self._back_attempts < self.max_back_attempts:
             self._back_attempts += 1
@@ -1271,7 +1236,6 @@ class HatchHomeRecoveryPlanner:
         offset = home_pile_offset(frame)
         if offset is None:
             return None
-        self._missing_measured_landmark_frames = 0
         scale = frame.width / 900.0
         pile_structure = hatch_feature.home_pile_structure_base(
             frame,
@@ -2090,7 +2054,6 @@ class FullHatchPlanner:
         self._recovery_reason: str | None = None
         self._recovery_rounds = 0
         self._recovery_started_at: float | None = None
-        self._recovery_forest_exhausted = False
         self._collect_only_after_empty = False
         self._empty_rescan_wait = False
         # A fresh planner instance must prove that the dinosaur capacity is
@@ -2793,7 +2756,14 @@ class FullHatchPlanner:
                     self._recovery_rounds,
                     elapsed,
                 )
-                self._complete = True
+                # A calibration failure blocks unsafe hatch taps, but the
+                # combined hatch+hunt owner can continue useful hunting.  The
+                # old completion flag stopped the entire Bot after one bad
+                # recovery even though HatchHuntPlanner already has a safe
+                # blocked-hatch fallback.
+                self._egg_pile_blocked = True
+                self._stage = "hatch_blocked"
+                self._no_target_since = None
                 return None
             if self._recovery_child.is_complete():
                 if self.standalone_stage is not None:
@@ -2809,7 +2779,6 @@ class FullHatchPlanner:
                         return self._choose_current(frame, detections)
                 self._recovery_rounds = 0
                 self._recovery_started_at = None
-                self._recovery_forest_exhausted = False
                 self.logger.info(
                     "Hatch full | centered home confirmed | recovered=%s",
                     self._recovery_reason or "unknown",
@@ -3219,20 +3188,12 @@ class FullHatchPlanner:
         self.logger.warning("Hatch full | recovering to centered home | %s", reason)
         if self._stage != "recover_home":
             # A fresh episode, not one of its own retries: start the wall-clock
-            # budget and forget what the previous episode learned about the
-            # screen it was looking at.
+            # budget for the bounded same-map recovery episode.
             self._recovery_started_at = self.clock()
-            self._recovery_forest_exhausted = False
-        elif self._recovery_child.forest_trips():
-            # The retry gets a new child with fresh counters.  Carry this one
-            # fact across, or each retry buys another round trip that has
-            # already been shown not to move the camera.
-            self._recovery_forest_exhausted = True
         self._stage = "recover_home"
         self._child = HatchHomeRecoveryPlanner(
             reference_width=self.reference_width,
             logger=self.logger,
-            max_forest_trips=0 if self._recovery_forest_exhausted else 1,
         )
         self._no_target_since = None
         self._recovery_reason = reason

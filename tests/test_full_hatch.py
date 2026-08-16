@@ -1855,7 +1855,7 @@ def test_failed_home_recovery_action_retries_without_completing_workflow() -> No
     dimmed = frame(np.zeros((1600, 900, 3), dtype=np.uint8))
 
     target = planner.choose(dimmed, shifted_home)
-    assert target is not None and target.type == RECOVERY_FOREST
+    assert target is not None and target.type == RECOVERY_BACK
     planner.on_action_failure(target.type)
 
     assert not planner.is_complete()
@@ -1865,7 +1865,7 @@ def test_failed_home_recovery_action_retries_without_completing_workflow() -> No
     assert planner._screening_completed == {"attack", "hp"}
 
     retry = planner.choose(dimmed, shifted_home)
-    assert retry is not None and retry.type == RECOVERY_FOREST
+    assert retry is not None and retry.type == RECOVERY_BACK
     assert not planner.is_complete()
 
 
@@ -1910,7 +1910,7 @@ def test_home_recovery_uses_hunt_map_exit_instead_of_android_back() -> None:
     assert (target.x, target.y) == (841, 1295)
 
 
-def test_home_recovery_uses_forest_round_trip_when_home_anchor_is_clipped() -> None:
+def test_home_recovery_never_enters_forest_to_recenter_home() -> None:
     planner = HatchHomeRecoveryPlanner()
     forest = detection("forest_recenter_button", 841, 1295)
 
@@ -1918,14 +1918,9 @@ def test_home_recovery_uses_forest_round_trip_when_home_anchor_is_clipped() -> N
         frame(np.zeros((1600, 900, 3), dtype=np.uint8)),
         [forest],
     )
-    assert target is not None and target.type == RECOVERY_FOREST
-    planner.on_action_success(target.type)
-
-    target = planner.choose(
-        frame(np.zeros((1600, 900, 3), dtype=np.uint8)),
-        [detection("map_exit_nest_button", 841, 1295)],
-    )
-    assert target is not None and target.type == RECOVERY_MAP_EXIT
+    assert target is not None and target.type == RECOVERY_BACK
+    assert target.type != RECOVERY_FOREST
+    assert planner.forest_trips() == 0
 
 
 def test_home_recovery_ignores_a_notice_without_no_button_and_recenters() -> None:
@@ -1947,8 +1942,8 @@ def test_home_recovery_ignores_a_notice_without_no_button_and_recenters() -> Non
     assert not planner.is_failed()
 
 
-def test_home_recovery_waits_when_task_toast_hides_a_measured_pile() -> None:
-    """A transient task toast must not interrupt one coordinate system."""
+def test_home_recovery_undoes_when_task_toast_outlives_a_measured_pile() -> None:
+    """A persistent task banner must not wait or switch to Forest."""
 
     planner = HatchHomeRecoveryPlanner()
     shifted = np.full((1600, 900, 3), 255, dtype=np.uint8)
@@ -1966,10 +1961,14 @@ def test_home_recovery_waits_when_task_toast_hides_a_measured_pile() -> None:
         detection("forest_recenter_button", 841, 1296),
     ]
 
-    assert planner.choose(frame(hidden), obscured) is None
-    assert planner.choose(frame(hidden), obscured) is None
+    undo = planner.choose(frame(hidden), obscured)
+    assert undo is not None and undo.type == RECOVERY_UNDO
+    assert undo.type != RECOVERY_FOREST
     assert planner.forest_trips() == 0
-    assert planner.last_stage() == "recover_home_await_measured_landmark_2/2"
+    assert (undo.x, undo.y) == (
+        nudge.detection.metadata["swipe"]["x2"],
+        nudge.detection.metadata["swipe"]["y2"],
+    )
 
 
 def test_home_recovery_keeps_exact_prompt_without_no_button_as_a_safe_failure() -> None:
@@ -2004,60 +2003,6 @@ def test_home_recovery_keeps_correcting_a_damped_but_converging_camera_move() ->
         planner.on_action_success(target.type)
 
 
-def _forest_round_trip(planner: HatchHomeRecoveryPlanner) -> str | None:
-    """Run one home -> forest -> home cycle; return the map-switch target used.
-
-    The observed loop repeated because leaving the hunt map lands on a frame
-    that is still mid-transition, so the planner judges an empty detection set
-    before the home controls have drawn.
-    """
-
-    dark = frame(np.zeros((1600, 900, 3), dtype=np.uint8))
-    settled_home = planner.choose(dark, [detection("forest_recenter_button", 841, 1296)])
-    if settled_home is None or settled_home.type != RECOVERY_FOREST:
-        return None if settled_home is None else settled_home.type
-    planner.on_action_success(settled_home.type)
-
-    on_map = planner.choose(dark, [detection("map_exit_nest_button", 841, 1295)])
-    assert on_map is not None and on_map.type == RECOVERY_MAP_EXIT
-    planner.on_action_success(on_map.type)
-
-    mid_transition = planner.choose(dark, [])
-    if mid_transition is not None:
-        planner.on_action_success(mid_transition.type)
-    return RECOVERY_FOREST
-
-
-def test_home_recovery_does_not_repeat_a_forest_round_trip_that_changed_nothing() -> None:
-    planner = HatchHomeRecoveryPlanner()
-
-    assert _forest_round_trip(planner) == RECOVERY_FOREST
-    assert planner.forest_trips() == 1
-
-    # Same screen, same detections: the round trip demonstrably did not move
-    # the camera, so buying another one with the next Back credit only burns
-    # wall clock.  The bounded escape may continue; re-entering the map may not.
-    assert _forest_round_trip(planner) != RECOVERY_FOREST
-    assert planner.forest_trips() == 1
-
-
-def _drain_escape_ladder(
-    planner: HatchHomeRecoveryPlanner,
-    blind: Frame,
-    detections: list[Detection],
-) -> list[str]:
-    """Spend the bounded escape moves and return the order they were used."""
-
-    used: list[str] = []
-    for _ in range(10):
-        target = planner.choose(blind, detections)
-        if target is None or target.type == RECOVERY_UNDO:
-            break
-        used.append(target.type)
-        planner.on_action_success(target.type)
-    return used
-
-
 def test_home_recovery_undoes_its_own_swipe_when_the_landmark_disappears() -> None:
     planner = HatchHomeRecoveryPlanner()
     shifted = np.full((1600, 900, 3), 255, dtype=np.uint8)
@@ -2068,15 +2013,11 @@ def test_home_recovery_undoes_its_own_swipe_when_the_landmark_disappears() -> No
     swipe = nudge.detection.metadata["swipe"]
     planner.on_action_success(nudge.type)
 
-    # The gesture carried the pile and the anchor out of the viewport, so
-    # nothing measurable is left.  The bounded escape runs first - a frame
-    # captured mid-transition also matches nothing, and must not be mistaken
-    # for a lost landmark - and only then is the planner's own move reversed.
+    # Forest proves this is still the same home map, not a recenter command.
+    # If the measured pile disappeared after our own swipe, undo immediately
+    # on that map instead of leaving it.
     blind = frame(np.zeros((1600, 900, 3), dtype=np.uint8))
     home = [detection("forest_recenter_button", 841, 1296)]
-    assert _drain_escape_ladder(planner, blind, home)
-    assert not planner.is_failed()
-
     undo = planner.choose(blind, home)
     assert undo is not None and undo.type == RECOVERY_UNDO
     assert (undo.x, undo.y) == (swipe["x2"], swipe["y2"])
@@ -2085,8 +2026,9 @@ def test_home_recovery_undoes_its_own_swipe_when_the_landmark_disappears() -> No
 
     # One undo per applied gesture: the reversal must not become its own loop.
     planner.on_action_success(undo.type)
-    assert planner.choose(blind, home) is None
-    assert planner.is_failed()
+    next_target = planner.choose(blind, home)
+    assert next_target is not None and next_target.type == RECOVERY_BACK
+    assert next_target.type != RECOVERY_FOREST
 
 
 def test_home_recovery_undoes_latest_swipe_after_undo_then_new_nudge() -> None:
@@ -2198,12 +2140,11 @@ def test_full_flow_bounds_total_map_switches_across_recovery_retries() -> None:
             switches += 1
         planner.on_action_success(target.type)
 
-    # The observed incident switched maps 18 times over 111 seconds because
-    # each outer retry rebuilt the child with fresh counters.  The fact that
-    # the round trip does not work on this screen has to outlive the child
-    # that learned it.
-    assert switches <= 4
+    # Home recovery never uses a hunt-map transition as a camera correction.
+    assert switches == 0
     assert planner.is_complete()
+    assert planner.is_hatch_blocked()
+    assert not planner._complete
 
 
 class FakeClock:
