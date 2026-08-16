@@ -1928,6 +1928,32 @@ def test_home_recovery_uses_forest_round_trip_when_home_anchor_is_clipped() -> N
     assert target is not None and target.type == RECOVERY_MAP_EXIT
 
 
+def test_home_recovery_ignores_a_notice_without_no_button_and_recenters() -> None:
+    """The yellow task-complete toast is not an auto-place confirmation."""
+
+    planner = HatchHomeRecoveryPlanner()
+    shifted = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    shifted[1085:1097, 342:585] = (220, 180, 20)
+
+    target = planner.choose(
+        frame(shifted),
+        [
+            detection(AUTOPLACE_NOTICE, 450, 720),
+            detection(hatch.HOME_ANCHOR, 59, 561),
+        ],
+    )
+
+    assert target is not None and target.type == RECOVERY_RECENTER
+    assert not planner.is_failed()
+
+
+def test_home_recovery_keeps_exact_prompt_without_no_button_as_a_safe_failure() -> None:
+    planner = HatchHomeRecoveryPlanner()
+
+    assert planner.choose(frame(), [detection(AUTOPLACE_PROMPT, 450, 720)]) is None
+    assert planner.is_failed()
+
+
 def test_home_recovery_keeps_correcting_a_damped_but_converging_camera_move() -> None:
     """S13 needs more than two measured drags when the camera damps a swipe.
 

@@ -917,6 +917,7 @@ class HatchHomeRecoveryPlanner:
         self._hunt_dialog_dismissals = 0
         self._measured_corrections = 0
         self._last_offset: tuple[float, float] | None = None
+        self._autoplace_notice_without_no = False
         self._applied_swipes: list[tuple[int, int, int, int]] = []
         self._undone_swipes = 0
         self._pending_swipe: tuple[int, int, int, int] | None = None
@@ -969,6 +970,27 @@ class HatchHomeRecoveryPlanner:
         if self._complete or self._failed:
             return None
         by_type = _group(detections)
+        exact_prompt = any(
+            target_type in by_type
+            for target_type in (
+                AUTOPLACE_PROMPT,
+                SELECT_CONFIRM_PROMPT,
+                NESTED_PARENT_WARNING,
+            )
+        )
+        notice_only = AUTOPLACE_NOTICE in by_type and not exact_prompt
+        notice_misread = notice_only and _best(by_type.get(CONFIRM_NO)) is None
+        # A broad notice without its defining No control is not foreground.
+        # Exclude only that evidence from the home geometry checks, so a
+        # task-complete toast cannot make a visible, measurable home map look
+        # like an opaque dialog.  Keep the original detections for all named
+        # prompt, close and escape rules below.
+        home_detections = (
+            [item for item in detections if item.type != AUTOPLACE_NOTICE]
+            if notice_misread
+            else detections
+        )
+        home_by_type = _group(home_detections)
         vectors = _inverse_swipe_vectors(DEFAULT_SWIPE_VECTORS)
         # Once a shifted cave view is observed, replay the complete inverse
         # route.  The cave leaves the viewport after the first (horizontal)
@@ -985,9 +1007,9 @@ class HatchHomeRecoveryPlanner:
             )
             self._stage = "recenter_cave_view"
             return self._swipe(RECOVERY_RECENTER, x1, y1, x2, y2, cave_leg=True)
-        if is_centered_home_screen(frame, detections) and not _home_pile_click_blocked(
+        if is_centered_home_screen(frame, home_detections) and not _home_pile_click_blocked(
             frame,
-            detections,
+            home_detections,
         ):
             self._home_frames += 1
             self._stage = f"confirm_home_{self._home_frames}/{self.required_home_frames}"
@@ -997,24 +1019,36 @@ class HatchHomeRecoveryPlanner:
             return None
         self._home_frames = 0
 
-        known_prompt = any(
-            target_type in by_type
-            for target_type in (
-                AUTOPLACE_PROMPT,
-                AUTOPLACE_NOTICE,
-                SELECT_CONFIRM_PROMPT,
-                NESTED_PARENT_WARNING,
-            )
-        )
+        known_prompt = exact_prompt or notice_only
         if known_prompt:
             no = _best(by_type.get(CONFIRM_NO))
             if no is None:
-                self.logger.error("Hatch recovery | known prompt has no No button")
-                self._stage = "prompt_without_no"
-                self._failed = True
-                return None
-            self._stage = "cancel_prompt"
-            return _synthetic(RECOVERY_NO, no.x, no.y)
+                if notice_only:
+                    # AUTOPLACE_NOTICE is a deliberately broad layout
+                    # detector.  The task-complete toast seen on S13 has the
+                    # same yellow/white composition but no confirmation
+                    # controls.  It is evidence against the reading, not a
+                    # reason to abort recovery; fall through to the map and
+                    # home-pile rules below.  Exact prompt templates retain
+                    # the conservative failure path because a partially drawn
+                    # real confirmation must never be dismissed blindly.
+                    if not self._autoplace_notice_without_no:
+                        self.logger.warning(
+                            "Hatch recovery | auto-place layout without a No "
+                            "button; treating it as a misread and continuing"
+                        )
+                        self._autoplace_notice_without_no = True
+                else:
+                    self.logger.error("Hatch recovery | known prompt has no No button")
+                    self._stage = "prompt_without_no"
+                    self._failed = True
+                    return None
+            else:
+                self._autoplace_notice_without_no = False
+                self._stage = "cancel_prompt"
+                return _synthetic(RECOVERY_NO, no.x, no.y)
+        else:
+            self._autoplace_notice_without_no = False
 
         if AUTOPLACE_TITLE in by_type or SELECT_TITLE in by_type or NEST_TITLE in by_type:
             self._stage = "close_mask_layer"
@@ -1084,7 +1118,12 @@ class HatchHomeRecoveryPlanner:
         # Correcting the camera against a landmark that is still on screen
         # outranks any blind escape below: those only open and close screens,
         # and none of them can put the map back where it belongs.
-        recenter = self._recenter_target(frame, detections, by_type, vectors)
+        recenter = self._recenter_target(
+            frame,
+            home_detections,
+            home_by_type,
+            vectors,
+        )
         if recenter is not None:
             return recenter
 
