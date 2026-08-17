@@ -24,7 +24,15 @@ _SELECTED = re.compile(
     r"^Hatch (?P<tag>攻擊特化|HP特化) \| .*"
     r"decision=select row \d+ \((?P<stats>\d+/\d+/\d+)\)"
 )
+_CANDIDATES = re.compile(
+    r"^Hatch (?P<tag>攻擊特化|HP特化) \| .*\| candidates=\[(?P<stats>[^\]]*)\]"
+)
 _AUTOPLACE = re.compile(r"^Hatch auto-place \| tag=(?P<tag>[^|]+) \|")
+
+# 一次 parent 讀值可能整個位數誤讀(1->7、6->8),而同批 candidates 是整份清單
+# 的掃描結果,會連續多輪讀出一致的值。超過清單最大值這個倍數的 parent 觀測
+# 視為 OCR 離群,不納入紀錄。2.0 對真實的世代成長仍有寬裕空間。
+_OUTLIER_RATIO = 2.0
 _CAVE = re.compile(
     r"^Hatch cave \| capacity=(?P<count>\d+)/(?P<capacity>\d+) \| threshold=(?P<threshold>\d+)"
     r" \| cull=(?P<cull>True|False)"
@@ -86,11 +94,42 @@ def _file_signature(path: Path) -> str | None:
     return hashlib.sha256(prefix).hexdigest()
 
 
+def _record_ceiling(name: str) -> int:
+    """Upper bound above which a reading is an OCR error, not a real record.
+
+    Attack tops out far below the other stats in practice: production logs peak
+    around 181, while a single misread digit yields values several times that
+    (168 -> 788).  Keep the bound well clear of real growth but inside the gap
+    that whole-digit errors jump into.
+    """
+
+    return {"hp": 6000, "attack": 400, "speed": 500}[name]
+
+
 def _valid_stats(values: tuple[int, int, int]) -> bool:
     hp, attack, speed = values
     # These broad limits reject OCR catastrophes such as 2320 -> 7320 while
     # leaving ample headroom above every value observed in production.
     return 1 <= hp <= 6000 and 1 <= attack <= 1000 and 1 <= speed <= 500
+
+
+def _is_stat_outlier(
+    values: tuple[int, int, int],
+    ceilings: dict[str, int],
+) -> bool:
+    """Reject a reading that towers over the same round's candidate list.
+
+    A parent line is a single OCR pass and can misread a whole digit (168 ->
+    788).  The candidates list scans every nest in that round and re-reads the
+    same dinosaurs across consecutive rounds, so its maximum is the trustworthy
+    bound.  Without a list to compare against, keep the reading.
+    """
+
+    for name, value in zip(("hp", "attack", "speed"), values, strict=True):
+        ceiling = ceilings.get(name)
+        if ceiling and value > ceiling * _OUTLIER_RATIO:
+            return True
+    return False
 
 
 def _record_stat_names(payload: dict[str, Any]) -> tuple[str, ...]:
@@ -104,12 +143,21 @@ def _record_stat_names(payload: dict[str, Any]) -> tuple[str, ...]:
     from either source.
     """
 
+    # 攝入時判定的離群讀值:事件保留供診斷,但任何重建路徑都不得採用。
+    if payload.get("outlier"):
+        return ()
     tag = payload.get("tag")
     if tag == "HP特化":
-        return ("hp", "speed")
-    if tag == "攻擊特化":
-        return ("attack", "speed")
-    return ("hp", "attack", "speed")
+        names = ("hp", "speed")
+    elif tag == "攻擊特化":
+        names = ("attack", "speed")
+    else:
+        names = ("hp", "attack", "speed")
+    # 整位數誤讀(168 -> 788)會落在真實值構不到的區間;事件仍保留供診斷,
+    # 但這種讀值不得成為最高紀錄。這道上限對每條重建路徑一致生效。
+    return tuple(
+        name for name in names if int(payload.get(name, 0)) <= _record_ceiling(name)
+    )
 
 
 class MetricsStore:
@@ -368,6 +416,7 @@ class MetricsStore:
         tag: str,
         role: str,
         suffix: str,
+        ceilings: dict[str, int] | None = None,
     ) -> None:
         if not _valid_stats(values):
             return
@@ -379,7 +428,12 @@ class MetricsStore:
             "tag": tag,
             "role": role,
         }
-        self._update_stat_records(connection, occurred_at, payload)
+        # 離群讀值仍留在 metric_events 供診斷,只是不得登上紀錄榜。標記寫進
+        # payload,日後從事件表重建排行榜時才不會把它放回來。
+        if _is_stat_outlier(values, ceilings or {}):
+            payload["outlier"] = True
+        else:
+            self._update_stat_records(connection, occurred_at, payload)
         self._record(
             connection,
             source,
@@ -525,8 +579,21 @@ class MetricsStore:
             self._record(connection, source, occurred_at, "hatch")
             return
 
+        candidates = _CANDIDATES.match(message)
+        if candidates is not None:
+            ceilings: dict[str, int] = {}
+            for stats_match in _STATS.finditer(candidates.group("stats")):
+                for name in ("hp", "attack", "speed"):
+                    value = int(stats_match.group(name))
+                    if value > ceilings.get(name, 0):
+                        ceilings[name] = value
+            if ceilings:
+                state["stat_ceilings"] = ceilings
+            # 這行本身不產生觀測,只為後續 parent 讀值提供離群基準。
+
         parent = _PARENT.match(message)
         if parent is not None:
+            ceilings = state.get("stat_ceilings") or {}
             for index, stats_match in enumerate(_STATS.finditer(message)):
                 values = tuple(int(stats_match.group(name)) for name in ("hp", "attack", "speed"))
                 self._record_stats(
@@ -537,6 +604,7 @@ class MetricsStore:
                     tag=parent.group("tag"),
                     role="parent",
                     suffix=f":stat:{index}",
+                    ceilings=ceilings,
                 )
             return
 

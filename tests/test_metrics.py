@@ -87,6 +87,33 @@ def test_metrics_keeps_secondary_hp_attack_out_of_attack_record(tmp_path: Path) 
     assert 737 in raw_attacks, "raw evidence remains available for diagnosis"
 
 
+def test_metrics_keeps_parent_outlier_out_of_record(tmp_path: Path) -> None:
+    logs = tmp_path / "logs"
+    today = datetime.now().astimezone().date()
+    # 真實案例:同一隻恐龍讀到攻擊 168,單次 parent 整位數誤讀成 788。每輪的
+    # parent 行都早於同輪 candidates,判定不能依賴清單先到。
+    append_log(
+        logs / f"{today:%Y%m%d}.log",
+        """
+10:33:16 | INFO | Hatch 攻擊特化 | side=left | parent=1500/788/147 | pair=1500/788/147,1320/168/134
+10:33:34 | INFO | Hatch 攻擊特化 | side=right | parent=1320/168/134 | pair=1500/788/147,1320/168/134
+""",
+    )
+    store = MetricsStore(tmp_path / "data" / "stats.sqlite3", logs)
+
+    result = store.snapshot()
+
+    assert result["records"]["attack"]["value"] == 168
+    with sqlite3.connect(store.database) as connection:
+        raw_attacks = [
+            json.loads(row[0])["attack"]
+            for row in connection.execute(
+                "SELECT payload_json FROM metric_events WHERE kind = 'stat_observation'"
+            )
+        ]
+    assert 788 in raw_attacks, "raw evidence remains available for diagnosis"
+
+
 def test_metrics_repairs_legacy_cross_specialization_record(tmp_path: Path) -> None:
     logs = tmp_path / "logs"
     today = datetime.now().astimezone().date()
