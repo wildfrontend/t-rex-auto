@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import subprocess
 import time
 from datetime import datetime
 from pathlib import Path
@@ -16,10 +17,21 @@ import capture as capture_facade
 import detector as detector_facade
 import dino_bot.application as application_module
 import planner as planner_facade
-from dino_bot.actions import AdbActionDriver, AdbClient, RecordingActionDriver
+from dino_bot.actions import (
+    AdbActionDriver,
+    AdbClient,
+    AdbError,
+    RecordingActionDriver,
+)
 from dino_bot.assets import create_template
 from dino_bot.cli import apply_run_timing, build_parser
-from dino_bot.config import AppConfig, ConfigError, WorkflowConfig, load_config
+from dino_bot.config import (
+    AdbConfig,
+    AppConfig,
+    ConfigError,
+    WorkflowConfig,
+    load_config,
+)
 from dino_bot.cull import CapacityRead
 from dino_bot.detection import (
     DetectorAssetError,
@@ -3548,3 +3560,125 @@ def test_hunt_team_availability_detector_handles_a_single_digit_team_cap() -> No
     # 還有隊伍可派時絕不能誤判:那會取消一次本來打得成的狩獵。
     for label in ("1 / 5", "3 / 5", "5 / 5"):
         assert detector.detect(team_screen(label)) == [], label
+
+
+def _completed(returncode: int = 0, stderr: bytes = b"") -> subprocess.CompletedProcess[bytes]:
+    return subprocess.CompletedProcess(
+        args=["adb"], returncode=returncode, stdout=b"", stderr=stderr
+    )
+
+
+def _timeout_client(monkeypatch: pytest.MonkeyPatch, outcomes: list[object]) -> AdbClient:
+    monkeypatch.setattr(AdbClient, "_resolve_executable", staticmethod(lambda _: "adb"))
+    monkeypatch.setattr("dino_bot.actions.time.sleep", lambda _: None)
+    client = AdbClient(AdbConfig(serial="127.0.0.1:16416", timeout=1.0))
+    calls: list[list[str]] = []
+
+    def fake_run(command, **kwargs):
+        calls.append(list(command))
+        outcome = outcomes.pop(0)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr("dino_bot.actions.subprocess.run", fake_run)
+    client._test_calls = calls  # type: ignore[attr-defined]
+    return client
+
+
+def test_screencap_timeout_reconnects_and_retries_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A timed-out screencap must recover instead of killing the run."""
+
+    client = _timeout_client(
+        monkeypatch,
+        [
+            subprocess.TimeoutExpired(cmd="adb", timeout=1.0),  # screencap hangs
+            _completed(),  # reconnect
+            _completed(),  # connect
+            _completed(),  # retried screencap succeeds
+        ],
+    )
+
+    client.run(["exec-out", "screencap", "-p"], binary=True)
+
+    calls = client._test_calls  # type: ignore[attr-defined]
+    assert [call[-1] for call in calls] == [
+        "-p",  # screencap times out
+        "reconnect",
+        "127.0.0.1:16416",  # connect
+        "-p",  # retried exactly once, and succeeds
+    ]
+
+
+def test_screencap_timeout_twice_raises_adb_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A second timeout is genuine and surfaces as a plain AdbError."""
+
+    client = _timeout_client(
+        monkeypatch,
+        [
+            subprocess.TimeoutExpired(cmd="adb", timeout=1.0),
+            _completed(),  # reconnect
+            _completed(),  # connect
+            subprocess.TimeoutExpired(cmd="adb", timeout=1.0),  # retry also hangs
+        ],
+    )
+
+    with pytest.raises(AdbError) as excinfo:
+        client.run(["exec-out", "screencap", "-p"], binary=True)
+    assert "reconnect was attempted once" in str(excinfo.value)
+    assert type(excinfo.value) is AdbError
+
+
+def test_recovery_command_timeout_does_not_mask_the_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A hung `reconnect` must still let the original command be retried."""
+
+    client = _timeout_client(
+        monkeypatch,
+        [
+            subprocess.TimeoutExpired(cmd="adb", timeout=1.0),  # screencap hangs
+            subprocess.TimeoutExpired(cmd="adb", timeout=1.0),  # reconnect hangs too
+            _completed(),  # connect
+            _completed(),  # retried screencap still succeeds
+        ],
+    )
+
+    client.run(["exec-out", "screencap", "-p"], binary=True)
+
+
+def test_non_device_command_timeout_is_not_retried(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only shell/exec-out commands are recoverable; `devices` is not."""
+
+    client = _timeout_client(
+        monkeypatch, [subprocess.TimeoutExpired(cmd="adb", timeout=1.0)]
+    )
+
+    with pytest.raises(AdbError):
+        client.run(["devices", "-l"], use_serial=False)
+    assert len(client._test_calls) == 1  # type: ignore[attr-defined]
+
+
+def test_closed_transport_still_reconnects_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The pre-existing `error: closed` recovery keeps working."""
+
+    client = _timeout_client(
+        monkeypatch,
+        [
+            _completed(returncode=1, stderr=b"error: closed"),
+            _completed(),  # reconnect
+            _completed(),  # connect
+            _completed(),  # retry succeeds
+        ],
+    )
+
+    client.run(["shell", "input", "tap", "1", "2"])
+    assert any("reconnect" in call for call in client._test_calls)  # type: ignore[attr-defined]

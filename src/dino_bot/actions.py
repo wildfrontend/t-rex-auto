@@ -21,6 +21,14 @@ class AdbError(RuntimeError):
     pass
 
 
+class _AdbTimeout(AdbError):
+    """An ADB invocation that exceeded its timeout.
+
+    Internal to `AdbClient`: `run` either recovers from it or re-raises it as a
+    plain `AdbError`, so callers never need to know this subclass exists.
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class DeviceInfo:
     serial: str
@@ -89,15 +97,35 @@ class AdbClient:
         binary: bool = False,
         check: bool = True,
     ) -> bytes | str:
-        completed = self._invoke(args, use_serial=use_serial)
+        recoverable = (
+            use_serial
+            and bool(self.config.serial)
+            and bool(args)
+            and args[0] in {"shell", "exec-out"}
+        )
         reconnect_attempted = False
+        try:
+            completed = self._invoke(args, use_serial=use_serial)
+        except _AdbTimeout as exc:
+            # Same bounded recovery as a closed transport: one reconnect, one
+            # retry.  A second timeout is genuine and propagates as AdbError.
+            if not recoverable:
+                raise AdbError(str(exc)) from exc
+            reconnect_attempted = True
+            self._recover_closed_transport()
+            try:
+                completed = self._invoke(args, use_serial=use_serial)
+            except _AdbTimeout as retry_exc:
+                raise AdbError(
+                    f"{retry_exc} (ADB reconnect was attempted once; restart the"
+                    " emulator if it remains unresponsive)"
+                ) from retry_exc
+
         if (
             check
             and completed.returncode != 0
-            and use_serial
-            and self.config.serial
-            and args
-            and args[0] in {"shell", "exec-out"}
+            and recoverable
+            and not reconnect_attempted
             and self._is_closed_transport(completed)
         ):
             # Some emulator ADB daemons remain listed as `device` while their
@@ -107,7 +135,10 @@ class AdbClient:
             # connection; keep this recovery strictly bounded to one attempt.
             reconnect_attempted = True
             self._recover_closed_transport()
-            completed = self._invoke(args, use_serial=use_serial)
+            try:
+                completed = self._invoke(args, use_serial=use_serial)
+            except _AdbTimeout as exc:
+                raise AdbError(str(exc)) from exc
 
         if check and completed.returncode != 0:
             message = self._error_message(completed)
@@ -134,7 +165,13 @@ class AdbClient:
                 timeout=self.config.timeout,
                 check=False,
             )
-        except (OSError, subprocess.TimeoutExpired) as exc:
+        except subprocess.TimeoutExpired as exc:
+            # A timed-out screencap looks identical to a wedged transport from
+            # here, and MuMu produces both.  Report it as a synthetic failure so
+            # `run` can route it through the same bounded reconnect recovery
+            # that already handles `error: closed`, instead of killing the run.
+            raise _AdbTimeout(f"ADB command failed to start: {exc}") from exc
+        except OSError as exc:
             raise AdbError(f"ADB command failed to start: {exc}") from exc
 
     @staticmethod
@@ -151,16 +188,23 @@ class AdbClient:
         return cls._error_message(completed).lower() == "error: closed"
 
     def _recover_closed_transport(self) -> None:
-        # Ignore the recovery command's own exit code: the original command is
-        # retried exactly once and remains the authoritative result.
-        self._invoke(["reconnect"], use_serial=True)
+        # Ignore the recovery command's own exit code *and* its timeouts: the
+        # original command is retried exactly once and remains the
+        # authoritative result.  A hung `reconnect` must not mask that retry.
+        self._invoke_quietly(["reconnect"], use_serial=True)
         time.sleep(0.5)
         if self.config.serial:
-            self._invoke(
+            self._invoke_quietly(
                 ["connect", self.config.serial],
                 use_serial=False,
             )
             time.sleep(0.5)
+
+    def _invoke_quietly(self, args: Sequence[str], *, use_serial: bool) -> None:
+        try:
+            self._invoke(args, use_serial=use_serial)
+        except AdbError:
+            pass
 
     def connect(self) -> str:
         if not self.config.serial:
