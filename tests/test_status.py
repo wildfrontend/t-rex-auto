@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -159,3 +160,35 @@ def test_local_status_server_rejects_unknown_control_and_remote_origin(
     assert unknown_error.value.code == 404
     assert origin_error.value.code == 403
     assert lookalike_error.value.code == 403
+
+
+def test_client_disconnect_does_not_raise_or_kill_the_server(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A client that hangs up mid-response must stay silent and non-fatal.
+
+    Reproduces the real failure: a status poll that timed out client-side left
+    the server writing into a closed socket, which printed a ConnectionAborted
+    traceback to the Bot's console.
+    """
+
+    write_log(tmp_path, sample_log())
+
+    with LocalStatusServer(tmp_path, port=0) as server:
+        host, port = "127.0.0.1", int(server.url.rsplit(":", 1)[1])
+
+        # Send a request, then close without reading the reply.
+        for _ in range(5):
+            sock = socket.create_connection((host, port), timeout=2)
+            sock.sendall(b"GET /status HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            sock.close()
+
+        # The server must still answer normally afterwards.
+        with urlopen(f"{server.url}/status", timeout=5) as response:  # noqa: S310
+            status = json.load(response)
+
+    assert status["successful_hunts"] == 1
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.err
+    assert "ConnectionAborted" not in captured.err

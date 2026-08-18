@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import threading
 from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -30,8 +31,23 @@ def _is_loopback_origin(origin: str) -> bool:
     }
 
 
+_DISCONNECT_ERRORS = (
+    BrokenPipeError,
+    ConnectionAbortedError,
+    ConnectionResetError,
+)
+
+
 class _StatusHttpServer(ThreadingHTTPServer):
     daemon_threads = True
+
+    def handle_error(self, request: Any, client_address: Any) -> None:
+        # A client that hangs up mid-response (a dashboard poll that timed out,
+        # a closed browser tab) is routine, not a fault worth a stack trace on
+        # the Bot's console.  Anything else still surfaces normally.
+        if isinstance(sys.exc_info()[1], _DISCONNECT_ERRORS):
+            return
+        super().handle_error(request, client_address)
 
     def __init__(
         self,
@@ -51,12 +67,17 @@ class _StatusHandler(BaseHTTPRequestHandler):
 
     def _send_json(self, status_code: int, payload: Any) -> None:
         body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
-        self.send_response(status_code)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(status_code)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+        except _DISCONNECT_ERRORS:
+            # The caller went away before it read the reply.  Nothing left to
+            # send, and no reason to unwind through the rest of the handler.
+            self.close_connection = True
 
     def do_GET(self) -> None:  # noqa: N802
         path = urlparse(self.path).path.rstrip("/") or "/"
