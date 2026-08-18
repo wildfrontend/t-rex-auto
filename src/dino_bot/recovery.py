@@ -168,7 +168,11 @@ class HuntProgressWatchdog:
     )
     _SUSPENDED_PREFIXES = ("mail_", "startup_")
     _SUSPENDED_TYPES = frozenset(
-        {"duplicate_login_close_button", "device_history_confirm_button"}
+        {
+            "duplicate_login_close_button",
+            "device_history_confirm_button",
+            "server_error_restart_button",
+        }
     )
 
     def __init__(

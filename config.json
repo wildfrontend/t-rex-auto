@@ -76,6 +76,7 @@
   },
   "planner": {
     "target_types": [
+      "server_error_restart_button",
       "duplicate_login_close_button",
       "device_history_confirm_button",
       "startup_offer_dismiss",

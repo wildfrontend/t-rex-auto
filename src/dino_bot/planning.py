@@ -250,6 +250,7 @@ class HuntPlanner(TargetPlanner):
             "startup_offer_dismiss",
             "startup_growth_result_back",
             "startup_auto_battle_close",
+            "server_error_restart_button",
         ),
         launch_only_types: Sequence[str] = (
             "duplicate_login_close_button",

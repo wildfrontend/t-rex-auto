@@ -41,6 +41,16 @@
       "match_scale": 0.5
     },
     {
+      "type": "server_error_restart_button",
+      "file": "templates/server-error-restart-button.png",
+      "threshold": 0.85,
+      "click_offset": [
+        94,
+        45
+      ],
+      "match_scale": 0.5
+    },
+    {
       "type": "dinosaur",
       "file": "templates/dinosaur-level-label.png",
       "threshold": 0.6,

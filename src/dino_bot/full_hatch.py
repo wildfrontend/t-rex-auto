@@ -122,6 +122,9 @@ STARTUP_SIMPLE_INTERRUPTS: tuple[str, ...] = (
     "duplicate_login_close_button",
     "device_history_confirm_button",
     "startup_offer_dismiss",
+    # The server-error dialog is modal and can appear at any point, not only
+    # at launch; it blocks every other action until RESTART is pressed.
+    "server_error_restart_button",
 )
 STARTUP_DETECTION_TYPES: frozenset[str] = frozenset(
     {
