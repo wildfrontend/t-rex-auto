@@ -451,7 +451,7 @@ def test_cave_above_threshold_runs_weakest_continuous_battle(
     select = [
         detection(SELECT_TITLE, 450, 300),
         detection(nest_filter.TAG_HDR_ALL, 228, 204),
-        detection(SELECT_WEAKEST_BUTTON, 259, 1304),
+        detection(SELECT_WEAKEST_BUTTON, 640, 1297),
         detection(SELECT_CHOOSE_BUTTON, 450, 1304),
     ]
     target = planner.choose(frame(), select)
@@ -473,6 +473,37 @@ def test_cave_above_threshold_runs_weakest_continuous_battle(
         "Hatch cave | cull completed | before=301/350 | selected=40"
         " | expected_after=261 | result=claim_verified"
     ) in caplog.text
+
+
+def test_cave_ignores_weakest_match_at_the_strongest_button(monkeypatch) -> None:
+    """A weakest-button hit at a sibling's position must not be tapped.
+
+    The select-dino row holds green "strongest", cyan "choose", yellow
+    "weakest" and yellow "top". A template cut from the wrong button still
+    matches at ~1.0, so confidence alone once sent the cull into "select
+    strongest" and sacrificed the best dinosaurs. Position is the guard.
+    """
+
+    _patch_capacity(monkeypatch, 301)
+    planner = CaveCullPlanner(DigitReader(GLYPHS), threshold=300)
+    for _ in range(2):
+        swipe = planner.choose(frame(), [])
+        planner.on_action_success(swipe.type)
+    assert planner.choose(frame(), [detection("hatch_cave", 209, 1150)]) is None
+    target = planner.choose(frame(), [detection("hatch_cave", 209, 1150)])
+    planner.on_action_success(target.type)
+    target = planner.choose(frame(), [detection(CAVE_SELECT_BUTTON, 450, 1190)])
+    planner.on_action_success(target.type)
+
+    # x=259 is the green "select strongest" button.
+    assert planner.choose(
+        frame(),
+        [
+            detection(SELECT_TITLE, 450, 300),
+            detection(nest_filter.TAG_HDR_ALL, 228, 204),
+            detection(SELECT_WEAKEST_BUTTON, 259, 1304),
+        ],
+    ) is None
 
 
 def test_capacity_probe_records_required_cull_without_opening_cave(monkeypatch) -> None:

@@ -95,6 +95,12 @@ CAVE_CLOSE_BUTTON = "hatch_cave_close_button"
 SELECT_TAG_HEADER = "hatch_cull_tag_header"
 SELECT_WEAKEST_BUTTON = "hatch_select_weakest_button"
 SELECT_CHOOSE_BUTTON = "hatch_select_choose_button"
+# The select-dino list carries four look-alike buttons in one row: green
+# "strongest", cyan "choose", yellow "weakest" and yellow "top". A template
+# cut from the wrong one still matches at ~1.0, and confidence alone cannot
+# tell them apart - that mistake culled the strongest dinosaurs instead of
+# the weakest. Anchor the tap to the calibrated position as well.
+SELECT_WEAKEST_BUTTON_POINT = (640.0, 1297.0)
 DEFAULT_CULL_BATCH_SIZE = 40
 DEFAULT_CAPACITY_CONSISTENT_READS = 2
 
@@ -1916,7 +1922,11 @@ class CaveCullPlanner:
         if self._stage == "select_weakest":
             if SELECT_TITLE not in by_type:
                 return None
-            button = _best(by_type.get(SELECT_WEAKEST_BUTTON))
+            button = _near(
+                by_type.get(SELECT_WEAKEST_BUTTON),
+                _scaled(frame, SELECT_WEAKEST_BUTTON_POINT, self.reference_width),
+                60,
+            )
             return _target(button) if button is not None else None
         if self._stage == "confirm_selection":
             if SELECT_TITLE not in by_type:
