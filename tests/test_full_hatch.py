@@ -1656,6 +1656,24 @@ def test_recovery_dismisses_a_hunt_prompt_that_hides_the_map_exit() -> None:
     )
 
 
+def test_recovery_dismisses_the_idle_growth_result_card() -> None:
+    """The auto-growth card dims the map and blocks the egg pile.
+
+    It appears on its own after the game idles and carries no close button,
+    so recovery used to exhaust its Back ladder against it: one S9 run gave
+    up at 22:50, dropped the hatch workflow, and hunted for the rest of the
+    hour. Tapping the dimmed margin beside the card dismisses it.
+    """
+
+    planner = HatchHomeRecoveryPlanner()
+
+    target = planner.choose(frame(), [detection(STARTUP_GROWTH_RESULT, 450, 1270)])
+
+    assert target is not None
+    assert target.type == RECOVERY_MASK_CLOSE
+    assert (target.x, target.y) == (50, 800)
+
+
 def test_recovery_prefers_a_real_close_button_over_tapping_empty_map() -> None:
     planner = HatchHomeRecoveryPlanner()
 

@@ -1154,6 +1154,20 @@ class HatchHomeRecoveryPlanner:
                 *_scaled(frame, (50.0, 800.0), self.reference_width),
             )
 
+        # The idle "auto growth result" card appears on its own after the game
+        # has run unattended, and it dims the whole map behind it: the egg
+        # pile cannot be measured, so the pile tap fails and recovery cannot
+        # prove a centred home.  One S9 run lost the hatch workflow that way
+        # at 22:50 and spent the next hour hunting only.  The card carries no
+        # close button - tapping the dimmed margin beside it dismisses it -
+        # so reuse the mask point the nest and auto-place layers already use.
+        if STARTUP_GROWTH_RESULT in by_type:
+            self._stage = "close_growth_result_mask"
+            return _synthetic(
+                RECOVERY_MASK_CLOSE,
+                *_scaled(frame, (50.0, 800.0), self.reference_width),
+            )
+
         claim = _best(by_type.get(hatch_feature.CLAIM_BUTTON))
         if claim is not None:
             # Collecting a completed hatch/battle result is safer than Back:
