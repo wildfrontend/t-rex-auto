@@ -1741,6 +1741,40 @@ def test_full_flow_uses_nest_shortcut_before_tapping_visible_home() -> None:
     assert close is not None and close.type == RECOVERY_MASK_CLOSE
 
 
+def test_full_flow_lets_recovery_dismiss_the_card_instead_of_retapping() -> None:
+    """Recovery owns the screen once it starts.
+
+    The shortcut branch taps *inside* the card to open the nest; recovery
+    needs the card gone to measure the egg pile.  While the shortcut ran
+    first the recovery rung for the same card was unreachable: on 2026-08-31
+    S9 re-tapped the shortcut three times, exhausted the Back ladder at
+    10:54 and hunted without hatching for the rest of the session.
+    """
+
+    planner = make_full_planner()
+    card = [
+        detection(
+            STARTUP_GROWTH_RESULT,
+            450,
+            1270,
+            metadata={"shortcut_layout": "centered_nest"},
+        )
+    ]
+
+    first = planner.choose(frame(), card)
+    assert first is not None and first.type == STARTUP_NEST_SHORTCUT
+    planner.on_action_success(first.type)
+    assert planner._stage == "recover_home"
+
+    # With the card still up, recovery must dismiss it rather than tap the
+    # shortcut again for as long as the card survives.
+    for _ in range(3):
+        target = planner.choose(frame(), card)
+        assert target is not None
+        assert target.type == RECOVERY_MASK_CLOSE
+        assert (target.x, target.y) == (50, 800)
+
+
 def test_full_flow_uses_centred_nest_shortcut_on_new_growth_result_layout() -> None:
     planner = make_full_planner()
     target = planner.choose(

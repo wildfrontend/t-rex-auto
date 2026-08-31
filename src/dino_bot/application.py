@@ -23,6 +23,7 @@ from .detection import (
     StartupAutoBattleDialogDetector,
     StartupGrowthResultDetector,
     StartupLayoutGuard,
+    StartupOfferDismissDetector,
     TargetTooStrongDetector,
 )
 from .digits import DigitReader
@@ -147,6 +148,9 @@ def _create_hunt_engine(config: AppConfig, *, verbose: bool = False) -> BotEngin
         TargetTooStrongDetector(),
         StartupLayoutGuard(StartupGrowthResultDetector(), logger=logger),
         StartupLayoutGuard(StartupAutoBattleDialogDetector(), logger=logger),
+        # Unguarded for the same reason as the hatch engine above: a timed
+        # offer can dim the map long after startup has finished.
+        StartupOfferDismissDetector(),
         reference_size=open_cv_detector.reference_size,
     )
     planner = _build_hunt_planner(config)
@@ -436,6 +440,10 @@ def _create_hatch_engine(
             TargetTooStrongDetector(),
             StartupLayoutGuard(StartupGrowthResultDetector(), logger=logger),
             StartupLayoutGuard(StartupAutoBattleDialogDetector(), logger=logger),
+            # Deliberately unguarded: StartupLayoutGuard mutes its detector
+            # once a hunt completes, but timed offers appear mid-session -
+            # the one that stalled S9 arrived while the run was underway.
+            StartupOfferDismissDetector(),
             reference_size=open_cv_detector.reference_size,
         )
     else:

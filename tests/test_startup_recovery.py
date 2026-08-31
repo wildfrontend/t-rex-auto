@@ -13,6 +13,7 @@ from dino_bot.detection import (
     OpenCvDetector,
     StartupAutoBattleDialogDetector,
     StartupGrowthResultDetector,
+    StartupOfferDismissDetector,
 )
 from dino_bot.models import Frame
 
@@ -137,3 +138,61 @@ def test_startup_auto_battle_dialog_requires_cyan_button() -> None:
     frame = Frame(image=image, captured_at=datetime.now(UTC), source="test")
 
     assert StartupAutoBattleDialogDetector().detect(frame) == []
+
+
+def _offer_card_image() -> np.ndarray:
+    """Build the timed promotion card that stalled S9 on 2026-08-31.
+
+    Ratios match the captured frame: orange ribbon 0.75, cream body 0.69,
+    side margins 0.99 dimmed by the modal backdrop.
+    """
+
+    image = np.zeros((1600, 900, 3), dtype=np.uint8)
+    image[265:365, 165:740] = (40, 160, 230)
+    image[800:1250, 175:725] = (160, 205, 232)
+    return image
+
+
+def test_startup_offer_card_is_detected_and_taps_the_backdrop() -> None:
+    frame = Frame(image=_offer_card_image(), captured_at=datetime.now(UTC), source="test")
+
+    detections = StartupOfferDismissDetector().detect(frame)
+
+    assert len(detections) == 1
+    detection = detections[0]
+    assert detection.type == "startup_offer_dismiss"
+    # The card has no close button; the tap must land on the dimmed backdrop.
+    assert (detection.x, detection.y) == (50, 800)
+
+
+def test_startup_offer_card_scales_to_the_device_resolution() -> None:
+    image = cv2.resize(_offer_card_image(), (1080, 1920), interpolation=cv2.INTER_LINEAR)
+    frame = Frame(image=image, captured_at=datetime.now(UTC), source="test")
+
+    detections = StartupOfferDismissDetector().detect(frame)
+
+    assert len(detections) == 1
+    assert (detections[0].x, detections[0].y) == (60, 960)
+
+
+def test_startup_offer_card_ignores_a_bright_undimmed_screen() -> None:
+    """The dimmed margins are what prove a modal is covering the map.
+
+    Without them an ordinary bright screen carrying orange and cream artwork
+    would be dismissed by a tap on live map controls.
+    """
+
+    image = _offer_card_image()
+    image[:, 0:120] = 255
+    image[:, 780:900] = 255
+    frame = Frame(image=image, captured_at=datetime.now(UTC), source="test")
+
+    assert StartupOfferDismissDetector().detect(frame) == []
+
+
+def test_startup_offer_card_requires_its_title_ribbon() -> None:
+    image = _offer_card_image()
+    image[265:365, 165:740] = 0
+    frame = Frame(image=image, captured_at=datetime.now(UTC), source="test")
+
+    assert StartupOfferDismissDetector().detect(frame) == []

@@ -3201,8 +3201,11 @@ def test_planning_scan_leaves_out_screens_the_current_stage_cannot_reach() -> No
     assert not scoped & {
         "device_history_confirm_button",
         "duplicate_login_close_button",
-        "startup_offer_dismiss",
-    }
+    }, "a device-history prompt cannot be raised mid-run"
+    assert "startup_offer_dismiss" in scoped, (
+        "timed promotion cards appear mid-run, not only at launch: one dimmed "
+        "the map at 10:53 on 2026-08-31 and cost the hatch workflow an hour"
+    )
     assert not scoped & {
         "mail_collect_all_button",
         "mail_reward_collect_button",
@@ -3663,6 +3666,32 @@ def test_non_device_command_timeout_is_not_retried(
     with pytest.raises(AdbError):
         client.run(["devices", "-l"], use_serial=False)
     assert len(client._test_calls) == 1  # type: ignore[attr-defined]
+
+
+def test_offline_device_reconnects_instead_of_killing_the_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`error: device offline` is recoverable, exactly like `error: closed`.
+
+    The emulator stays listed while its connection is gone.  Only the literal
+    string `error: closed` was treated as recoverable, so a screencap that hit
+    this state raised straight out as a fatal CaptureError: S9 died at 14:58
+    on 2026-08-31 after 4970 actions, 3.5 hours into an otherwise clean run.
+    """
+
+    client = _timeout_client(
+        monkeypatch,
+        [
+            _completed(returncode=1, stderr=b"error: device offline"),
+            _completed(),  # reconnect
+            _completed(),  # connect
+            _completed(),  # retry succeeds
+        ],
+    )
+
+    client.run(["exec-out", "screencap", "-p"], binary=True)
+
+    assert any("reconnect" in call for call in client._test_calls)  # type: ignore[attr-defined]
 
 
 def test_closed_transport_still_reconnects_once(

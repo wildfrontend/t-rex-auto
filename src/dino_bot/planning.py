@@ -255,7 +255,9 @@ class HuntPlanner(TargetPlanner):
         launch_only_types: Sequence[str] = (
             "duplicate_login_close_button",
             "device_history_confirm_button",
-            "startup_offer_dismiss",
+            # startup_offer_dismiss is deliberately NOT launch-only: the game
+            # raises timed promotion cards mid-run.  One dimmed the map at
+            # 10:53 on 2026-08-31 and the hatch workflow was dropped an hour.
         ),
         own_path_types: Sequence[str] = ("own_hunt_path",),
         own_path_radius: float = 90.0,

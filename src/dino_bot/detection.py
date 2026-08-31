@@ -1003,6 +1003,102 @@ class StartupAutoBattleDialogDetector:
         ]
 
 
+class StartupOfferDismissDetector:
+    """Detect the timed promotion card that dims the map mid-session.
+
+    The game raises a paid offer ("遺跡探索促進" and friends) on its own while
+    the bot is running.  It has no close button and Android Back does not
+    touch it: on 2026-08-31 the recovery ladder spent its whole budget on one,
+    logging ``pixel_change=0.000`` for every Back, and S9 dropped the hatch
+    workflow at 10:54 to hunt for the rest of the session.
+
+    The card is identified by three independent bands, because the offer
+    artwork itself changes between promotions while the frame does not: an
+    orange title ribbon, a cream body panel, and - the part ordinary bright
+    screens cannot fake - both side margins dimmed by the modal backdrop.
+    Across 69 captured non-offer frames the orange band never exceeded 0.002.
+    """
+
+    def __init__(
+        self,
+        target_type: str = "startup_offer_dismiss",
+        reference_size: tuple[int, int] = (900, 1600),
+        min_orange_ratio: float = 0.45,
+        min_cream_ratio: float = 0.45,
+        min_dim_ratio: float = 0.90,
+    ) -> None:
+        self.target_type = target_type
+        self.reference_size = reference_size
+        self.min_orange_ratio = min_orange_ratio
+        self.min_cream_ratio = min_cream_ratio
+        self.min_dim_ratio = min_dim_ratio
+
+    def detect(self, frame: Frame) -> list[Detection]:
+        width, height = self.reference_size
+        image = frame.image
+        if (frame.width, frame.height) != self.reference_size:
+            image = cv2.resize(image, (width, height), interpolation=cv2.INTER_LINEAR)
+
+        pixels = image.astype(np.int16)
+        blue, green, red = pixels[:, :, 0], pixels[:, :, 1], pixels[:, :, 2]
+
+        # The title ribbon: saturated orange, measured at 0.753 on the frame
+        # that stalled S9 and at most 0.002 on every captured map screen.
+        orange = (
+            (red >= 180)
+            & (green >= 110)
+            & (green <= 205)
+            & (blue <= 110)
+            & (red >= blue + 90)
+        )
+        orange_ratio = float(orange[275:355, 175:730].mean())
+        if orange_ratio < self.min_orange_ratio:
+            return []
+
+        cream = (blue >= 120) & (green >= 170) & (red >= 200) & (red >= blue + 30)
+        cream_ratio = float(cream[820:1240, 185:715].mean())
+        if cream_ratio < self.min_cream_ratio:
+            return []
+
+        # Both margins must be dimmed.  This is what separates a modal offer
+        # from a bright, fully interactive screen that merely contains orange
+        # and cream artwork, and it is why the tap below is safe to make.
+        dimmed = (red < 90) & (green < 90) & (blue < 90)
+        dim_ratio = min(
+            float(dimmed[300:1300, 0:120].mean()),
+            float(dimmed[300:1300, 780:900].mean()),
+        )
+        if dim_ratio < self.min_dim_ratio:
+            return []
+
+        scale_x = frame.width / width
+        scale_y = frame.height / height
+        return [
+            Detection(
+                type=self.target_type,
+                # The card carries no close control; tapping the dimmed
+                # backdrop dismisses it.  Reuse the mask point the nest and
+                # auto-place layers already close through - it measured
+                # (33,34,32) on the stalled frame, so it lands on backdrop.
+                x=round(50 * scale_x),
+                y=round(800 * scale_y),
+                confidence=min(0.99, 0.7 + orange_ratio * 0.29),
+                bbox=BoundingBox(
+                    x=round(165 * scale_x),
+                    y=round(265 * scale_y),
+                    width=round(575 * scale_x),
+                    height=round(1000 * scale_y),
+                ),
+                metadata={
+                    "detector": "startup_offer_layout",
+                    "orange_ratio": orange_ratio,
+                    "cream_ratio": cream_ratio,
+                    "dim_ratio": dim_ratio,
+                },
+            )
+        ]
+
+
 class HatchAutoplaceDialogDetector:
     """Detect auto-place confirmation variants by their stable modal layout.
 

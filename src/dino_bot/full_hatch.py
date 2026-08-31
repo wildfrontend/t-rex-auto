@@ -2846,6 +2846,13 @@ class FullHatchPlanner:
             # shortcut while the nest title proves that this is already the
             # nest screen, or the synthetic tap lands on auto-place.
             and NEST_TITLE not in by_type
+            # Recovery owns the screen once it starts.  This branch taps the
+            # shortcut *inside* the card to reach the nest; recovery wants the
+            # card gone so it can measure the egg pile.  Letting this run
+            # first made the recovery rung for the same card unreachable, and
+            # on 2026-08-31 S9 re-tapped the shortcut three times, exhausted
+            # the Back ladder and dropped the hatch workflow for the session.
+            and self._stage != "recover_home"
             and (growth_result := _best(by_type.get(STARTUP_GROWTH_RESULT))) is not None
         ):
             self._no_target_since = None
