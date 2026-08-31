@@ -269,6 +269,70 @@ def test_reader_reads_widened_vertical_one_without_changing_real_seven(
     assert reader.read(true_seven) == "7"
 
 
+def test_wide_score_gap_still_resolves_an_unambiguous_one() -> None:
+    """A bolder rendering must not outvote a vertical body.
+
+    The seven template scores higher on a heavier-stroked one, and once that
+    gap passed ONE_SEVEN_MAX_SCORE_GAP the geometry check was skipped
+    entirely.  S9's right-hand parent speed therefore read 150 as 750 on
+    every screening while the left parent - identical drift, narrower gap -
+    read correctly.
+    """
+
+    image = glyph_image(
+        (
+            "#####",
+            "#####",
+            "..##.",
+            "..##.",
+            "..##.",
+            "..##.",
+            "..##.",
+            "..##.",
+            "..##.",
+        )
+    )
+    bbox, raster = segment_glyphs(image)[0]
+
+    # gap = 0.131, comfortably past the 0.12 ceiling that used to opt out.
+    assert _resolve_one_seven(
+        "7",
+        0.792,
+        {"1": 0.661, "7": 0.792},
+        bbox,
+        raster,
+    ) == ("1", 0.661)
+
+
+def test_wide_score_gap_keeps_a_real_seven() -> None:
+    """The same override must never convert a genuine seven."""
+
+    image = glyph_image(
+        (
+            "######",
+            "######",
+            "....##",
+            "....##",
+            "...##.",
+            "...##.",
+            "...#..",
+            "..##..",
+            "..##..",
+            ".##...",
+            "..#...",
+        )
+    )
+    bbox, raster = segment_glyphs(image)[0]
+
+    assert _resolve_one_seven(
+        "7",
+        0.800,
+        {"1": 0.640, "7": 0.800},
+        bbox,
+        raster,
+    ) == ("7", 0.800)
+
+
 # -- regression against shipped glyphs (offline T6) ---------------------------
 
 

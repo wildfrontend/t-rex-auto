@@ -170,15 +170,26 @@ def _resolve_one_seven(
         return best_char, best_score
     one_score = scores.get("1", 0.0)
     seven_score = scores.get("7", 0.0)
-    if (
-        min(one_score, seven_score) < MIN_MATCH_SCORE
-        or abs(one_score - seven_score) > ONE_SEVEN_MAX_SCORE_GAP
-    ):
+    if min(one_score, seven_score) < MIN_MATCH_SCORE:
         return best_char, best_score
 
     _, _, width, height = bbox
     aspect = width / height if height > 0 else 1.0
     top_bar, body_drift = _one_seven_geometry(raster)
+    if abs(one_score - seven_score) > ONE_SEVEN_MAX_SCORE_GAP:
+        # A wide score gap normally means the raw match is trustworthy, but a
+        # bolder rendering of the same glyph inflates the seven template's
+        # score without changing the shape.  S9's right-hand parent speed read
+        # 150 as 750 every screening this way: identical drift=0.000 to the
+        # left parent that read correctly, only gap=0.130 against the 0.12
+        # ceiling, so the geometry check was skipped exactly when it was
+        # needed.  Only an unambiguous body shape may override the score - a
+        # vertical lower body cannot belong to a seven, and vice versa.
+        if body_drift <= ONE_SEVEN_MAX_ONE_BODY_DRIFT and aspect <= ONE_SEVEN_MAX_ONE_ASPECT:
+            return "1", one_score
+        if body_drift >= ONE_SEVEN_MIN_SEVEN_BODY_DRIFT and top_bar >= ONE_SEVEN_MIN_SEVEN_TOP_BAR:
+            return "7", seven_score
+        return best_char, best_score
     looks_like_one = (
         aspect <= ONE_SEVEN_MAX_ONE_ASPECT
         and body_drift <= ONE_SEVEN_MAX_ONE_BODY_DRIFT
