@@ -180,12 +180,25 @@ class AdbClient:
         stdout = completed.stdout.decode("utf-8", errors="replace").strip()
         return stderr or stdout or "unknown ADB error"
 
+    # Transport states that one `reconnect` can clear.  `error: closed` is a
+    # shell transport the daemon has already dropped; `error: device offline`
+    # is the emulator still being listed while its connection is gone - the
+    # BlueStacks instance had been up for 3.5 hours when S9 hit it at 14:58
+    # on 2026-08-31 and the run died with 4970 actions completed.  Both are
+    # recovered the same way, and both are fatal without it.
+    _RECOVERABLE_TRANSPORT_ERRORS: frozenset[str] = frozenset(
+        {"error: closed", "error: device offline"}
+    )
+
     @classmethod
     def _is_closed_transport(
         cls,
         completed: subprocess.CompletedProcess[bytes],
     ) -> bool:
-        return cls._error_message(completed).lower() == "error: closed"
+        return (
+            cls._error_message(completed).lower()
+            in cls._RECOVERABLE_TRANSPORT_ERRORS
+        )
 
     def _recover_closed_transport(self) -> None:
         # Ignore the recovery command's own exit code *and* its timeouts: the
