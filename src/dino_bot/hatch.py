@@ -17,6 +17,7 @@ import numpy as np
 
 from .digits import DigitReader
 from .models import Detection, Frame, Image, Target
+from .targeting import best_detection, detection_target, swipe_target, synthetic_target
 
 # Target types. The hatch_ prefix keeps the vocabulary disjoint from hunt so
 # both features can coexist in one config without colliding.
@@ -367,14 +368,14 @@ class HatchPlanner:
         for item in detections:
             by_type.setdefault(item.type, []).append(item)
 
-        claim = self._best(by_type.get(CLAIM_BUTTON))
+        claim = best_detection(by_type.get(CLAIM_BUTTON))
         if claim is not None:
             self._stage = "claim"
-            return self._target(claim)
-        hatch_button = self._best(by_type.get(HATCH_BUTTON))
+            return detection_target(claim)
+        hatch_button = best_detection(by_type.get(HATCH_BUTTON))
         if hatch_button is not None:
             self._stage = "detail"
-            return self._target(hatch_button)
+            return detection_target(hatch_button)
         if INCUBATOR_TITLE in by_type:
             labels = by_type.get(HATCH_LABEL)
             if labels:
@@ -382,14 +383,14 @@ class HatchPlanner:
                 # Template hits in one visual row can differ by a few pixels
                 # vertically. Lock onto the top row first, then choose its
                 # leftmost egg so processing is deterministic row-major.
-                return self._target(self._top_left(labels, frame))
+                return detection_target(self._top_left(labels, frame))
             if self._scrolls_done < self.max_scrolls:
                 self._stage = "scroll"
                 return self._scroll_target(frame)
-            close = self._best(by_type.get(CLOSE_BUTTON))
+            close = best_detection(by_type.get(CLOSE_BUTTON))
             if close is not None:
                 self._stage = "close"
-                return self._target(close)
+                return detection_target(close)
             self._stage = "grid_no_close"
             return None
         if (
@@ -420,27 +421,11 @@ class HatchPlanner:
         )
 
     @staticmethod
-    def _best(items: list[Detection] | None) -> Detection | None:
-        if not items:
-            return None
-        return max(items, key=lambda item: item.confidence)
-
-    @staticmethod
     def _top_left(items: list[Detection], frame: Frame) -> Detection:
         top_y = min(item.y for item in items)
         row_tolerance = max(12, int(frame.width * 0.06))
         top_row = [item for item in items if item.y <= top_y + row_tolerance]
         return min(top_row, key=lambda item: item.x)
-
-    @staticmethod
-    def _target(detection: Detection) -> Target:
-        return Target(
-            type=detection.type,
-            x=detection.x,
-            y=detection.y,
-            confidence=detection.confidence,
-            detection=detection,
-        )
 
     def _scale(self, frame: Frame) -> float:
         return frame.width / self.reference_width
@@ -465,30 +450,16 @@ class HatchPlanner:
                 self._stage = "home_tap_blocked"
                 return None
             x, y = point
-        detection = Detection(
-            type=EGG_PILE,
-            x=x,
-            y=y,
-            confidence=1.0,
-            metadata={"synthetic": True},
-        )
-        return self._target(detection)
+        return synthetic_target(EGG_PILE, x, y)
 
     def _scroll_target(self, frame: Frame) -> Target:
         scale = self._scale(frame)
         x0, y0, x1, y1 = (value * scale for value in self.scroll_vector)
-        detection = Detection(
-            type=SCROLL,
-            x=int(x0),
-            y=int(y0),
-            confidence=1.0,
-            metadata={
-                "synthetic": True,
-                "swipe": {
-                    "x2": int(x1),
-                    "y2": int(y1),
-                    "duration_ms": self.scroll_duration_ms,
-                },
-            },
+        return swipe_target(
+            SCROLL,
+            int(x0),
+            int(y0),
+            int(x1),
+            int(y1),
+            duration_ms=self.scroll_duration_ms,
         )
-        return self._target(detection)

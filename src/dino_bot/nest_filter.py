@@ -12,6 +12,7 @@ from collections.abc import Sequence
 
 from .dropdowns import SELECT, Sighting, next_step
 from .models import Detection, Frame, Target
+from .targeting import best_detection, detection_target, synthetic_target
 
 NEST_TITLE = "hatch_nest_title"
 FILTER_HEADER = "hatch_tag_filter_header"
@@ -138,15 +139,15 @@ class NestTagFilterTestPlanner:
             self._scaled_header_point(frame),
         )
         if step.kind == SELECT:
-            option = self._best(by_type.get(self.target_option_type))
+            option = best_detection(by_type.get(self.target_option_type))
             if option is None:
                 self._stage = "menu_missing_target"
                 return None
             self._stage = "select_target"
-            return self._target(option)
+            return detection_target(option)
 
         # 表頭已顯示目標且選單未展開:不必重開重選,直接完成。
-        already = self._best(by_type.get(self.target_header_type))
+        already = best_detection(by_type.get(self.target_header_type))
         dropdown_open = any(by_type.get(t) for t in OPTION_LABELS)
         if already is not None and not dropdown_open:
             self._complete = True
@@ -159,7 +160,7 @@ class NestTagFilterTestPlanner:
             for item in by_type.get(target_type, ())
         ]
         if header_hits:
-            header = self._best(header_hits)
+            header = best_detection(header_hits)
             assert header is not None
             point = (header.x, header.y)
         else:
@@ -167,7 +168,7 @@ class NestTagFilterTestPlanner:
             # template. The nest title makes this fixed header tap safe.
             point = self._scaled_header_point(frame)
         self._stage = "open_filter"
-        return self._synthetic_target(FILTER_HEADER, *point)
+        return synthetic_target(FILTER_HEADER, *point)
 
     def _scaled_header_point(self, frame: Frame) -> tuple[int, int]:
         scale = frame.width / self.reference_width
@@ -175,30 +176,3 @@ class NestTagFilterTestPlanner:
             round(self.header_point[0] * scale),
             round(self.header_point[1] * scale),
         )
-
-    @staticmethod
-    def _best(items: list[Detection] | None) -> Detection | None:
-        if not items:
-            return None
-        return max(items, key=lambda item: item.confidence)
-
-    @staticmethod
-    def _target(detection: Detection) -> Target:
-        return Target(
-            type=detection.type,
-            x=detection.x,
-            y=detection.y,
-            confidence=detection.confidence,
-            detection=detection,
-        )
-
-    @staticmethod
-    def _synthetic_target(target_type: str, x: int, y: int) -> Target:
-        detection = Detection(
-            type=target_type,
-            x=x,
-            y=y,
-            confidence=1.0,
-            metadata={"synthetic": True},
-        )
-        return NestTagFilterTestPlanner._target(detection)

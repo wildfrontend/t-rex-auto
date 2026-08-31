@@ -24,6 +24,7 @@ from urllib.request import Request, urlopen
 
 from .config import CUSTOM_WORKFLOW_STAGE_ORDER
 from .hatch_inventory import HatchBoostInventoryStore
+from .http_security import is_loopback_origin
 from .metrics import MetricsStore
 
 DASHBOARD_VERSION = 1
@@ -114,17 +115,6 @@ class BotInstance:
     @property
     def database(self) -> Path:
         return self.root / "data" / "stats.sqlite3"
-
-
-def _loopback_origin_allowed(origin: str) -> bool:
-    if not origin:
-        return True
-    parsed = urlparse(origin)
-    return parsed.scheme in {"http", "https"} and parsed.hostname in {
-        "127.0.0.1",
-        "::1",
-        "localhost",
-    }
 
 
 def _get_json(url: str, timeout: float = 1.0) -> dict[str, Any] | None:
@@ -1686,7 +1676,7 @@ class _DashboardHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         origin = self.headers.get("Origin", "")
-        if not _loopback_origin_allowed(origin):
+        if not is_loopback_origin(origin):
             self._send_json(403, {"error": "forbidden_origin"})
             return
         if self.headers.get("X-Dino-Dashboard") != "1":

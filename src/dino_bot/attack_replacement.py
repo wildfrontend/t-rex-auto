@@ -33,8 +33,8 @@ from .nests import (
     StatUpgradeGuard,
     descending_prefix,
     find_primary_ocr_conflict,
-    is_intentional_extreme_specialization_parent,
     is_extreme_specialization_candidate,
+    is_intentional_extreme_specialization_parent,
     pick_replacement,
     primary_of,
 )
@@ -42,6 +42,7 @@ from .overlays import CONFIRM_YES, NESTED_PARENT_WARNING, SELECT_CONFIRM_PROMPT
 from .parent_open import NEST_TITLE, OPEN_TAG_OPTIONS, SELECT_TITLE
 from .select_sort import SelectSortTestPlanner
 from .stalls import ParentStatsSnapshot
+from .targeting import best_detection, detection_target, synthetic_target
 
 PARENT_LEFT = "hatch_parent_left"
 PARENT_RIGHT = "hatch_parent_right"
@@ -358,7 +359,7 @@ class AttackReplacementTestPlanner:
         )
         target_type = PARENT_LEFT if self._side == 0 else PARENT_RIGHT
         self._stage = self._side_stage("open")
-        return self._synthetic_target(
+        return synthetic_target(
             target_type,
             *self._scaled(frame, self.parent_points[self._side]),
         )
@@ -522,7 +523,7 @@ class AttackReplacementTestPlanner:
             replacement_index * SELECT_ROW_PITCH * frame.width / self.reference_width
         )
         self._stage = self._side_stage("choose")
-        return self._synthetic_target(CANDIDATE_ROW, x, y)
+        return synthetic_target(CANDIDATE_ROW, x, y)
 
     def _choose_confirmation(
         self,
@@ -536,24 +537,24 @@ class AttackReplacementTestPlanner:
             self._advance_parent()
             return None
         if NESTED_PARENT_WARNING in by_type:
-            yes = self._best(by_type.get(CONFIRM_YES))
+            yes = best_detection(by_type.get(CONFIRM_YES))
             if yes is None:
                 self._stage = "nested_confirmation_yes_missing"
                 self._complete = True
                 return None
             self._stage = self._side_stage("remove_nested")
-            return self._synthetic_target(NESTED_PARENT_YES, yes.x, yes.y)
+            return synthetic_target(NESTED_PARENT_YES, yes.x, yes.y)
         if SELECT_CONFIRM_PROMPT not in by_type:
             self._stage = "confirmation_prompt_missing"
             self._complete = True
             return None
-        button = self._best(by_type.get(CONFIRM_YES))
+        button = best_detection(by_type.get(CONFIRM_YES))
         if button is None:
             self._stage = "confirmation_yes_missing"
             self._complete = True
             return None
         self._stage = self._side_stage("replace")
-        return self._target(button)
+        return detection_target(button)
 
     def _choose_after_nested_warning(
         self,
@@ -564,17 +565,17 @@ class AttackReplacementTestPlanner:
             return None
         if SELECT_CONFIRM_PROMPT not in by_type:
             return None
-        yes = self._best(by_type.get(CONFIRM_YES))
+        yes = best_detection(by_type.get(CONFIRM_YES))
         if yes is None:
             self._stage = "confirmation_yes_missing_after_nested"
             self._complete = True
             return None
         self._stage = self._side_stage("replace")
-        return self._target(yes)
+        return detection_target(yes)
 
     def _close_list(self, frame: Frame) -> Target:
         self._stage = self._side_stage("close")
-        return self._synthetic_target(
+        return synthetic_target(
             SELECT_MASK_CLOSE,
             *self._scaled(frame, self.mask_close_point),
         )
@@ -633,30 +634,3 @@ class AttackReplacementTestPlanner:
     @staticmethod
     def _format_stats(stats: Stats) -> str:
         return f"{stats.hp}/{stats.attack}/{stats.speed}"
-
-    @staticmethod
-    def _best(items: list[Detection] | None) -> Detection | None:
-        if not items:
-            return None
-        return max(items, key=lambda item: item.confidence)
-
-    @staticmethod
-    def _target(detection: Detection) -> Target:
-        return Target(
-            detection.type,
-            detection.x,
-            detection.y,
-            detection.confidence,
-            detection,
-        )
-
-    @staticmethod
-    def _synthetic_target(target_type: str, x: int, y: int) -> Target:
-        detection = Detection(
-            type=target_type,
-            x=x,
-            y=y,
-            confidence=1.0,
-            metadata={"synthetic": True},
-        )
-        return Target(target_type, x, y, 1.0, detection)

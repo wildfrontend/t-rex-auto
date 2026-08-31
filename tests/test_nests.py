@@ -10,8 +10,8 @@ from dino_bot.nests import (
     Stats,
     descending_prefix,
     find_primary_ocr_conflict,
-    is_extreme_specialization_candidate,
     is_descending,
+    is_extreme_specialization_candidate,
     is_intentional_extreme_specialization_parent,
     pick_replacement,
     secondary_load,
@@ -62,7 +62,7 @@ def test_primary_ocr_conflict_does_not_apply_growth_or_other_digit_rules() -> No
 
 
 def test_extreme_specialization_parent_is_opt_in() -> None:
-    assert EXTREME_SPECIALIZATION_PARENT == Stats(10, 1, 1)
+    assert Stats(10, 1, 1) == EXTREME_SPECIALIZATION_PARENT
     assert is_intentional_extreme_specialization_parent(
         EXTREME_SPECIALIZATION_PARENT, HP_RULE, enabled=True
     )

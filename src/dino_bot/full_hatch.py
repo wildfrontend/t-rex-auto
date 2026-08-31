@@ -65,6 +65,7 @@ from .overlays import (
 )
 from .parent_open import NEST_TITLE, SELECT_TITLE
 from .stalls import EggPileSnapshot, HomeRecoverySnapshot, ParentStatsSnapshot
+from .targeting import best_detection, detection_target, swipe_target, synthetic_target
 
 # Full-workflow synthetic actions and newly cropped screen anchors.
 OPEN_NEST = "hatch_full_open_nest"
@@ -1076,7 +1077,7 @@ class HatchHomeRecoveryPlanner:
             )
         )
         notice_only = AUTOPLACE_NOTICE in by_type and not exact_prompt
-        notice_misread = notice_only and _best(by_type.get(CONFIRM_NO)) is None
+        notice_misread = notice_only and best_detection(by_type.get(CONFIRM_NO)) is None
         # A broad notice without its defining No control is not foreground.
         # Exclude only that evidence from the home geometry checks, so a
         # task-complete toast cannot make a visible, measurable home map look
@@ -1118,7 +1119,7 @@ class HatchHomeRecoveryPlanner:
 
         known_prompt = exact_prompt or notice_only
         if known_prompt:
-            no = _best(by_type.get(CONFIRM_NO))
+            no = best_detection(by_type.get(CONFIRM_NO))
             if no is None:
                 if notice_only:
                     # AUTOPLACE_NOTICE is a deliberately broad layout
@@ -1143,13 +1144,13 @@ class HatchHomeRecoveryPlanner:
             else:
                 self._autoplace_notice_without_no = False
                 self._stage = "cancel_prompt"
-                return _synthetic(RECOVERY_NO, no.x, no.y)
+                return synthetic_target(RECOVERY_NO, no.x, no.y)
         else:
             self._autoplace_notice_without_no = False
 
         if AUTOPLACE_TITLE in by_type or SELECT_TITLE in by_type or NEST_TITLE in by_type:
             self._stage = "close_mask_layer"
-            return _synthetic(
+            return synthetic_target(
                 RECOVERY_MASK_CLOSE,
                 *_scaled(frame, (50.0, 800.0), self.reference_width),
             )
@@ -1163,19 +1164,19 @@ class HatchHomeRecoveryPlanner:
         # so reuse the mask point the nest and auto-place layers already use.
         if STARTUP_GROWTH_RESULT in by_type:
             self._stage = "close_growth_result_mask"
-            return _synthetic(
+            return synthetic_target(
                 RECOVERY_MASK_CLOSE,
                 *_scaled(frame, (50.0, 800.0), self.reference_width),
             )
 
-        claim = _best(by_type.get(hatch_feature.CLAIM_BUTTON))
+        claim = best_detection(by_type.get(hatch_feature.CLAIM_BUTTON))
         if claim is not None:
             # Collecting a completed hatch/battle result is safer than Back:
             # it preserves the result and leads to another named screen.
             self._stage = "collect_result"
-            return _synthetic(RECOVERY_CLAIM, claim.x, claim.y)
+            return synthetic_target(RECOVERY_CLAIM, claim.x, claim.y)
 
-        close = _best(
+        close = best_detection(
             [
                 *by_type.get(hatch_feature.CLOSE_BUTTON, ()),
                 *by_type.get(CAVE_CLOSE_BUTTON, ()),
@@ -1183,32 +1184,32 @@ class HatchHomeRecoveryPlanner:
         )
         if close is not None:
             self._stage = "close_named_screen"
-            return _synthetic(RECOVERY_CLOSE, close.x, close.y)
+            return synthetic_target(RECOVERY_CLOSE, close.x, close.y)
 
-        map_exit = _best(by_type.get(HUNT_MAP_EXIT))
+        map_exit = best_detection(by_type.get(HUNT_MAP_EXIT))
         if map_exit is not None:
             # A combined hatch+hunt process can be restarted during the hunt
             # cooldown. Android Back does not leave this map, but its explicit
             # exit control is stable and already template-gated.
             self._stage = "leave_hunt_map"
-            return _synthetic(RECOVERY_MAP_EXIT, map_exit.x, map_exit.y)
+            return synthetic_target(RECOVERY_MAP_EXIT, map_exit.x, map_exit.y)
 
         # A hunt prompt covers the map controls the rung above needs, and Back
         # does not close it: six presses against one left the button's box and
         # confidence identical every frame at pixel_change=0.000, and the
         # escape ladder spent its whole budget on them before failing. Clear
         # the prompt first so the named exit can be seen at all.
-        hunt_prompt = _best(
+        hunt_prompt = best_detection(
             [
                 *by_type.get("hunt_button", ()),
                 *by_type.get("hunt_max_group_button", ()),
             ]
         )
         if hunt_prompt is not None:
-            dialog_close = _best(by_type.get(HUNT_DIALOG_CLOSE))
+            dialog_close = best_detection(by_type.get(HUNT_DIALOG_CLOSE))
             if dialog_close is not None:
                 self._stage = "close_hunt_dialog"
-                return _synthetic(
+                return synthetic_target(
                     RECOVERY_HUNT_DIALOG_CLOSE,
                     dialog_close.x,
                     dialog_close.y,
@@ -1221,7 +1222,7 @@ class HatchHomeRecoveryPlanner:
                     f"dismiss_hunt_dialog_{self._hunt_dialog_dismissals}"
                     f"/{self.max_hunt_dialog_dismissals}"
                 )
-                return _synthetic(
+                return synthetic_target(
                     RECOVERY_HUNT_DIALOG_DISMISS,
                     *_scaled(frame, HUNT_DIALOG_DISMISS_POINT, self.reference_width),
                 )
@@ -1238,7 +1239,7 @@ class HatchHomeRecoveryPlanner:
         if recenter is not None:
             return recenter
 
-        forest = _best(by_type.get(FOREST_RECENTER))
+        forest = best_detection(by_type.get(FOREST_RECENTER))
         if forest is not None and self._applied_swipes:
             # This control proves we are already on the home map; it is not a
             # recenter command.  If our own last measured drag made the pile
@@ -1252,7 +1253,7 @@ class HatchHomeRecoveryPlanner:
         if self._back_attempts < self.max_back_attempts:
             self._back_attempts += 1
             self._stage = f"back_{self._back_attempts}/{self.max_back_attempts}"
-            return _synthetic(RECOVERY_BACK, frame.width // 2, frame.height // 2)
+            return synthetic_target(RECOVERY_BACK, frame.width // 2, frame.height // 2)
 
         # Last resort, deliberately after the escape ladder: the frame captured
         # straight after any action is often still mid-transition and matches
@@ -1285,7 +1286,7 @@ class HatchHomeRecoveryPlanner:
             self._pending_swipe = (x1, y1, x2, y2)
             self._pending_measured_offset = measured_offset
             self._pending_cave_leg = cave_leg
-        return _swipe_target(target_type, x1, y1, x2, y2)
+        return swipe_target(target_type, x1, y1, x2, y2)
 
     def _recenter_target(
         self,
@@ -1553,10 +1554,10 @@ class AutoPlaceRoundPlanner:
                 )
                 self._stage = "filter"
                 return self.choose(frame, detections)
-            gear = _best(by_type.get(NEST_GEAR))
+            gear = best_detection(by_type.get(NEST_GEAR))
             if gear is None:
                 return None
-            return _target(gear)
+            return detection_target(gear)
         if self._stage == "settings":
             if AUTOPLACE_TITLE not in by_type:
                 return None
@@ -1574,8 +1575,8 @@ class AutoPlaceRoundPlanner:
                 50,
             )
             if desired_option is not None:
-                return _target(desired_option)
-            return _synthetic(
+                return detection_target(desired_option)
+            return synthetic_target(
                 AUTOPLACE_SORT_HEADER,
                 *_scaled(frame, AUTOPLACE_SORT_HEADER_POINT, self.reference_width),
             )
@@ -1596,7 +1597,7 @@ class AutoPlaceRoundPlanner:
             if AUTOPLACE_TITLE not in by_type:
                 self._stage = "verify_settings_closed"
                 return self.choose(frame, detections)
-            return _synthetic(
+            return synthetic_target(
                 AUTOPLACE_MASK_CLOSE,
                 *_scaled(frame, (50.0, 800.0), self.reference_width),
             )
@@ -1606,17 +1607,17 @@ class AutoPlaceRoundPlanner:
                 return self.choose(frame, detections)
             if NEST_TITLE not in by_type:
                 return None
-            button = _best(by_type.get(AUTOPLACE_BUTTON))
+            button = best_detection(by_type.get(AUTOPLACE_BUTTON))
             if button is None:
                 return None
-            return _target(button)
+            return detection_target(button)
         if self._stage == "after_autoplace":
             if AUTOPLACE_PROMPT in by_type or AUTOPLACE_NOTICE in by_type:
-                yes = _best(by_type.get(CONFIRM_YES))
+                yes = best_detection(by_type.get(CONFIRM_YES))
                 if yes is None:
                     self._stage = "blocked_notice_without_yes"
                     return None
-                return _synthetic(AUTOPLACE_YES, yes.x, yes.y)
+                return synthetic_target(AUTOPLACE_YES, yes.x, yes.y)
             if NEST_TITLE in by_type:
                 self.logger.info(
                     "Hatch auto-place | tag=%s | sort=%s | completed without prompt",
@@ -1795,7 +1796,7 @@ class CaveCullPlanner:
             if step.kind == SWIPE:
                 assert step.vector is not None
                 x1, y1, x2, y2 = step.vector
-                return _swipe_target(CAVE_SWIPE, x1, y1, x2, y2)
+                return swipe_target(CAVE_SWIPE, x1, y1, x2, y2)
             if step.kind == RESCAN:
                 # The cave can be partially clipped at the left edge after a
                 # valid calibrated move. Its template then cannot match, but
@@ -1904,13 +1905,13 @@ class CaveCullPlanner:
                 return self.choose(frame, detections)
             self._capacity_before = count
             self._stage = "open_cave"
-            return _target(cave)
+            return detection_target(cave)
         if self._stage == "open_cave":
             cave = self._safe_cave(frame, by_type.get(CAVE))
-            return _target(cave) if cave is not None else None
+            return detection_target(cave) if cave is not None else None
         if self._stage == "cave_screen":
-            button = _best(by_type.get(CAVE_SELECT_BUTTON))
-            return _target(button) if button is not None else None
+            button = best_detection(by_type.get(CAVE_SELECT_BUTTON))
+            return detection_target(button) if button is not None else None
         if self._stage == "select_dino":
             if SELECT_TITLE not in by_type:
                 return None
@@ -1928,8 +1929,8 @@ class CaveCullPlanner:
                 50,
             )
             if option is not None:
-                return _target(option)
-            return _synthetic(
+                return detection_target(option)
+            return synthetic_target(
                 SELECT_TAG_HEADER,
                 *_scaled(frame, (228.0, 204.0), self.reference_width),
             )
@@ -1941,18 +1942,18 @@ class CaveCullPlanner:
                 _scaled(frame, SELECT_WEAKEST_BUTTON_POINT, self.reference_width),
                 60,
             )
-            return _target(button) if button is not None else None
+            return detection_target(button) if button is not None else None
         if self._stage == "confirm_selection":
             if SELECT_TITLE not in by_type:
                 return None
-            button = _best(by_type.get(SELECT_CHOOSE_BUTTON))
-            return _target(button) if button is not None else None
+            button = best_detection(by_type.get(SELECT_CHOOSE_BUTTON))
+            return detection_target(button) if button is not None else None
         if self._stage == "start_battle":
-            button = _best(by_type.get(CAVE_CONTINUOUS_BUTTON))
-            return _target(button) if button is not None else None
+            button = best_detection(by_type.get(CAVE_CONTINUOUS_BUTTON))
+            return detection_target(button) if button is not None else None
         if self._stage == "battle_result":
-            claim = _best(by_type.get(hatch_feature.CLAIM_BUTTON))
-            return _target(claim) if claim is not None else None
+            claim = best_detection(by_type.get(hatch_feature.CLAIM_BUTTON))
+            return detection_target(claim) if claim is not None else None
         if self._stage == "recenter":
             if is_centered_home_screen(frame, detections):
                 self._stage = "verify_recenter"
@@ -1970,7 +1971,7 @@ class CaveCullPlanner:
                     vectors[self._return_swipes],
                     self.reference_width,
                 )
-                return _swipe_target(CAVE_RECENTER, x1, y1, x2, y2)
+                return swipe_target(CAVE_RECENTER, x1, y1, x2, y2)
             self._stage = "verify_recenter"
             return self.choose(frame, detections)
         if self._stage == "verify_recenter":
@@ -2048,7 +2049,7 @@ class CaveCullPlanner:
                 "Hatch cave | rejected %d target(s) inside protected screen edge",
                 rejected,
             )
-        return _best(safe)
+        return best_detection(safe)
 
 
 class FullHatchPlanner:
@@ -2788,10 +2789,10 @@ class FullHatchPlanner:
         # auto-place notice even though this explicit button proves which
         # startup dialog is actually in front.
         for target_type in STARTUP_SIMPLE_INTERRUPTS:
-            interruption = _best(by_type.get(target_type))
+            interruption = best_detection(by_type.get(target_type))
             if interruption is not None:
                 self._no_target_since = None
-                return _target(interruption)
+                return detection_target(interruption)
         # Same rule one step further: the parent-replacement confirmation also
         # carries cyan Yes and red No buttons, so the broad auto-place layout
         # matches it too. Its own exact templates prove which dialog is really
@@ -2805,7 +2806,7 @@ class FullHatchPlanner:
             and not replacing_parent
             and (AUTOPLACE_PROMPT in by_type or AUTOPLACE_NOTICE in by_type)
         ):
-            no = _best(by_type.get(CONFIRM_NO))
+            no = best_detection(by_type.get(CONFIRM_NO))
             if no is None:
                 # No No button is evidence against the reading, not a dead end.
                 # The layout detector is deliberately broad and a dinosaur
@@ -2823,7 +2824,7 @@ class FullHatchPlanner:
                     )
             else:
                 self._autoplace_without_no_button = False
-                return _synthetic(RECOVERY_NO, no.x, no.y)
+                return synthetic_target(RECOVERY_NO, no.x, no.y)
         else:
             self._autoplace_without_no_button = False
         hatch_result_visible = bool(
@@ -2833,11 +2834,11 @@ class FullHatchPlanner:
         auto_battle = (
             None
             if hatch_result_visible
-            else _best(by_type.get(STARTUP_AUTO_BATTLE_CLOSE))
+            else best_detection(by_type.get(STARTUP_AUTO_BATTLE_CLOSE))
         )
         if auto_battle is not None:
             self._no_target_since = None
-            return _target(auto_battle)
+            return detection_target(auto_battle)
         if (
             not hatch_result_visible
             # The My Nest card is also a tall white panel with a centred
@@ -2853,7 +2854,7 @@ class FullHatchPlanner:
             # on 2026-08-31 S9 re-tapped the shortcut three times, exhausted
             # the Back ladder and dropped the hatch workflow for the session.
             and self._stage != "recover_home"
-            and (growth_result := _best(by_type.get(STARTUP_GROWTH_RESULT))) is not None
+            and (growth_result := best_detection(by_type.get(STARTUP_GROWTH_RESULT))) is not None
         ):
             self._no_target_since = None
             # The current game build moved the only remaining nest shortcut
@@ -2864,7 +2865,7 @@ class FullHatchPlanner:
                 if growth_result.metadata.get("shortcut_layout") == "centered_nest"
                 else (592.0, 1265.0)
             )
-            return _synthetic(
+            return synthetic_target(
                 STARTUP_NEST_SHORTCUT,
                 *_scaled(frame, shortcut_point, self.reference_width),
             )
@@ -3044,10 +3045,10 @@ class FullHatchPlanner:
                 )
                 return self._choose_current(frame, detections)
             if self._boost_confirmation_pending:
-                yes = _best(by_type.get(CONFIRM_YES))
-                no = _best(by_type.get(CONFIRM_NO))
+                yes = best_detection(by_type.get(CONFIRM_YES))
+                no = best_detection(by_type.get(CONFIRM_NO))
                 if yes is not None and no is not None:
-                    return _synthetic(HATCH_BOOST_CONFIRM, yes.x, yes.y)
+                    return synthetic_target(HATCH_BOOST_CONFIRM, yes.x, yes.y)
                 return None
             self._observe_hatch_cooldown(frame, by_type)
             detail_close = _unready_egg_detail_close(frame)
@@ -3059,7 +3060,7 @@ class FullHatchPlanner:
                         "Hatch | claim confirmed by next unready egg detail | hatched=%d",
                         self._hatch_child.hatched,
                     )
-                return _synthetic(HATCH_DETAIL_CLOSE, *detail_close)
+                return synthetic_target(HATCH_DETAIL_CLOSE, *detail_close)
             if self._boost_allowed(by_type):
                 if not self._eggs_cooling():
                     # 孵化器目前是空的:先收蛋讓新蛋開始冷卻,收完
@@ -3076,7 +3077,7 @@ class FullHatchPlanner:
                         "Hatch boost | already active (gray countdown bar) | skip this cycle"
                     )
                 else:
-                    return _synthetic(
+                    return synthetic_target(
                         HATCH_BOOST_BUTTON,
                         *_scaled(frame, HATCH_BOOST_POINT, self.reference_width),
                     )
@@ -3089,7 +3090,7 @@ class FullHatchPlanner:
                     return self._choose_current(frame, detections)
                 safe_point = _egg_pile_safe_tap(frame)
                 if safe_point is not None:
-                    return _synthetic(hatch_feature.EGG_PILE, *safe_point)
+                    return synthetic_target(hatch_feature.EGG_PILE, *safe_point)
                 # The child retains its fixed point for the lightweight hatch
                 # mode, but the full workflow must never tap it blindly: a
                 # missed pile can open a roaming dinosaur and corrupt the
@@ -3159,7 +3160,7 @@ class FullHatchPlanner:
                 else:
                     self._start_next_screening_stage()
                 return self._choose_current(frame, detections)
-            anchor = _best(by_type.get(hatch_feature.HOME_ANCHOR))
+            anchor = best_detection(by_type.get(hatch_feature.HOME_ANCHOR))
             if anchor is None:
                 return None
             # The S9 entrance artwork changes slightly with the nest state.
@@ -3170,7 +3171,7 @@ class FullHatchPlanner:
             # measured, bright and centred home map before using the match.
             if not is_centered_home_screen(frame, detections):
                 return None
-            return _synthetic(OPEN_NEST, anchor.x, anchor.y)
+            return synthetic_target(OPEN_NEST, anchor.x, anchor.y)
         if self._stage in ("attack", "hp"):
             target = self._replacement_child.choose(frame, detections)
             if target is None:
@@ -3196,8 +3197,8 @@ class FullHatchPlanner:
         if self._stage == "collect_button":
             if NEST_TITLE not in by_type:
                 return None
-            button = _best(by_type.get(COLLECT_EGGS_BUTTON))
-            return _target(button) if button is not None else None
+            button = best_detection(by_type.get(COLLECT_EGGS_BUTTON))
+            return detection_target(button) if button is not None else None
         if self._stage == "close_nest":
             if NEST_TITLE not in by_type:
                 self._stage = "verify_nest_closed"
@@ -3648,14 +3649,6 @@ class FullHatchPlanner:
             and self._observed_cooldown_until > self.clock()
         )
 
-    def _should_use_hatch_boost(
-        self,
-        by_type: dict[str, list[Detection]],
-    ) -> bool:
-        # 空孵化器不按加速:加速期從按下就開始倒數,蛋要等收蛋後才
-        # 入孵化器,先按等於白燒加速時間。收蛋後回訪時再按。
-        return self._boost_allowed(by_type) and self._eggs_cooling()
-
     def _start_replacement(self, kind: str) -> None:
         if kind == "attack":
             self._stage = "attack"
@@ -3844,10 +3837,6 @@ def _inverse_swipe_vectors(
     return tuple((x2, y2, x1, y1) for x1, y1, x2, y2 in reversed(vectors))
 
 
-def _best(items: list[Detection] | None) -> Detection | None:
-    return max(items, key=lambda item: item.confidence) if items else None
-
-
 def _hypot(offset: tuple[float, float]) -> float:
     return math.hypot(offset[0], offset[1])
 
@@ -3867,31 +3856,6 @@ def _near(
     return item
 
 
-def _target(detection: Detection) -> Target:
-    return Target(
-        detection.type,
-        detection.x,
-        detection.y,
-        detection.confidence,
-        detection,
-    )
-
-
-def _retarget(detection: Detection, target_type: str) -> Target:
-    """Keep a matched button's box while assigning a workflow-specific action."""
-
-    return _target(
-        Detection(
-            type=target_type,
-            x=detection.x,
-            y=detection.y,
-            confidence=detection.confidence,
-            bbox=detection.bbox,
-            metadata={**detection.metadata, "source_type": detection.type},
-        )
-    )
-
-
 def nest_mask_close_target(frame: Frame, reference_width: float) -> Target:
     """The mask tap that dismisses the My Nest panel back to the home screen.
 
@@ -3899,39 +3863,7 @@ def nest_mask_close_target(frame: Frame, reference_width: float) -> Target:
     vocabulary for it and would otherwise tap map controls it cannot reach.
     """
 
-    return _synthetic(
+    return synthetic_target(
         NEST_MASK_CLOSE,
         *_scaled(frame, NEST_MASK_POINT, reference_width),
     )
-
-
-def _synthetic(target_type: str, x: int, y: int) -> Target:
-    detection = Detection(
-        type=target_type,
-        x=x,
-        y=y,
-        confidence=1.0,
-        metadata={"synthetic": True},
-    )
-    return _target(detection)
-
-
-def _swipe_target(
-    target_type: str,
-    x1: int,
-    y1: int,
-    x2: int,
-    y2: int,
-    duration_ms: int = 400,
-) -> Target:
-    detection = Detection(
-        type=target_type,
-        x=x1,
-        y=y1,
-        confidence=1.0,
-        metadata={
-            "synthetic": True,
-            "swipe": {"x2": x2, "y2": y2, "duration_ms": duration_ms},
-        },
-    )
-    return _target(detection)

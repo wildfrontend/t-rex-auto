@@ -185,6 +185,9 @@ def test_dashboard_controls_require_same_origin_header(tmp_path: Path) -> None:
     assert rejected.value.code == 403
     assert forbidden.value.code == 403
     assert not_found.value.code == 404
+    rejected.value.close()
+    forbidden.value.close()
+    not_found.value.close()
 
 
 def test_dashboard_builds_noninteractive_runner_commands(tmp_path: Path) -> None:
@@ -873,6 +876,7 @@ def test_dashboard_serves_and_accepts_hatch_tuning_over_http(tmp_path: Path) -> 
     assert after["hatch_tuning"] == expected
     # 409 是這個 handler 對驗證錯誤的既有慣例。
     assert refused.value.code == 409
+    refused.value.close()
     # 被拒絕的請求不能留下半套設定。
     saved = json.loads((app / "config.json").read_text(encoding="utf-8"))
     assert saved["hatch"] == expected

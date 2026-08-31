@@ -131,6 +131,7 @@ def test_local_status_server_rejects_declined_control(tmp_path: Path) -> None:
             urlopen(request, timeout=2)  # noqa: S310
 
     assert rejected.value.code == 409
+    rejected.value.close()
 
 
 def test_local_status_server_rejects_unknown_control_and_remote_origin(
@@ -160,6 +161,9 @@ def test_local_status_server_rejects_unknown_control_and_remote_origin(
     assert unknown_error.value.code == 404
     assert origin_error.value.code == 403
     assert lookalike_error.value.code == 403
+    unknown_error.value.close()
+    origin_error.value.close()
+    lookalike_error.value.close()
 
 
 def test_client_disconnect_does_not_raise_or_kill_the_server(

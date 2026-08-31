@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from .models import Detection, ExclusionZone, Frame, Target, VerificationResult
+from .targeting import detection_target
 
 
 class TargetPlanner:
@@ -145,13 +146,7 @@ class TargetPlanner:
                     -item.confidence,
                 ),
             )
-        target = Target(
-            type=selected.type,
-            x=selected.x,
-            y=selected.y,
-            confidence=selected.confidence,
-            detection=selected,
-        )
+        target = detection_target(selected)
         if selected.type in self.deduplicate_types:
             self._remember(frame, selected)
         return target
@@ -1418,13 +1413,7 @@ class HuntPlanner(TargetPlanner):
             # suppression list has to be consulted explicitly.
             if self.is_suppressed(fallback.type, fallback.x, fallback.y):
                 return None
-            return Target(
-                type=fallback.type,
-                x=fallback.x,
-                y=fallback.y,
-                confidence=fallback.confidence,
-                detection=fallback,
-            )
+            return detection_target(fallback)
         return None
 
     def choose(self, frame: Frame, detections: Sequence[Detection]) -> Target | None:

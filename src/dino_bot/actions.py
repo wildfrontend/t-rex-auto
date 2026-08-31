@@ -9,6 +9,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Sequence
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -214,10 +215,8 @@ class AdbClient:
             time.sleep(0.5)
 
     def _invoke_quietly(self, args: Sequence[str], *, use_serial: bool) -> None:
-        try:
+        with suppress(AdbError):
             self._invoke(args, use_serial=use_serial)
-        except AdbError:
-            pass
 
     def connect(self) -> str:
         if not self.config.serial:

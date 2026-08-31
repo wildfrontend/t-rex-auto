@@ -3,6 +3,7 @@ from __future__ import annotations
 import gzip
 import json
 import sqlite3
+from contextlib import closing
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -77,7 +78,7 @@ def test_metrics_keeps_secondary_hp_attack_out_of_attack_record(tmp_path: Path) 
     assert result["records"]["hp"]["value"] == 1410
     assert result["records"]["attack"]["value"] == 158
     assert result["records"]["speed"]["value"] == 134
-    with sqlite3.connect(store.database) as connection:
+    with closing(sqlite3.connect(store.database)) as connection, connection:
         raw_attacks = [
             json.loads(row[0])["attack"]
             for row in connection.execute(
@@ -104,7 +105,7 @@ def test_metrics_keeps_parent_outlier_out_of_record(tmp_path: Path) -> None:
     result = store.snapshot()
 
     assert result["records"]["attack"]["value"] == 168
-    with sqlite3.connect(store.database) as connection:
+    with closing(sqlite3.connect(store.database)) as connection, connection:
         raw_attacks = [
             json.loads(row[0])["attack"]
             for row in connection.execute(
@@ -129,7 +130,7 @@ def test_metrics_repairs_legacy_cross_specialization_record(tmp_path: Path) -> N
         ensure_ascii=False,
         separators=(",", ":"),
     )
-    with sqlite3.connect(store.database) as connection:
+    with closing(sqlite3.connect(store.database)) as connection, connection:
         connection.execute(
             "UPDATE stat_records SET value = 737, payload_json = ? WHERE name = 'attack'",
             (bad_payload,),
@@ -310,7 +311,7 @@ def test_old_event_details_compact_to_daily_totals_and_records(tmp_path: Path) -
         "tag": "HP特化",
         "role": "selected",
     }
-    with sqlite3.connect(database) as connection:
+    with closing(sqlite3.connect(database)) as connection, connection:
         connection.execute(
             """
             INSERT INTO metric_events(source_key, occurred_at, kind, value, payload_json)
@@ -330,7 +331,7 @@ def test_old_event_details_compact_to_daily_totals_and_records(tmp_path: Path) -
 
     assert result["counters"]["hunt"] == {"session": 0, "today": 0, "total": 7}
     assert result["records"]["hp"]["value"] == 2340
-    with sqlite3.connect(database) as connection:
+    with closing(sqlite3.connect(database)) as connection, connection:
         assert connection.execute("SELECT COUNT(*) FROM metric_events").fetchone()[0] == 0
         assert connection.execute(
             "SELECT total FROM daily_totals WHERE day = ? AND kind = 'hunt'",

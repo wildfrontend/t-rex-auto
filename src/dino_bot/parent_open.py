@@ -15,6 +15,7 @@ from .digits import DigitReader
 from .models import Detection, Frame, Target
 from .nest_readout import ATTACK_PARENT_REGIONS, read_attack_parents
 from .stalls import ParentStatsSnapshot
+from .targeting import synthetic_target
 
 NEST_TITLE = "hatch_nest_title"
 SELECT_TITLE = "hatch_select_title"
@@ -133,7 +134,7 @@ class ParentOpenTestPlanner:
         )
         self._issued = True
         self._stage = "open_left_parent"
-        return self._synthetic_target(
+        return synthetic_target(
             PARENT_LEFT,
             *self._scaled(frame, self.left_parent_point),
         )
@@ -156,20 +157,3 @@ class ParentOpenTestPlanner:
     def _scaled(self, frame: Frame, point: tuple[float, float]) -> tuple[int, int]:
         scale = frame.width / self.reference_width
         return (round(point[0] * scale), round(point[1] * scale))
-
-    @staticmethod
-    def _synthetic_target(target_type: str, x: int, y: int) -> Target:
-        detection = Detection(
-            type=target_type,
-            x=x,
-            y=y,
-            confidence=1.0,
-            metadata={"synthetic": True},
-        )
-        return Target(
-            type=target_type,
-            x=x,
-            y=y,
-            confidence=1.0,
-            detection=detection,
-        )

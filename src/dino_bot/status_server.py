@@ -12,23 +12,13 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from .http_security import is_loopback_origin
 from .status import build_runtime_status
 
 _CONTROL_PATHS = {
     "/control/stop": "stop",
     "/control/restart-game": "restart-game",
 }
-
-
-def _is_loopback_origin(origin: str) -> bool:
-    if not origin:
-        return True
-    parsed = urlparse(origin)
-    return parsed.scheme in {"http", "https"} and parsed.hostname in {
-        "127.0.0.1",
-        "::1",
-        "localhost",
-    }
 
 
 _DISCONNECT_ERRORS = (
@@ -123,7 +113,7 @@ class _StatusHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         path = urlparse(self.path).path.rstrip("/") or "/"
         origin = self.headers.get("Origin", "")
-        if not _is_loopback_origin(origin):
+        if not is_loopback_origin(origin):
             self._send_json(403, {"error": "forbidden_origin"})
             return
         action = _CONTROL_PATHS.get(path)

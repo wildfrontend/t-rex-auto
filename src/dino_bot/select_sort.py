@@ -15,6 +15,7 @@ from .digits import DigitReader
 from .models import Detection, Frame, Target
 from .nest_readout import ConsecutiveReadConsensus, read_candidate_rows
 from .nests import DEFAULT_STAT_UPGRADE_GUARDS, Stats, StatUpgradeGuard
+from .targeting import detection_target, synthetic_target
 
 SELECT_TITLE = "hatch_select_title"
 TAG_HEADER = "hatch_select_tag_header"
@@ -150,7 +151,7 @@ class SelectSortTestPlanner:
             )
             if menu_all is not None:
                 self._stage = "select_all"
-                return self._target(menu_all)
+                return detection_target(menu_all)
             header_all = self._closest(
                 by_type.get(TAG_HDR_ALL),
                 self._scaled(frame, self.tag_header_point),
@@ -160,7 +161,7 @@ class SelectSortTestPlanner:
                 self._tag_ready = True
             else:
                 self._stage = "open_tag_filter"
-                return self._synthetic_target(
+                return synthetic_target(
                     TAG_HEADER,
                     *self._scaled(frame, self.tag_header_point),
                 )
@@ -173,7 +174,7 @@ class SelectSortTestPlanner:
             )
             if menu_option is not None:
                 self._stage = "select_primary_sort"
-                return self._target(menu_option)
+                return detection_target(menu_option)
             header_option = self._closest(
                 by_type.get(self.sort_header_type),
                 self._scaled(frame, self.sort_header_point),
@@ -183,7 +184,7 @@ class SelectSortTestPlanner:
                 self._sort_ready = True
             else:
                 self._stage = "open_sort"
-                return self._synthetic_target(
+                return synthetic_target(
                     SORT_HEADER,
                     *self._scaled(frame, self.sort_header_point),
                 )
@@ -249,7 +250,7 @@ class SelectSortTestPlanner:
             self.logger.error("Hatch filter | direction still ascending after one toggle")
             return None
         self._stage = "toggle_direction"
-        return self._synthetic_target(
+        return synthetic_target(
             SORT_DIRECTION,
             *self._scaled(frame, self.direction_point),
         )
@@ -310,24 +311,3 @@ class SelectSortTestPlanner:
             if distance_sq > max_distance**2:
                 return None
         return item
-
-    @staticmethod
-    def _target(detection: Detection) -> Target:
-        return Target(
-            type=detection.type,
-            x=detection.x,
-            y=detection.y,
-            confidence=detection.confidence,
-            detection=detection,
-        )
-
-    @staticmethod
-    def _synthetic_target(target_type: str, x: int, y: int) -> Target:
-        detection = Detection(
-            type=target_type,
-            x=x,
-            y=y,
-            confidence=1.0,
-            metadata={"synthetic": True},
-        )
-        return SelectSortTestPlanner._target(detection)
