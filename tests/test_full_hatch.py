@@ -369,6 +369,33 @@ def test_full_hatch_top_stage_confirms_its_own_autoplace_prompt() -> None:
     assert (target.x, target.y) == (365, 890)
 
 
+def test_full_hatch_attack_stage_confirms_its_own_autoplace_prompt() -> None:
+    # auto_place_specializations 讓 attack/hp 階段改用 AutoPlaceRoundPlanner,
+    # 但攔截誤觸的守衛還停在「只有 top/mass 會開自動放置」的舊假設,於是把該按
+    # 「是」的框按成「否」:取消這一輪、回首頁復原、再從同一階段重來。S13 因此
+    # 卡在約 25 秒的死循環,跑了七十次動作、completed 永遠是 none。
+    planner = FullHatchPlanner(
+        DigitReader(GLYPHS),
+        egg_pile_point=(450, 1330),
+        max_scrolls=0,
+        auto_place_specializations=True,
+    )
+    planner._start_replacement("attack")
+    planner._autoplace_child._stage = "after_autoplace"
+
+    target = planner.choose(
+        frame(),
+        [
+            detection(AUTOPLACE_NOTICE, 450, 720),
+            detection(CONFIRM_YES, 365, 890),
+            detection(CONFIRM_NO, 535, 890),
+        ],
+    )
+
+    assert target is not None and target.type == AUTOPLACE_YES
+    assert (target.x, target.y) == (365, 890)
+
+
 def test_full_hatch_cancels_unexpected_autoplace_confirmation() -> None:
     planner = make_full_planner()
     target = planner.choose(

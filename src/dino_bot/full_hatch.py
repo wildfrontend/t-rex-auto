@@ -2494,7 +2494,7 @@ class FullHatchPlanner:
         if target_type == RECOVERY_NO:
             self.logger.warning(
                 "Hatch full | cancelled unexpected auto-place confirmation"
-                " | outside top/mass stage"
+                " | no auto-place round in progress"
             )
             self._begin_home_recovery("cancelled unexpected auto-place confirmation")
             return
@@ -2896,8 +2896,16 @@ class FullHatchPlanner:
         replacing_parent = (
             SELECT_CONFIRM_PROMPT in by_type or NESTED_PARENT_WARNING in by_type
         )
+        # Who is allowed to raise this confirmation is a property of the running
+        # child planner, not of the stage name. Top/mass always auto-place, but
+        # with auto_place_specializations the attack/hp stages run the very same
+        # AutoPlaceRoundPlanner, and it is sitting in after_autoplace waiting to
+        # tap Yes. Keying this guard on the stage list cancelled that dialog,
+        # which aborted the round, recovered home, and restarted the identical
+        # stage - a ~25s loop that never completed a single screening pass.
+        own_autoplace = isinstance(self._child, AutoPlaceRoundPlanner)
         if (
-            self._stage not in {"top", "mass"}
+            not own_autoplace
             and not replacing_parent
             and (AUTOPLACE_PROMPT in by_type or AUTOPLACE_NOTICE in by_type)
         ):
