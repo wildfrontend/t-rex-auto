@@ -119,6 +119,7 @@ def hp_planner(
     reader: EncodedReader,
     *,
     allow_extreme_specialization_parent: bool = False,
+    prefer_specialization_purity: bool = False,
 ) -> AttackReplacementTestPlanner:
     return AttackReplacementTestPlanner(
         reader,  # type: ignore[arg-type]
@@ -129,6 +130,7 @@ def hp_planner(
         select_sort_header=select_sort.SORT_HP,
         select_sort_menu_point=(650.0, 501.0),
         allow_extreme_specialization_parent=allow_extreme_specialization_parent,
+        prefer_specialization_purity=prefer_specialization_purity,
     )
 
 
@@ -387,6 +389,57 @@ def test_stronger_tied_candidate_selects_lowest_secondary_then_confirms() -> Non
     )
     assert yes is not None and yes.type == CONFIRM_YES
     assert (yes.x, yes.y) == (350, 850)
+
+
+def test_purity_repair_selects_clean_attack_line_and_ignores_speed() -> None:
+    reader = EncodedReader()
+    parent_frame = nest_frame(
+        reader,
+        Stats(2230, 282, 1),
+        Stats(2230, 282, 150),
+    )
+    candidates = select_frame(
+        reader,
+        [Stats(2240, 290, 1), Stats(30, 276, 150)],
+    )
+    planner = AttackReplacementTestPlanner(  # type: ignore[arg-type]
+        reader,
+        prefer_specialization_purity=True,
+    )
+    finish_main_filter(planner)
+    parent = planner.choose(parent_frame, nest_detections())
+    assert parent is not None
+    planner.on_action_success(parent.type)
+
+    candidate = planner.choose(candidates, select_detections())
+
+    assert candidate is not None
+    assert candidate.type == attack_replacement.CANDIDATE_ROW
+    assert (candidate.x, candidate.y) == (350, 520)
+
+
+def test_purity_repair_selects_clean_hp_line_below_mixed_high_stat() -> None:
+    reader = EncodedReader()
+    parent_frame = nest_frame(
+        reader,
+        Stats(2340, 276, 150),
+        Stats(2340, 276, 1),
+    )
+    candidates = select_frame(
+        reader,
+        [Stats(2400, 280, 1), Stats(2230, 2, 150)],
+    )
+    planner = hp_planner(reader, prefer_specialization_purity=True)
+    planner.on_action_success(nest_filter.TAG_HP)
+    parent = planner.choose(parent_frame, hp_nest_detections())
+    assert parent is not None
+    planner.on_action_success(parent.type)
+
+    candidate = planner.choose(candidates, hp_select_detections())
+
+    assert candidate is not None
+    assert candidate.type == attack_replacement.CANDIDATE_ROW
+    assert (candidate.x, candidate.y) == (350, 520)
 
 
 def test_confirmation_yes_is_never_guessed_without_known_prompt() -> None:

@@ -108,6 +108,8 @@ class AutoPlaceRule:
 ATTACK_RULE = ReplacementRule(tag="攻擊特化", sort_option="攻擊力", primary="attack")
 HP_RULE = ReplacementRule(tag="HP特化", sort_option="HP", primary="hp")
 EXTREME_SPECIALIZATION_PARENT = Stats(10, 1, 1)
+ATTACK_AUTOPLACE_RULE = AutoPlaceRule(tag=ATTACK_RULE.tag, sort_option=ATTACK_RULE.sort_option)
+HP_AUTOPLACE_RULE = AutoPlaceRule(tag=HP_RULE.tag, sort_option=HP_RULE.sort_option)
 TOP_RULE = AutoPlaceRule(tag="頂尖", sort_option="最佳屬性組合")
 MASS_RULE = AutoPlaceRule(tag="量產", sort_option="等級")
 
@@ -201,6 +203,70 @@ def secondary_load(stats: Stats, rule: ReplacementRule) -> int:
     """Sum of the two non-primary stats; lower is preferred among ties."""
 
     return stats.hp + stats.attack + stats.speed - primary_of(stats, rule)
+
+
+def specialization_counter_stat(stats: Stats, rule: ReplacementRule) -> int:
+    """Return the other combat stat for an Attack/HP specialization.
+
+    Speed is deliberately excluded. A speed value anywhere in the valid game
+    range (currently 1 through 150) is acceptable for these two lines; the
+    mutation mistake we need to repair is a dinosaur that is strong in both
+    HP and attack instead of only the tagged primary stat.
+    """
+
+    if rule == ATTACK_RULE:
+        return stats.hp
+    if rule == HP_RULE:
+        return stats.attack
+    raise ValueError(f"unsupported specialization rule: {rule.tag}")
+
+
+def pick_specialization_replacement(
+    parent: Stats,
+    rows: list[Stats],
+    rule: ReplacementRule,
+    *,
+    guards: Mapping[str, StatUpgradeGuard] = DEFAULT_STAT_UPGRADE_GUARDS,
+    partner: Stats | None = None,
+) -> int | None:
+    """Pick a cleaner specialized parent while ignoring speed.
+
+    Purity has priority over raw power: a lower opposing combat stat repairs a
+    mixed high-stat mutation even if its primary stat is slightly lower. Once
+    purity ties, the higher primary wins. This avoids fixed cutoffs as the
+    specialization lines drift over generations and preserves the original
+    row index used for tapping.
+    """
+
+    if rule not in (ATTACK_RULE, HP_RULE):
+        raise ValueError(f"unsupported specialization rule: {rule.tag}")
+    if not rows or not stat_value_is_valid(parent, guards):
+        return None
+    parent_counter = specialization_counter_stat(parent, rule)
+    parent_primary = primary_of(parent, rule)
+    valid_indices = [
+        index
+        for index, row in enumerate(rows)
+        if stat_value_is_valid(row, guards)
+        and (partner is None or row != partner)
+        and (
+            specialization_counter_stat(row, rule) < parent_counter
+            or (
+                specialization_counter_stat(row, rule) == parent_counter
+                and primary_of(row, rule) > parent_primary
+            )
+        )
+    ]
+    if not valid_indices:
+        return None
+    return min(
+        valid_indices,
+        key=lambda index: (
+            specialization_counter_stat(rows[index], rule),
+            -primary_of(rows[index], rule),
+            index,
+        ),
+    )
 
 
 def is_descending(first: int, second: int) -> bool:

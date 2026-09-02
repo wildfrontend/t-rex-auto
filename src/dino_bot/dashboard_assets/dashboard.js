@@ -203,6 +203,17 @@ function render(data) {
   $("extremeParentProtectionLabel").textContent = displayedExtremeParentEnabled
     ? "10/1/1 極端親代保護：開啟"
     : "10/1/1 極端親代保護：關閉";
+  const specializationAutoPlace = $("specializationAutoPlace");
+  const specializationAutoPlaceEnabled = tuning.auto_place_specializations === true;
+  if (document.activeElement !== specializationAutoPlace) {
+    specializationAutoPlace.checked = specializationAutoPlaceEnabled;
+  }
+  const displayedSpecializationAutoPlace = document.activeElement === specializationAutoPlace
+    ? specializationAutoPlace.checked
+    : specializationAutoPlaceEnabled;
+  $("specializationAutoPlaceLabel").textContent = displayedSpecializationAutoPlace
+    ? "攻擊／HP 自動放置＋純化：開啟"
+    : "攻擊／HP 自動放置＋純化：關閉";
   const customWorkflow = data.custom_workflow || {};
   const selectedStages = new Set(customWorkflow.stages || ["collect", "hatch", "hunt"]);
   document.querySelectorAll("input[data-custom-stage]").forEach((input) => {
@@ -510,11 +521,18 @@ $("extremeParentProtection").addEventListener("change", (event) => {
     : "10/1/1 極端親代保護：關閉";
 });
 
+$("specializationAutoPlace").addEventListener("change", (event) => {
+  $("specializationAutoPlaceLabel").textContent = event.target.checked
+    ? "攻擊／HP 自動放置＋純化：開啟"
+    : "攻擊／HP 自動放置＋純化：關閉";
+});
+
 $("hatchTuningUpdate").addEventListener("click", async () => {
   const capacityLimit = Number($("capacityLimitInput").value);
   const cullThreshold = Number($("cullThresholdInput").value);
   const screeningInterval = Number($("screeningIntervalInput").value);
   const allowExtremeSpecializationParent = $("extremeParentProtection").checked;
+  const autoPlaceSpecializations = $("specializationAutoPlace").checked;
   const result = $("commandResult");
   const positiveInteger = (value) => Number.isInteger(value) && value > 0;
   if (
@@ -547,6 +565,7 @@ $("hatchTuningUpdate").addEventListener("click", async () => {
         cull_threshold: cullThreshold,
         screening_growth_interval: screeningInterval,
         allow_extreme_specialization_parent: allowExtremeSpecializationParent,
+        auto_place_specializations: autoPlaceSpecializations,
       }),
     });
     const payload = await response.json();

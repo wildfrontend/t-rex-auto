@@ -47,8 +47,10 @@ from .digits import DigitReader
 from .hatch_inventory import HatchBoostInventoryStore
 from .models import Detection, Frame, Target, VerificationResult
 from .nests import (
+    ATTACK_AUTOPLACE_RULE,
     ATTACK_RULE,
     DEFAULT_STAT_UPGRADE_GUARDS,
+    HP_AUTOPLACE_RULE,
     HP_RULE,
     MASS_RULE,
     TOP_RULE,
@@ -166,13 +168,19 @@ FULL_HATCH_STAGES: frozenset[str] = frozenset(
 
 PLACE_SORT_BEST = "hatch_place_sort_best"
 PLACE_SORT_LEVEL = "hatch_place_sort_level"
+PLACE_SORT_ATTACK = "hatch_place_sort_attack"
+PLACE_SORT_HP = "hatch_place_sort_hp"
 PLACE_HDR_BEST = "hatch_place_hdr_best"
 PLACE_HDR_LEVEL = "hatch_place_hdr_level"
+PLACE_HDR_ATTACK = "hatch_place_hdr_attack"
+PLACE_HDR_HP = "hatch_place_hdr_hp"
 # The redesigned auto-place dialog moved upward, but the dropdown order is
 # unchanged. Coordinates are in the 900-wide reference layout.
 AUTOPLACE_SORT_HEADER_POINT = (450.0, 576.0)
 AUTOPLACE_SORT_BEST_POINT = (450.0, 630.0)
 AUTOPLACE_SORT_LEVEL_POINT = (450.0, 678.0)
+AUTOPLACE_SORT_ATTACK_POINT = (450.0, 726.0)
+AUTOPLACE_SORT_HP_POINT = (450.0, 774.0)
 
 DEFAULT_TARGET_ACTIONS: dict[str, str] = {
     **hatch_feature.DEFAULT_TARGET_ACTIONS,
@@ -182,6 +190,8 @@ DEFAULT_TARGET_ACTIONS: dict[str, str] = {
     AUTOPLACE_SORT_HEADER: "tap",
     PLACE_SORT_BEST: "tap",
     PLACE_SORT_LEVEL: "tap",
+    PLACE_SORT_ATTACK: "tap",
+    PLACE_SORT_HP: "tap",
     AUTOPLACE_MASK_CLOSE: "tap",
     AUTOPLACE_BUTTON: "tap",
     AUTOPLACE_YES: "tap",
@@ -224,6 +234,8 @@ DEFAULT_POST_ACTION_DELAYS_MS: dict[str, int] = {
     AUTOPLACE_SORT_HEADER: 5000,
     PLACE_SORT_BEST: 2500,
     PLACE_SORT_LEVEL: 2500,
+    PLACE_SORT_ATTACK: 2500,
+    PLACE_SORT_HP: 2500,
     AUTOPLACE_MASK_CLOSE: 2500,
     AUTOPLACE_BUTTON: 4000,
     AUTOPLACE_YES: 5000,
@@ -263,9 +275,16 @@ DEFAULT_SUCCESS_TRANSITIONS: dict[str, tuple[str, ...]] = {
     **replacement_feature.DEFAULT_SUCCESS_TRANSITIONS,
     OPEN_NEST: (NEST_TITLE,),
     NEST_GEAR: (AUTOPLACE_TITLE,),
-    AUTOPLACE_SORT_HEADER: (PLACE_SORT_BEST, PLACE_SORT_LEVEL),
+    AUTOPLACE_SORT_HEADER: (
+        PLACE_SORT_BEST,
+        PLACE_SORT_LEVEL,
+        PLACE_SORT_ATTACK,
+        PLACE_SORT_HP,
+    ),
     PLACE_SORT_BEST: (PLACE_HDR_BEST,),
     PLACE_SORT_LEVEL: (PLACE_HDR_LEVEL,),
+    PLACE_SORT_ATTACK: (PLACE_HDR_ATTACK,),
+    PLACE_SORT_HP: (PLACE_HDR_HP,),
     # NEST_TITLE is visible behind the settings overlay.  The planner performs
     # an additional foreground check and repeats the outside-mask tap if the
     # overlay title is still present.
@@ -329,6 +348,8 @@ RETRYABLE_NAVIGATION_TARGETS: frozenset[str] = frozenset(
         AUTOPLACE_SORT_HEADER,
         PLACE_SORT_BEST,
         PLACE_SORT_LEVEL,
+        PLACE_SORT_ATTACK,
+        PLACE_SORT_HP,
         AUTOPLACE_MASK_CLOSE,
     }
 )
@@ -474,10 +495,14 @@ NEST_DETECTION_TYPES: frozenset[str] = frozenset(
         AUTOPLACE_BUTTON,
         PLACE_HDR_BEST,
         PLACE_HDR_LEVEL,
+        PLACE_HDR_ATTACK,
+        PLACE_HDR_HP,
         # 展開的排序選單選項也要掃:規劃看不見它們時會重按表頭,
         # 把剛打開的選單又關上,top/mass 階段就此死循環。
         PLACE_SORT_BEST,
         PLACE_SORT_LEVEL,
+        PLACE_SORT_ATTACK,
+        PLACE_SORT_HP,
         COLLECT_EGGS_BUTTON,
         INCUBATOR_FULL_TOAST,
         CONFIRM_NO,
@@ -530,8 +555,12 @@ NEST_AUTOPLACE_DETECTION_TYPES: frozenset[str] = frozenset(
         AUTOPLACE_BUTTON,
         PLACE_HDR_BEST,
         PLACE_HDR_LEVEL,
+        PLACE_HDR_ATTACK,
+        PLACE_HDR_HP,
         PLACE_SORT_BEST,
         PLACE_SORT_LEVEL,
+        PLACE_SORT_ATTACK,
+        PLACE_SORT_HP,
         CONFIRM_NO,
         CONFIRM_YES,
     }
@@ -1481,7 +1510,7 @@ class HatchHomeRecoveryPlanner:
 
 
 class AutoPlaceRoundPlanner:
-    """Converge one Top/Mass tag, set auto-place sorting, and apply it."""
+    """Converge one nest tag, set auto-place sorting, and apply it."""
 
     def __init__(
         self,
@@ -1493,6 +1522,20 @@ class AutoPlaceRoundPlanner:
         if reference_width <= 0:
             raise ValueError("reference_width must be greater than zero")
         mapping = {
+            ATTACK_AUTOPLACE_RULE.tag: (
+                nest_filter_feature.TAG_ATTACK,
+                nest_filter_feature.TAG_HDR_ATTACK,
+                PLACE_SORT_ATTACK,
+                PLACE_HDR_ATTACK,
+                AUTOPLACE_SORT_ATTACK_POINT,
+            ),
+            HP_AUTOPLACE_RULE.tag: (
+                nest_filter_feature.TAG_HP,
+                nest_filter_feature.TAG_HDR_HP,
+                PLACE_SORT_HP,
+                PLACE_HDR_HP,
+                AUTOPLACE_SORT_HP_POINT,
+            ),
             TOP_RULE.tag: (
                 nest_filter_feature.TAG_TOP,
                 nest_filter_feature.TAG_HDR_TOP,
@@ -1543,7 +1586,12 @@ class AutoPlaceRoundPlanner:
             return
         if target_type == NEST_GEAR:
             self._stage = "settings"
-        elif target_type in (PLACE_SORT_BEST, PLACE_SORT_LEVEL):
+        elif target_type in (
+            PLACE_SORT_BEST,
+            PLACE_SORT_LEVEL,
+            PLACE_SORT_ATTACK,
+            PLACE_SORT_HP,
+        ):
             self._stage = "verify_sort"
         elif target_type == AUTOPLACE_MASK_CLOSE:
             self._stage = "verify_settings_closed"
@@ -2100,6 +2148,7 @@ class FullHatchPlanner:
         rescan_interval_seconds: float = 600.0,
         stat_upgrade_guards: Mapping[str, StatUpgradeGuard] = DEFAULT_STAT_UPGRADE_GUARDS,
         allow_extreme_specialization_parent: bool = False,
+        auto_place_specializations: bool = False,
         minimum_consistent_stat_reads: int = 1,
         stat_read_retries: int = 1,
         boost_inventory: HatchBoostInventoryStore | None = None,
@@ -2135,6 +2184,7 @@ class FullHatchPlanner:
         self.allow_extreme_specialization_parent = bool(
             allow_extreme_specialization_parent
         )
+        self.auto_place_specializations = bool(auto_place_specializations)
         self.minimum_consistent_stat_reads = minimum_consistent_stat_reads
         self.stat_read_retries = stat_read_retries
         # Nest management is driven only by estimated total dinosaur growth.
@@ -2295,7 +2345,11 @@ class FullHatchPlanner:
         if self._stage == "open_nest":
             return NEST_BASE_DETECTION_TYPES
         if self._stage in {"attack", "hp"}:
-            return NEST_REPLACEMENT_DETECTION_TYPES
+            return (
+                NEST_AUTOPLACE_DETECTION_TYPES
+                if isinstance(self._child, AutoPlaceRoundPlanner)
+                else NEST_REPLACEMENT_DETECTION_TYPES
+            )
         if self._stage in {"top", "mass"}:
             return NEST_AUTOPLACE_DETECTION_TYPES
         if self._stage in {
@@ -2580,9 +2634,14 @@ class FullHatchPlanner:
                 self._start_next_screening_stage()
             return
         if self._stage in ("attack", "hp"):
-            child = self._replacement_child
-            child.on_action_success(target_type)
-            self._advance_replacement_if_done()
+            if isinstance(self._child, AutoPlaceRoundPlanner):
+                child = self._autoplace_child
+                child.on_action_success(target_type)
+                self._advance_autoplace_if_done()
+            else:
+                child = self._replacement_child
+                child.on_action_success(target_type)
+                self._advance_replacement_if_done()
             return
         if self._stage in ("top", "mass"):
             child = self._autoplace_child
@@ -2610,9 +2669,12 @@ class FullHatchPlanner:
         result: VerificationResult,
     ) -> None:
         if self._stage in ("attack", "hp"):
-            child = self._replacement_child
-            child.on_action_success_context(target, frame, detections, result)
-            self._advance_replacement_if_done()
+            if isinstance(self._child, AutoPlaceRoundPlanner):
+                self.on_action_success(target.type)
+            else:
+                child = self._replacement_child
+                child.on_action_success_context(target, frame, detections, result)
+                self._advance_replacement_if_done()
             return
         self.on_action_success(target.type)
 
@@ -3212,11 +3274,18 @@ class FullHatchPlanner:
                 return None
             return synthetic_target(OPEN_NEST, anchor.x, anchor.y)
         if self._stage in ("attack", "hp"):
-            target = self._replacement_child.choose(frame, detections)
-            if target is None:
-                self._advance_replacement_if_done()
-                if self._stage not in ("attack", "hp"):
-                    return self._choose_current(frame, detections)
+            if isinstance(self._child, AutoPlaceRoundPlanner):
+                target = self._autoplace_child.choose(frame, detections)
+                if target is None:
+                    self._advance_autoplace_if_done()
+                    if not isinstance(self._child, AutoPlaceRoundPlanner):
+                        return self._choose_current(frame, detections)
+            else:
+                target = self._replacement_child.choose(frame, detections)
+                if target is None:
+                    self._advance_replacement_if_done()
+                    if self._stage not in ("attack", "hp"):
+                        return self._choose_current(frame, detections)
             return target
         if self._stage in ("top", "mass"):
             target = self._autoplace_child.choose(frame, detections)
@@ -3689,6 +3758,23 @@ class FullHatchPlanner:
         )
 
     def _start_replacement(self, kind: str) -> None:
+        if self.auto_place_specializations:
+            self._stage = kind
+            rule = ATTACK_AUTOPLACE_RULE if kind == "attack" else HP_AUTOPLACE_RULE
+            self._child = AutoPlaceRoundPlanner(
+                rule,
+                reference_width=self.reference_width,
+                logger=self.logger,
+            )
+            return
+        self._start_manual_replacement(kind)
+
+    def _start_manual_replacement(
+        self,
+        kind: str,
+        *,
+        prefer_specialization_purity: bool = False,
+    ) -> None:
         if kind == "attack":
             self._stage = "attack"
             self._child = AttackReplacementTestPlanner(
@@ -3697,6 +3783,7 @@ class FullHatchPlanner:
                 rule=ATTACK_RULE,
                 stat_guards=self.stat_upgrade_guards,
                 allow_extreme_specialization_parent=self.allow_extreme_specialization_parent,
+                prefer_specialization_purity=prefer_specialization_purity,
                 minimum_consistent_stat_reads=self.minimum_consistent_stat_reads,
                 stat_read_retries=self.stat_read_retries,
                 parent_stats_snapshots=self.parent_stats_snapshots,
@@ -3715,6 +3802,7 @@ class FullHatchPlanner:
             select_sort_menu_point=(650.0, 501.0),
             stat_guards=self.stat_upgrade_guards,
             allow_extreme_specialization_parent=self.allow_extreme_specialization_parent,
+            prefer_specialization_purity=prefer_specialization_purity,
             minimum_consistent_stat_reads=self.minimum_consistent_stat_reads,
             stat_read_retries=self.stat_read_retries,
             parent_stats_snapshots=self.parent_stats_snapshots,
@@ -3798,6 +3886,18 @@ class FullHatchPlanner:
     def _advance_autoplace_if_done(self) -> None:
         child = self._autoplace_child
         if not child.is_complete():
+            return
+        if self._stage in {"attack", "hp"} and self.auto_place_specializations:
+            stage = self._stage
+            self.logger.info(
+                "Hatch full | specialization auto-place completed"
+                " | stage=%s | action=manual purity repair | speed=ignored",
+                stage,
+            )
+            self._start_manual_replacement(
+                stage,
+                prefer_specialization_purity=True,
+            )
             return
         if self.standalone_stage == self._stage:
             self._begin_home_recovery(

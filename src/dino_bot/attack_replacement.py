@@ -36,6 +36,7 @@ from .nests import (
     is_extreme_specialization_candidate,
     is_intentional_extreme_specialization_parent,
     pick_replacement,
+    pick_specialization_replacement,
     primary_of,
 )
 from .overlays import CONFIRM_YES, NESTED_PARENT_WARNING, SELECT_CONFIRM_PROMPT
@@ -107,6 +108,7 @@ class AttackReplacementTestPlanner:
         select_sort_menu_point: tuple[float, float] = (649.0, 550.0),
         stat_guards: Mapping[str, StatUpgradeGuard] = DEFAULT_STAT_UPGRADE_GUARDS,
         allow_extreme_specialization_parent: bool = False,
+        prefer_specialization_purity: bool = False,
         minimum_consistent_stat_reads: int = 1,
         stat_read_retries: int = 1,
         parent_stats_snapshots: ParentStatsSnapshot | None = None,
@@ -134,6 +136,7 @@ class AttackReplacementTestPlanner:
         self.allow_extreme_specialization_parent = bool(
             allow_extreme_specialization_parent
         )
+        self.prefer_specialization_purity = bool(prefer_specialization_purity)
         self.minimum_consistent_stat_reads = minimum_consistent_stat_reads
         self.stat_read_retries = stat_read_retries
         self.parent_stats_snapshots = parent_stats_snapshots
@@ -419,6 +422,7 @@ class AttackReplacementTestPlanner:
             self.rule,
             enabled=(
                 self.allow_extreme_specialization_parent
+                and not self.prefer_specialization_purity
                 and not self._extreme_specialization_unlocked
             ),
         )
@@ -492,7 +496,12 @@ class AttackReplacementTestPlanner:
             )
             return None
         self._suspicious_ocr_retries = 0
-        replacement_index = pick_replacement(
+        picker = (
+            pick_specialization_replacement
+            if self.prefer_specialization_purity
+            else pick_replacement
+        )
+        replacement_index = picker(
             self._current_parent,
             rows,
             self.rule,
@@ -501,21 +510,25 @@ class AttackReplacementTestPlanner:
         )
         if replacement_index is None:
             self.logger.info(
-                "Hatch %s | side=%s | candidates=%s | decision=keep parent",
+                "Hatch %s | side=%s | candidates=%s | decision=keep parent"
+                " | mode=%s",
                 self.rule.tag,
                 self._side_name,
                 [self._format_stats(row) for row in rows],
+                "purity repair" if self.prefer_specialization_purity else "upgrade",
             )
             return self._close_list(frame)
 
         replacement = rows[replacement_index]
         self.logger.info(
-            "Hatch %s | side=%s | candidates=%s | decision=select row %d (%s)",
+            "Hatch %s | side=%s | candidates=%s | decision=select row %d (%s)"
+            " | mode=%s",
             self.rule.tag,
             self._side_name,
             [self._format_stats(row) for row in rows],
             replacement_index + 1,
             self._format_stats(replacement),
+            "purity repair" if self.prefer_specialization_purity else "upgrade",
         )
 
         x, y = self._scaled(frame, self.candidate_point)

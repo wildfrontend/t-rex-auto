@@ -297,6 +297,7 @@ def test_hatch_config_defaults_load(tmp_path) -> None:
     assert config.hatch.stat_consistent_reads == 2
     assert config.hatch.stat_read_retries == 3
     assert config.hatch.allow_extreme_specialization_parent is False
+    assert config.hatch.auto_place_specializations is False
 
 
 def test_hatch_config_overrides(tmp_path) -> None:
@@ -304,7 +305,8 @@ def test_hatch_config_overrides(tmp_path) -> None:
     config_path.write_text(
         '{"hatch": {"egg_pile": [400, 1200], "rescan_interval_seconds": 300,'
         ' "screening_growth_interval": 15,'
-        ' "max_scrolls": 6, "allow_extreme_specialization_parent": true}}',
+        ' "max_scrolls": 6, "allow_extreme_specialization_parent": true,'
+        ' "auto_place_specializations": true}}',
         encoding="utf-8",
     )
     config = load_config(config_path)
@@ -313,6 +315,7 @@ def test_hatch_config_overrides(tmp_path) -> None:
     assert config.hatch.screening_growth_interval == 15
     assert config.hatch.max_scrolls == 6
     assert config.hatch.allow_extreme_specialization_parent is True
+    assert config.hatch.auto_place_specializations is True
 
 
 def test_hatch_config_allows_future_stat_ranges(tmp_path) -> None:

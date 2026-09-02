@@ -14,7 +14,9 @@ from dino_bot.nests import (
     is_extreme_specialization_candidate,
     is_intentional_extreme_specialization_parent,
     pick_replacement,
+    pick_specialization_replacement,
     secondary_load,
+    specialization_counter_stat,
 )
 
 
@@ -90,6 +92,51 @@ def test_extreme_specialization_candidate_has_one_high_and_two_low_stats() -> No
 def test_secondary_load_excludes_primary() -> None:
     assert secondary_load(Stats(30, 276, 1), ATTACK_RULE) == 31
     assert secondary_load(Stats(2230, 2, 1), HP_RULE) == 3
+
+
+def test_specialization_counter_stat_ignores_speed() -> None:
+    assert specialization_counter_stat(Stats(30, 276, 150), ATTACK_RULE) == 30
+    assert specialization_counter_stat(Stats(2230, 2, 1), HP_RULE) == 2
+
+
+def test_specialization_repair_prefers_purity_over_raw_primary() -> None:
+    attack_parent = Stats(2230, 282, 150)
+    attack_rows = [Stats(2240, 290, 1), Stats(30, 276, 150)]
+    hp_parent = Stats(2340, 276, 1)
+    hp_rows = [Stats(2400, 280, 150), Stats(2230, 2, 1)]
+
+    assert (
+        pick_specialization_replacement(
+            attack_parent,
+            attack_rows,
+            ATTACK_RULE,
+        )
+        == 1
+    )
+    assert pick_specialization_replacement(hp_parent, hp_rows, HP_RULE) == 1
+
+
+def test_specialization_repair_treats_speed_one_and_150_the_same() -> None:
+    parent = Stats(30, 276, 1)
+    rows = [Stats(30, 280, 150), Stats(30, 279, 1)]
+
+    assert pick_specialization_replacement(parent, rows, ATTACK_RULE) == 0
+
+
+def test_specialization_repair_keeps_cleaner_parent_and_excludes_partner() -> None:
+    parent = Stats(30, 282, 150)
+    partner = Stats(20, 281, 1)
+    rows = [partner, Stats(40, 290, 1)]
+
+    assert (
+        pick_specialization_replacement(
+            parent,
+            rows,
+            ATTACK_RULE,
+            partner=partner,
+        )
+        is None
+    )
 
 
 def test_is_descending() -> None:

@@ -7,6 +7,7 @@ import cv2
 import numpy as np
 
 from dino_bot import hatch, nest_filter
+from dino_bot.attack_replacement import AttackReplacementTestPlanner
 from dino_bot.cull import CAPACITY_REGION, CapacityRead
 from dino_bot.detection import OpenCvDetector
 from dino_bot.digits import DigitReader
@@ -32,9 +33,13 @@ from dino_bot.full_hatch import (
     NEST_GEAR,
     NEST_MASK_CLOSE,
     OPEN_NEST,
+    PLACE_HDR_ATTACK,
     PLACE_HDR_BEST,
+    PLACE_HDR_HP,
     PLACE_HDR_LEVEL,
+    PLACE_SORT_ATTACK,
     PLACE_SORT_BEST,
+    PLACE_SORT_HP,
     PLACE_SORT_LEVEL,
     RECOVERY_BACK,
     RECOVERY_FOREST,
@@ -68,7 +73,12 @@ from dino_bot.full_hatch import (
 )
 from dino_bot.hatch_inventory import HatchBoostInventoryStore
 from dino_bot.models import BoundingBox, Detection, Frame, Target, VerificationResult
-from dino_bot.nests import MASS_RULE, TOP_RULE
+from dino_bot.nests import (
+    ATTACK_AUTOPLACE_RULE,
+    HP_AUTOPLACE_RULE,
+    MASS_RULE,
+    TOP_RULE,
+)
 from dino_bot.overlays import CONFIRM_NO, CONFIRM_YES, SELECT_CONFIRM_PROMPT
 from dino_bot.parent_open import NEST_TITLE, SELECT_TITLE
 from dino_bot.verification import TargetChangedVerifier
@@ -232,6 +242,62 @@ def test_mass_autoplace_round_selects_level_and_confirms_application() -> None:
     assert target is not None and target.type == AUTOPLACE_YES
     planner.on_action_success(target.type)
     assert planner.is_complete()
+
+
+def test_attack_autoplace_uses_attack_sort_and_header() -> None:
+    planner = AutoPlaceRoundPlanner(ATTACK_AUTOPLACE_RULE)
+    planner._stage = "settings"
+    settings = [
+        detection(AUTOPLACE_TITLE, 450, 490),
+        detection(PLACE_SORT_ATTACK, 450, 726),
+    ]
+
+    target = planner.choose(frame(), settings)
+    assert target is not None and target.type == PLACE_SORT_ATTACK
+    planner.on_action_success(target.type)
+
+    target = planner.choose(
+        frame(),
+        settings + [detection(PLACE_HDR_ATTACK, 450, 576)],
+    )
+    assert target is not None and target.type == AUTOPLACE_MASK_CLOSE
+
+
+def test_hp_autoplace_uses_hp_sort_and_header() -> None:
+    planner = AutoPlaceRoundPlanner(HP_AUTOPLACE_RULE)
+    planner._stage = "settings"
+    settings = [
+        detection(AUTOPLACE_TITLE, 450, 490),
+        detection(PLACE_SORT_HP, 450, 774),
+    ]
+
+    target = planner.choose(frame(), settings)
+    assert target is not None and target.type == PLACE_SORT_HP
+    planner.on_action_success(target.type)
+
+    target = planner.choose(
+        frame(),
+        settings + [detection(PLACE_HDR_HP, 450, 576)],
+    )
+    assert target is not None and target.type == AUTOPLACE_MASK_CLOSE
+
+
+def test_live_stat_sort_menu_fixture_detects_attack_and_hp_options() -> None:
+    menu = cv2.imread(str(FIXTURES / "autoplace-stat-sort-menu.png"))
+    assert menu is not None
+    image = np.zeros((1600, 900, 3), dtype=np.uint8)
+    height, width = menu.shape[:2]
+    image[542 : 542 + height, 340 : 340 + width] = menu
+    detector = OpenCvDetector(REPO / "assets" / "hatch" / "manifest.json")
+
+    detections = detector.detect_types(
+        frame(image),
+        {PLACE_SORT_ATTACK, PLACE_SORT_HP},
+    )
+    by_type = {item.type: item for item in detections}
+
+    assert by_type[PLACE_SORT_ATTACK].confidence >= 0.99
+    assert by_type[PLACE_SORT_HP].confidence >= 0.99
 
 
 def test_autoplace_sort_dropdown_is_opened_when_target_is_not_visible() -> None:
@@ -667,6 +733,47 @@ def make_full_planner() -> FullHatchPlanner:
         egg_pile_point=(450, 1330),
         max_scrolls=0,
     )
+
+
+def test_specialization_switch_runs_autoplace_then_manual_purity_repair() -> None:
+    planner = FullHatchPlanner(
+        DigitReader(GLYPHS),
+        egg_pile_point=(450, 1330),
+        max_scrolls=0,
+        auto_place_specializations=True,
+    )
+
+    planner._start_replacement("attack")
+    assert isinstance(planner._child, AutoPlaceRoundPlanner)
+    assert planner._autoplace_child.rule == ATTACK_AUTOPLACE_RULE
+    assert PLACE_SORT_ATTACK in planner.planning_detection_types()
+
+    planner._autoplace_child._complete = True
+    planner._advance_autoplace_if_done()
+
+    assert planner._stage == "attack"
+    assert isinstance(planner._child, AttackReplacementTestPlanner)
+    assert planner._replacement_child.prefer_specialization_purity is True
+    assert "hatch_parent_left" in planner.planning_detection_types()
+
+
+def test_specialization_switch_runs_hp_autoplace_then_manual_purity_repair() -> None:
+    planner = FullHatchPlanner(
+        DigitReader(GLYPHS),
+        egg_pile_point=(450, 1330),
+        max_scrolls=0,
+        auto_place_specializations=True,
+    )
+
+    planner._start_replacement("hp")
+    assert planner._autoplace_child.rule == HP_AUTOPLACE_RULE
+    assert PLACE_SORT_HP in planner.planning_detection_types()
+    planner._autoplace_child._complete = True
+    planner._advance_autoplace_if_done()
+
+    assert planner._stage == "hp"
+    assert planner._replacement_child.rule.tag == "HP特化"
+    assert planner._replacement_child.prefer_specialization_purity is True
 
 
 def test_custom_full_hatch_runs_only_selected_management_stages() -> None:

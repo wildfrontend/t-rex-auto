@@ -505,6 +505,7 @@ def _create_hatch_engine(
             rescan_interval_seconds=hatch.rescan_interval_seconds,
             stat_upgrade_guards=hatch.stat_upgrade_guards,
             allow_extreme_specialization_parent=hatch.allow_extreme_specialization_parent,
+            auto_place_specializations=hatch.auto_place_specializations,
             minimum_consistent_stat_reads=hatch.stat_consistent_reads,
             stat_read_retries=hatch.stat_read_retries,
             boost_inventory=hatch_inventory,

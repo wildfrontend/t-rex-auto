@@ -89,6 +89,16 @@
       "threshold": 0.9
     },
     {
+      "type": "hatch_place_sort_attack",
+      "file": "templates/hatch-place-sort-attack.png",
+      "threshold": 0.92
+    },
+    {
+      "type": "hatch_place_sort_hp",
+      "file": "templates/hatch-place-sort-hp.png",
+      "threshold": 0.92
+    },
+    {
       "type": "hatch_place_hdr_best",
       "file": "templates/hatch-place-hdr-best.png",
       "threshold": 0.9
@@ -97,6 +107,22 @@
       "type": "hatch_place_hdr_level",
       "file": "templates/hatch-place-hdr-level.png",
       "threshold": 0.9
+    },
+    {
+      "type": "hatch_place_hdr_attack",
+      "file": "templates/hatch-place-sort-attack.png",
+      "threshold": 0.84,
+      "scales": [
+        1.08
+      ]
+    },
+    {
+      "type": "hatch_place_hdr_hp",
+      "file": "templates/hatch-place-sort-hp.png",
+      "threshold": 0.84,
+      "scales": [
+        1.08
+      ]
     },
     {
       "type": "hatch_tag_hdr_attack",

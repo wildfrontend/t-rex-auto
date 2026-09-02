@@ -35,6 +35,8 @@ def test_metrics_persist_verified_hunts_hatches_and_records(tmp_path: Path) -> N
 18:00:08 | INFO | Planning | hatch_confirm_yes at (366,828) confidence=1.0
 18:00:09 | INFO | Verify | Success | next UI detected: hatch_nest_title
 18:00:10 | INFO | Hatch auto-place | tag=頂尖 | sort=最佳屬性組合 | completed with confirmation
+18:00:10 | INFO | Hatch auto-place | tag=攻擊特化 | sort=攻擊力 | completed with confirmation
+18:00:10 | INFO | Hatch auto-place | tag=HP特化 | sort=HP | completed with confirmation
         18:00:11 | INFO | Hatch cave | capacity=301/350 | threshold=330 | cull=False
 18:00:12 | WARNING | Verify | Failed | expected next UI not detected
 """,
@@ -53,6 +55,8 @@ def test_metrics_persist_verified_hunts_hatches_and_records(tmp_path: Path) -> N
     assert first["counters"]["hatch"]["total"] == 1
     assert first["counters"]["replacement"]["total"] == 1
     assert first["counters"]["autoplace_top"]["total"] == 1
+    assert first["counters"]["autoplace_attack"]["total"] == 1
+    assert first["counters"]["autoplace_hp"]["total"] == 1
     assert first["counters"]["cull_removed"]["total"] == 40
     assert first["counters"]["verification_failure"]["total"] == 1
     assert first["records"]["hp"]["value"] == 2340

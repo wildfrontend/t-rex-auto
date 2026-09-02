@@ -43,6 +43,7 @@ HATCH_TUNING_FIELDS = (
     "cull_threshold",
     "screening_growth_interval",
     "allow_extreme_specialization_parent",
+    "auto_place_specializations",
 )
 DEFAULT_INSTANCE_ID = "main"
 DEFAULT_INSTANCE_NAME = "主力模擬器"
@@ -545,6 +546,7 @@ class DashboardController:
             "allow_extreme_specialization_parent": (
                 hatch.allow_extreme_specialization_parent
             ),
+            "auto_place_specializations": hatch.auto_place_specializations,
         }
 
     def set_hatch_tuning(
@@ -554,6 +556,7 @@ class DashboardController:
         cull_threshold: int,
         screening_growth_interval: int,
         allow_extreme_specialization_parent: bool | None = None,
+        auto_place_specializations: bool | None = None,
     ) -> dict[str, Any]:
         """Persist the hatch numbers a run is tuned by, as one edit.
 
@@ -583,6 +586,11 @@ class DashboardController:
             and not isinstance(allow_extreme_specialization_parent, bool)
         ):
             raise ValueError("allow_extreme_specialization_parent must be a boolean")
+        if (
+            auto_place_specializations is not None
+            and not isinstance(auto_place_specializations, bool)
+        ):
+            raise ValueError("auto_place_specializations must be a boolean")
 
         instance = self._instance(instance_id)
         if allow_extreme_specialization_parent is None:
@@ -592,11 +600,19 @@ class DashboardController:
                     False,
                 )
             )
+        if auto_place_specializations is None:
+            auto_place_specializations = bool(
+                self.hatch_tuning(instance).get(
+                    "auto_place_specializations",
+                    False,
+                )
+            )
         values = {
             **numeric_values,
             "allow_extreme_specialization_parent": (
                 allow_extreme_specialization_parent
             ),
+            "auto_place_specializations": auto_place_specializations,
         }
         try:
             config = json.loads(instance.config_path.read_text(encoding="utf-8"))
@@ -619,7 +635,9 @@ class DashboardController:
         message = (
             f"上限人口 {capacity_limit}、安全人口 {cull_threshold}、"
             f"篩選間隔 {screening_growth_interval}、極端親代保護"
-            f"{'開啟' if allow_extreme_specialization_parent else '關閉'} 已儲存"
+            f"{'開啟' if allow_extreme_specialization_parent else '關閉'}、"
+            "攻擊／HP 特化"
+            f"{'自動放置＋純化' if auto_place_specializations else '逐隻升級'} 已儲存"
         )
         if running:
             message += "；重新啟動 Bot 後生效"
@@ -1727,6 +1745,7 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                     payload.get("cull_threshold"),
                     payload.get("screening_growth_interval"),
                     payload.get("allow_extreme_specialization_parent"),
+                    payload.get("auto_place_specializations"),
                 )
             elif action == "set-custom-workflow":
                 payload = self._read_json()

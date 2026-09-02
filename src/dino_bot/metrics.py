@@ -49,6 +49,8 @@ _COUNTER_KINDS = (
     "hatch",
     "nest_collect_batch",
     "replacement",
+    "autoplace_attack",
+    "autoplace_hp",
     "autoplace_top",
     "autoplace_mass",
     "cull_removed",
@@ -638,8 +640,20 @@ class MetricsStore:
         autoplace = _AUTOPLACE.match(message)
         if autoplace is not None and "completed" in message:
             tag = autoplace.group("tag").strip()
-            kind = "autoplace_top" if tag == "頂尖" else "autoplace_mass"
-            self._record(connection, source, occurred_at, kind, payload={"tag": tag})
+            kind = {
+                "攻擊特化": "autoplace_attack",
+                "HP特化": "autoplace_hp",
+                "頂尖": "autoplace_top",
+                "量產": "autoplace_mass",
+            }.get(tag)
+            if kind is not None:
+                self._record(
+                    connection,
+                    source,
+                    occurred_at,
+                    kind,
+                    payload={"tag": tag},
+                )
             return
 
         cull_completed = _CULL_COMPLETED.match(message)

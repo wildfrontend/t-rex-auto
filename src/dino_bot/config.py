@@ -232,6 +232,10 @@ class HatchConfig:
     # Some HP/attack breeding lines intentionally start from a 10/1/1 parent.
     # Keep this opt-in because the same values can otherwise hide OCR errors.
     allow_extreme_specialization_parent: bool = False
+    # Seed Attack/HP nests with the game's tag-scoped primary-stat auto-place,
+    # then manually repair mixed HP+attack mutations. The repair ignores speed
+    # and prefers a lower opposing combat stat before primary-stat strength.
+    auto_place_specializations: bool = False
     # OCR values must repeat across complete frames before any parent or
     # candidate tap is allowed. Retries include the initial observations.
     stat_consistent_reads: int = 2
@@ -755,6 +759,9 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
             stat_upgrade_guards=_stat_upgrade_guards(hatch_data),
             allow_extreme_specialization_parent=bool(
                 hatch_data.get("allow_extreme_specialization_parent", False)
+            ),
+            auto_place_specializations=bool(
+                hatch_data.get("auto_place_specializations", False)
             ),
             stat_consistent_reads=int(hatch_data.get("stat_consistent_reads", 2)),
             stat_read_retries=int(hatch_data.get("stat_read_retries", 3)),
