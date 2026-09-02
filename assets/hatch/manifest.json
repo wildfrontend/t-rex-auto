@@ -110,19 +110,13 @@
     },
     {
       "type": "hatch_place_hdr_attack",
-      "file": "templates/hatch-place-sort-attack.png",
-      "threshold": 0.84,
-      "scales": [
-        1.08
-      ]
+      "file": "templates/hatch-place-hdr-attack.png",
+      "threshold": 0.9
     },
     {
       "type": "hatch_place_hdr_hp",
-      "file": "templates/hatch-place-sort-hp.png",
-      "threshold": 0.84,
-      "scales": [
-        1.08
-      ]
+      "file": "templates/hatch-place-hdr-hp.png",
+      "threshold": 0.9
     },
     {
       "type": "hatch_tag_hdr_attack",

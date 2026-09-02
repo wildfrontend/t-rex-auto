@@ -258,7 +258,7 @@ def test_attack_autoplace_uses_attack_sort_and_header() -> None:
 
     target = planner.choose(
         frame(),
-        settings + [detection(PLACE_HDR_ATTACK, 450, 576)],
+        settings + [detection(PLACE_HDR_ATTACK, 435, 576)],
     )
     assert target is not None and target.type == AUTOPLACE_MASK_CLOSE
 
@@ -277,7 +277,7 @@ def test_hp_autoplace_uses_hp_sort_and_header() -> None:
 
     target = planner.choose(
         frame(),
-        settings + [detection(PLACE_HDR_HP, 450, 576)],
+        settings + [detection(PLACE_HDR_HP, 436, 575)],
     )
     assert target is not None and target.type == AUTOPLACE_MASK_CLOSE
 
@@ -298,6 +298,26 @@ def test_live_stat_sort_menu_fixture_detects_attack_and_hp_options() -> None:
 
     assert by_type[PLACE_SORT_ATTACK].confidence >= 0.99
     assert by_type[PLACE_SORT_HP].confidence >= 0.99
+
+
+def test_live_stat_sort_header_fixtures_detect_selected_headers() -> None:
+    fixtures = {
+        "autoplace-attack-sort-header.png": PLACE_HDR_ATTACK,
+        "autoplace-hp-sort-header.png": PLACE_HDR_HP,
+    }
+    detector = OpenCvDetector(REPO / "assets" / "hatch" / "manifest.json")
+
+    for fixture_name, target_type in fixtures.items():
+        crop = cv2.imread(str(FIXTURES / fixture_name))
+        assert crop is not None
+        image = np.zeros((1600, 900, 3), dtype=np.uint8)
+        height, width = crop.shape[:2]
+        image[548 : 548 + height, 340 : 340 + width] = crop
+
+        detections = detector.detect_types(frame(image), {target_type})
+
+        assert len(detections) == 1
+        assert detections[0].confidence >= 0.99
 
 
 def test_autoplace_sort_dropdown_is_opened_when_target_is_not_visible() -> None:
