@@ -2965,8 +2965,16 @@ class FullHatchPlanner:
                 *_scaled(frame, shortcut_point, self.reference_width),
             )
 
-        if self._stage == "hatch" and any(
-            item.type in HUNT_ACTIVE_TYPES for item in detections
+        # The redesigned incubator's real bottom-right close button also
+        # matches the hunt-dialog close template (S9: 0.998 hatch vs 0.910
+        # hunt). The exact incubator title is stronger screen identity, so it
+        # must outrank that generic hunt-map interruption. Without this guard
+        # the planner closes the incubator, returns home, and reopens it every
+        # ten seconds without ever hatching an egg.
+        if (
+            self._stage == "hatch"
+            and hatch_feature.INCUBATOR_TITLE not in by_type
+            and any(item.type in HUNT_ACTIVE_TYPES for item in detections)
         ):
             self._begin_home_recovery("hatch started from active hunt map")
             return self.choose(frame, detections)

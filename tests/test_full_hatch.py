@@ -1349,6 +1349,27 @@ def test_permanent_boost_layout_planner_taps_ticket_bar_center(tmp_path) -> None
     assert (target.x, target.y) == (450, 1420)
 
 
+def test_incubator_title_outranks_false_hunt_dialog_close_detection() -> None:
+    # S9 v0.0.58 live evidence: the redesigned incubator's real close button
+    # scored 0.998 as hatch_close_button and 0.910 as hunt_dialog_close_button.
+    # Treating the weaker hit as active-hunt identity closed and reopened the
+    # incubator every ten seconds (99 actions, zero completed cycles).
+    planner = make_full_planner()
+    planner._stage = "hatch"
+    planner._child = planner._new_hatch()
+    detections = [
+        detection(hatch.INCUBATOR_TITLE, 450, 169),
+        detection(hatch.CLOSE_BUTTON, 798, 1421),
+        detection(hatch.HATCH_LABEL, 241, 535),
+        detection("hunt_dialog_close_button", 798, 1421),
+    ]
+
+    target = planner.choose(frame(), detections)
+
+    assert target is not None and target.type == hatch.HATCH_LABEL
+    assert planner._stage == "hatch"
+
+
 def test_boost_permission_applies_only_to_the_next_hatch_cycle(tmp_path) -> None:
     inventory = HatchBoostInventoryStore(tmp_path / "stats.sqlite3")
     planner = FullHatchPlanner(
