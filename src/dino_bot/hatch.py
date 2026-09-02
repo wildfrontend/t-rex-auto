@@ -67,15 +67,48 @@ DEFAULT_SUCCESS_TRANSITIONS: dict[str, tuple[str, ...]] = {
 # hunt (mail_reward_collect_button).
 DEFAULT_CYCLE_COMPLETE_TARGETS: tuple[str, ...] = (CLAIM_BUTTON,)
 
-# Timer text positions in the 900x1600 incubator grid. The visible grid has
-# three columns and three rows; each timer is read without the clock icon or
-# progress bar. The reader accepts both ``HHMMSS`` (the colon dots are too
-# small to survive segmentation) and ``HH?MM?SS``.
+# Timer text positions in the original 900x1600 incubator grid. The visible
+# grid has three columns and three rows; each timer is read without the clock
+# icon or progress bar. The reader accepts both ``HHMMSS`` (the colon dots are
+# too small to survive segmentation) and ``HH?MM?SS``.
 HATCH_TIMER_REGIONS: tuple[tuple[float, float, float, float], ...] = tuple(
     (x0, y0, x1, y1)
     for y0, y1 in ((608.0, 638.0), (873.0, 903.0), (1138.0, 1168.0))
     for x0, x1 in ((200.0, 350.0), (380.0, 530.0), (560.0, 710.0))
 )
+
+# Incubator v2 adds a permanent egg-speed bar above the ticket boost. That
+# leaves the same three-column egg grid in place but compacts it upward by
+# roughly forty pixels. The orange permanent-speed bar is a stable layout
+# marker and prevents us from trying both coordinate sets over arbitrary egg
+# artwork (DigitReader deliberately cannot reject every non-digit glyph).
+HATCH_TIMER_REGIONS_V2: tuple[tuple[float, float, float, float], ...] = tuple(
+    (x0, y0, x1, y1)
+    for y0, y1 in ((565.0, 595.0), (833.0, 863.0), (1100.0, 1130.0))
+    for x0, x1 in ((200.0, 350.0), (380.0, 530.0), (560.0, 710.0))
+)
+HATCH_V2_PERMANENT_BOOST_SAMPLE = (380.0, 1280.0, 520.0, 1340.0)
+HATCH_V2_PERMANENT_BOOST_MIN_SATURATION = 80.0
+
+
+def uses_permanent_boost_layout(
+    image: Image,
+    *,
+    reference_width: float = 900.0,
+) -> bool:
+    """Return whether the v2 permanent egg-speed bar is visible."""
+
+    if image.size == 0 or image.ndim < 2 or image.shape[1] <= 0 or reference_width <= 0:
+        return False
+    scale = image.shape[1] / reference_width
+    x0, y0, x1, y1 = (
+        round(value * scale) for value in HATCH_V2_PERMANENT_BOOST_SAMPLE
+    )
+    roi = image[y0:y1, x0:x1]
+    if roi.size == 0:
+        return False
+    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+    return float(hsv[:, :, 1].mean()) >= HATCH_V2_PERMANENT_BOOST_MIN_SATURATION
 
 # The home egg pile is placed in the lower half of the map, but cave/recovery
 # gestures can leave it hundreds of pixels above its calibrated position. Its
@@ -257,8 +290,13 @@ def read_hatch_cooldown_seconds(
     if image.ndim < 2 or image.shape[1] <= 0 or reference_width <= 0:
         return None
     scale = image.shape[1] / reference_width
+    regions = (
+        HATCH_TIMER_REGIONS_V2
+        if uses_permanent_boost_layout(image, reference_width=reference_width)
+        else HATCH_TIMER_REGIONS
+    )
     values: list[int] = []
-    for x0, y0, x1, y1 in HATCH_TIMER_REGIONS:
+    for x0, y0, x1, y1 in regions:
         left, top, right, bottom = (
             round(value * scale) for value in (x0, y0, x1, y1)
         )

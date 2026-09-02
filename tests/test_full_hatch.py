@@ -57,6 +57,8 @@ from dino_bot.full_hatch import (
     FullHatchPlanner,
     HatchHomeRecoveryPlanner,
     _egg_pile_safe_tap,
+    _hatch_boost_point,
+    _hatch_boost_ready,
     home_pile_offset,
     is_centered_home_frame,
     is_centered_home_screen,
@@ -1194,6 +1196,50 @@ def boost_ready_frame() -> Frame:
     ready = frame()
     ready.image[1355:1405, 380:520] = (30, 140, 240)
     return ready
+
+
+def test_permanent_boost_layout_moves_ticket_boost_safely() -> None:
+    image = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    panel = cv2.imread(str(FIXTURES / "incubator-v2-boost-panel.png"))
+    assert panel is not None
+    image[1250:1470, 240:660] = panel
+    v2 = frame(image)
+
+    assert _hatch_boost_point(v2) == (450, 1420)
+    assert not _hatch_boost_ready(v2)
+
+    # The captured ticket bar is gray because a boost is active. Simulate its
+    # saturated ready state without touching the orange permanent-speed bar.
+    image[1405:1455, 380:520] = (30, 140, 240)
+    assert _hatch_boost_ready(frame(image))
+
+
+def test_permanent_boost_layout_planner_taps_ticket_bar_center(tmp_path) -> None:
+    inventory = HatchBoostInventoryStore(tmp_path / "stats.sqlite3")
+    inventory.set_enabled(True)
+    planner = FullHatchPlanner(
+        DigitReader(GLYPHS),
+        egg_pile_point=(450, 1330),
+        boost_inventory=inventory,
+    )
+    planner._child = planner._new_hatch()
+    planner._start_hatch_cycle()
+    planner._observed_cooldown_until = planner.clock() + 300
+
+    image = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    panel = cv2.imread(str(FIXTURES / "incubator-v2-boost-panel.png"))
+    assert panel is not None
+    image[1250:1470, 240:660] = panel
+    image[1405:1455, 380:520] = (30, 140, 240)
+    grid = [
+        detection(hatch.INCUBATOR_TITLE, 450, 169),
+        detection(hatch.CLOSE_BUTTON, 798, 1421),
+    ]
+
+    target = planner.choose(frame(image), grid)
+
+    assert target is not None and target.type == HATCH_BOOST_BUTTON
+    assert (target.x, target.y) == (450, 1420)
 
 
 def test_boost_permission_applies_only_to_the_next_hatch_cycle(tmp_path) -> None:

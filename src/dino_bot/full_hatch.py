@@ -83,9 +83,13 @@ NEST_MASK_POINT = (50.0, 800.0)
 HATCH_DETAIL_CLOSE = "hatch_unready_detail_close"
 HATCH_BOOST_BUTTON = "hatch_cooldown_boost_button"
 HATCH_BOOST_CONFIRM = "hatch_cooldown_boost_confirm_yes"
+# Original incubator: one ticket boost bar at the bottom.
 HATCH_BOOST_POINT = (450.0, 1380.0)
-# 按鈕帶中段(避開左側 50% 圖示與右側票券圖示)的取樣框,900 寬座標。
 _BOOST_BAR_SAMPLE = (380, 1355, 520, 1405)
+# Incubator v2: a new permanent egg-speed bar pushes the ticket boost down.
+HATCH_BOOST_POINT_V2 = (450.0, 1420.0)
+_BOOST_BAR_SAMPLE_V2 = (380, 1405, 520, 1455)
+# 按鈕帶中段(避開左側 50% 圖示與右側票券圖示)的取樣框,900 寬座標。
 _BOOST_BAR_MIN_SATURATION = 80.0
 
 CAVE_SWIPE = "hatch_cave_swipe"
@@ -701,7 +705,35 @@ def _home_pile_click_blocked(
     )
 
 
-def _hatch_boost_ready(frame: Frame) -> bool:
+def _hatch_boost_geometry(
+    frame: Frame,
+    *,
+    reference_width: float = 900.0,
+) -> tuple[tuple[float, float], tuple[int, int, int, int]]:
+    """Return the ticket boost point and sample for the visible UI version."""
+
+    if hatch_feature.uses_permanent_boost_layout(
+        frame.image,
+        reference_width=reference_width,
+    ):
+        return HATCH_BOOST_POINT_V2, _BOOST_BAR_SAMPLE_V2
+    return HATCH_BOOST_POINT, _BOOST_BAR_SAMPLE
+
+
+def _hatch_boost_point(
+    frame: Frame,
+    *,
+    reference_width: float = 900.0,
+) -> tuple[int, int]:
+    point, _ = _hatch_boost_geometry(frame, reference_width=reference_width)
+    return _scaled(frame, point, reference_width)
+
+
+def _hatch_boost_ready(
+    frame: Frame,
+    *,
+    reference_width: float = 900.0,
+) -> bool:
     """Return whether the incubator cooldown-boost bar is pressable.
 
     The bar keeps its template shape while a boost is running, but the game
@@ -711,8 +743,9 @@ def _hatch_boost_ready(frame: Frame) -> bool:
 
     if frame.image.size == 0:
         return False
-    scale = frame.width / 900.0
-    x0, y0, x1, y1 = (round(value * scale) for value in _BOOST_BAR_SAMPLE)
+    _, sample = _hatch_boost_geometry(frame, reference_width=reference_width)
+    scale = frame.width / reference_width
+    x0, y0, x1, y1 = (round(value * scale) for value in sample)
     roi = frame.image[y0:y1, x0:x1]
     if not roi.size:
         return False
@@ -3070,7 +3103,10 @@ class FullHatchPlanner:
                         self.logger.info(
                             "Hatch boost | incubator empty | defer until eggs collected"
                         )
-                elif not _hatch_boost_ready(frame):
+                elif not _hatch_boost_ready(
+                    frame,
+                    reference_width=self.reference_width,
+                ):
                     # 加速已在生效倒數(按鈕帶轉灰);本週期不再嘗試。
                     self._boost_attempted = True
                     self.logger.info(
@@ -3079,7 +3115,10 @@ class FullHatchPlanner:
                 else:
                     return synthetic_target(
                         HATCH_BOOST_BUTTON,
-                        *_scaled(frame, HATCH_BOOST_POINT, self.reference_width),
+                        *_hatch_boost_point(
+                            frame,
+                            reference_width=self.reference_width,
+                        ),
                     )
             target = self._hatch_child.choose(frame, detections)
             if target is not None and target.type == hatch_feature.EGG_PILE:

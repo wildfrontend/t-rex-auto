@@ -9,12 +9,17 @@ import pytest
 
 from dino_bot import hatch
 from dino_bot.config import ConfigError, load_config
+from dino_bot.digits import DigitReader
 from dino_bot.hatch import (
     HatchPlanner,
     parse_hatch_timer_text,
     read_hatch_cooldown_seconds,
 )
 from dino_bot.models import BoundingBox, Detection, Frame
+
+REPO = Path(__file__).resolve().parent.parent
+GLYPHS = REPO / "assets" / "hatch" / "digits"
+FIXTURES = REPO / "tests" / "fixtures" / "hatch"
 
 
 def make_frame(width: int = 900, height: int = 1600) -> Frame:
@@ -214,6 +219,17 @@ def test_hatch_cooldown_reader_uses_longest_visible_timer_for_batch() -> None:
             return next(self.values)
 
     assert read_hatch_cooldown_seconds(make_frame().image, Reader()) == 3725
+
+
+def test_hatch_cooldown_reader_supports_permanent_boost_layout() -> None:
+    image = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    timers = cv2.imread(str(FIXTURES / "incubator-v2-timers.png"))
+    boost_panel = cv2.imread(str(FIXTURES / "incubator-v2-boost-panel.png"))
+    assert timers is not None and boost_panel is not None
+    image[1095:1135, 200:710] = timers
+    image[1250:1470, 240:660] = boost_panel
+
+    assert read_hatch_cooldown_seconds(image, DigitReader(GLYPHS)) == 18 * 60 + 54
 
 
 def test_claim_button_takes_priority_and_counts() -> None:
