@@ -739,13 +739,17 @@ def test_dashboard_saves_hatch_tuning_to_the_instance_config(tmp_path: Path) -> 
     }
 
 
-def test_dashboard_refuses_a_cull_line_above_the_population_cap(tmp_path: Path) -> None:
-    # 安全人口高於上限等於永遠不淘汰,而且畫面上看起來像設定成功了。
+@pytest.mark.parametrize("cull_threshold", [250, 260])
+def test_dashboard_refuses_a_cull_line_at_or_above_the_population_cap(
+    tmp_path: Path,
+    cull_threshold: int,
+) -> None:
+    # 安全人口等於或高於上限會失去預留空間,而且畫面上看起來像設定成功了。
     controller = tuning_controller(tmp_path)
     instance = controller.instances[0]
 
     with pytest.raises(ValueError, match="cull_threshold"):
-        controller.set_hatch_tuning(instance.instance_id, 250, 260, 20)
+        controller.set_hatch_tuning(instance.instance_id, 250, cull_threshold, 20)
 
     saved = json.loads(instance.config_path.read_text(encoding="utf-8"))
     assert saved["hatch"]["capacity_limit"] == 350

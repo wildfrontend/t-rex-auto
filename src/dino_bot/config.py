@@ -944,8 +944,12 @@ def _validate(config: AppConfig) -> None:
         raise ConfigError("hatch.home_backoff_seconds cannot be negative")
     if config.hatch.capacity_limit <= 0:
         raise ConfigError("hatch.capacity_limit must be greater than zero")
-    if config.hatch.cull_threshold < 0:
-        raise ConfigError("hatch.cull_threshold cannot be negative")
+    if config.hatch.cull_threshold <= 0:
+        raise ConfigError("hatch.cull_threshold must be greater than zero")
+    if config.hatch.cull_threshold >= config.hatch.capacity_limit:
+        raise ConfigError(
+            "hatch.cull_threshold must be less than hatch.capacity_limit"
+        )
     if config.hatch.screening_growth_interval <= 0:
         raise ConfigError(
             "hatch.screening_growth_interval must be greater than zero"

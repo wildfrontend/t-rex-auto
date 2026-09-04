@@ -579,8 +579,8 @@ class DashboardController:
                 raise ValueError(f"{label} must be an integer")
             if value <= 0:
                 raise ValueError(f"{label} must be greater than zero")
-        if cull_threshold > capacity_limit:
-            raise ValueError("cull_threshold cannot exceed capacity_limit")
+        if cull_threshold >= capacity_limit:
+            raise ValueError("cull_threshold must be less than capacity_limit")
         if (
             allow_extreme_specialization_parent is not None
             and not isinstance(allow_extreme_specialization_parent, bool)

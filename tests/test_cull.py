@@ -186,3 +186,12 @@ def test_cull_threshold_config(tmp_path) -> None:
     config_path.write_text('{"hatch": {"cull_threshold": -1}}', encoding="utf-8")
     with pytest.raises(ConfigError):
         load_config(config_path)
+    config_path.write_text('{"hatch": {"cull_threshold": 0}}', encoding="utf-8")
+    with pytest.raises(ConfigError, match="greater than zero"):
+        load_config(config_path)
+    config_path.write_text(
+        '{"hatch": {"capacity_limit": 350, "cull_threshold": 350}}',
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match="less than"):
+        load_config(config_path)

@@ -1238,6 +1238,15 @@ class HatchHomeRecoveryPlanner:
             self._stage = "collect_result"
             return synthetic_target(RECOVERY_CLAIM, claim.x, claim.y)
 
+        # Android Back dismisses the maximum-population dialog but does not
+        # close the egg detail beneath it. Once the dialog is gone, use the
+        # structurally proven red-X/yellow-button pair to leave the detail and
+        # continue toward a real home screen before the capacity preflight.
+        detail_close = _unready_egg_detail_close(frame)
+        if detail_close is not None:
+            self._stage = "close_hatch_detail"
+            return synthetic_target(HATCH_DETAIL_CLOSE, *detail_close)
+
         close = best_detection(
             [
                 *by_type.get(hatch_feature.CLOSE_BUTTON, ()),
@@ -1749,7 +1758,6 @@ class CaveCullPlanner:
         logger: logging.Logger | None = None,
     ) -> None:
         self.reader = reader
-        self.threshold = max(0, threshold)
         self.reference_width = reference_width
         self.safe_margin = max(0, safe_margin)
         self.bottom_exclusion_px = max(0, bottom_exclusion_px)
@@ -1757,7 +1765,12 @@ class CaveCullPlanner:
         self.allow_cull = bool(allow_cull)
         if capacity_limit <= 0:
             raise ValueError("capacity_limit must be greater than zero")
+        if threshold <= 0:
+            raise ValueError("threshold must be greater than zero")
+        if threshold >= capacity_limit:
+            raise ValueError("threshold must be less than capacity_limit")
         self.capacity_limit = capacity_limit
+        self.threshold = threshold
         self.capacity_read_retries = max(1, capacity_read_retries)
         self.capacity_consistent_reads = max(1, capacity_consistent_reads)
         self.cave_recenter_checks = max(1, cave_recenter_checks)
@@ -2178,6 +2191,10 @@ class FullHatchPlanner:
         self.logger = logger or logging.getLogger("dino_bot")
         if capacity_limit <= 0:
             raise ValueError("capacity_limit must be greater than zero")
+        if cull_threshold <= 0:
+            raise ValueError("cull_threshold must be greater than zero")
+        if cull_threshold >= capacity_limit:
+            raise ValueError("cull_threshold must be less than capacity_limit")
         self.capacity_limit = capacity_limit
         self.cull_threshold = cull_threshold
         self.stat_upgrade_guards = dict(stat_upgrade_guards)
@@ -2282,6 +2299,11 @@ class FullHatchPlanner:
         # fresh two-frame capacity preflight, and only retry the pile after a
         # below-limit reading has been proved.
         self._egg_pile_capacity_check_pending = False
+        # A hatch tap that never reaches the claim screen can be the game's
+        # maximum-population dialog.  Keep that signal separate from egg-pile
+        # calibration so recovery always proves the configured cave capacity
+        # before another hatch tap is allowed.
+        self._hatch_capacity_check_pending = False
         self._egg_pile_capacity_rechecked = False
         self._egg_pile_retry_pending = False
         self._autoplace_without_no_button = False
@@ -2430,6 +2452,7 @@ class FullHatchPlanner:
         self._egg_pile_failures = 0
         self._egg_pile_blocked = False
         self._egg_pile_capacity_check_pending = False
+        self._hatch_capacity_check_pending = False
         self._egg_pile_capacity_rechecked = False
         self._egg_pile_retry_pending = False
         self._screening_blocked = False
@@ -2799,6 +2822,17 @@ class FullHatchPlanner:
             self._hatch_child.on_action_failure(target_type)
             if target_type == hatch_feature.CLAIM_BUTTON:
                 self._pending_claim_verification = True
+            if target_type == hatch_feature.HATCH_BUTTON:
+                self._capacity_checked = False
+                self._hatch_capacity_check_pending = True
+                self.logger.warning(
+                    "Hatch capacity | hatch tap had no verified claim"
+                    " | checking configured capacity before retry"
+                )
+                self._begin_home_recovery(
+                    "hatch tap failed; capacity recheck required"
+                )
+                return
             if target_type == hatch_feature.EGG_PILE:
                 if not self._egg_pile_capacity_rechecked:
                     self._capacity_checked = False
@@ -3039,9 +3073,17 @@ class FullHatchPlanner:
                     "Hatch full | centered home confirmed | recovered=%s",
                     self._recovery_reason or "unknown",
                 )
-                if self._egg_pile_capacity_check_pending:
+                if (
+                    self._egg_pile_capacity_check_pending
+                    or self._hatch_capacity_check_pending
+                ):
+                    reason = (
+                        "hatch tap had no verified claim"
+                        if self._hatch_capacity_check_pending
+                        else "egg pile tap had no response"
+                    )
                     self._begin_capacity_preflight(
-                        "egg pile tap had no response"
+                        reason
                     )
                     return self._choose_current(frame, detections)
                 if self._egg_pile_retry_pending:
@@ -3221,14 +3263,18 @@ class FullHatchPlanner:
             if target is None and self._capacity_child.is_complete():
                 if not self._capacity_child.capacity_readable:
                     self._egg_pile_capacity_check_pending = False
+                    self._hatch_capacity_check_pending = False
                     self.logger.error(
                         "Hatch capacity | preflight failed; configured capacity unreadable; "
                         "hatching stopped safely"
                     )
-                    self._complete = True
+                    self._capacity_checked = False
+                    self._capacity_blocked = True
+                    self._stage = "capacity_blocked"
                     return None
                 if self._capacity_child.cull_required:
                     self._egg_pile_capacity_check_pending = False
+                    self._hatch_capacity_check_pending = False
                     self._egg_pile_capacity_rechecked = False
                     self._egg_pile_retry_pending = False
                     if self._capacity_blocked:
@@ -3258,6 +3304,7 @@ class FullHatchPlanner:
                 if self._egg_pile_capacity_check_pending:
                     self._egg_pile_capacity_check_pending = False
                     self._egg_pile_capacity_rechecked = True
+                self._hatch_capacity_check_pending = False
                 self.logger.info(
                     "Hatch capacity | preflight complete | safe to hatch"
                 )
@@ -3389,6 +3436,16 @@ class FullHatchPlanner:
                 if self.standalone_stage == "cave":
                     self._begin_home_recovery("standalone cave completed")
                     return self._choose_current(frame, detections)
+                if not self._cave_child.capacity_readable:
+                    self._capacity_checked = False
+                    self._capacity_blocked = True
+                    self._stage = "capacity_blocked"
+                    self._no_target_since = None
+                    self.logger.error(
+                        "Hatch full | cleanup capacity unreadable"
+                        " | blocking hatch instead of restarting Phase A"
+                    )
+                    return None
                 self.completed_management_cycles += 1
                 self._capacity_checked = True
                 self._management_pending = False

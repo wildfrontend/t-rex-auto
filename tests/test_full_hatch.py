@@ -5,6 +5,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+import pytest
 
 from dino_bot import hatch, nest_filter
 from dino_bot.attack_replacement import AttackReplacementTestPlanner
@@ -780,6 +781,43 @@ def make_full_planner() -> FullHatchPlanner:
         egg_pile_point=(450, 1330),
         max_scrolls=0,
     )
+
+
+def test_unreadable_cleanup_capacity_blocks_hatch_instead_of_restarting() -> None:
+    planner = make_full_planner()
+    cave = CaveCullPlanner(DigitReader(GLYPHS), threshold=330)
+    cave._complete = True
+    cave._capacity_readable = False
+    planner._stage = "cave"
+    planner._child = cave
+    planner._management_pending = True
+    planner._screening_completed = set(SCREENING_STAGES)
+    planner._capacity_checked = True
+
+    assert planner.choose(frame(), []) is None
+
+    assert planner.is_hatch_blocked()
+    assert planner._capacity_blocked
+    assert not planner._capacity_checked
+    assert planner._stage == "capacity_blocked"
+    assert planner.completed_management_cycles == 0
+
+
+@pytest.mark.parametrize(
+    ("capacity_limit", "cull_threshold"),
+    [(0, 1), (350, 0), (350, 350), (350, 351)],
+)
+def test_full_hatch_rejects_unsafe_capacity_parameters(
+    capacity_limit: int,
+    cull_threshold: int,
+) -> None:
+    with pytest.raises(ValueError):
+        FullHatchPlanner(
+            DigitReader(GLYPHS),
+            egg_pile_point=(450, 1330),
+            capacity_limit=capacity_limit,
+            cull_threshold=cull_threshold,
+        )
 
 
 def test_specialization_switch_runs_autoplace_then_manual_purity_repair() -> None:
@@ -2123,6 +2161,24 @@ def test_failed_egg_pile_tap_enters_recovery_before_any_retry() -> None:
     assert target is not None and target.type == RECOVERY_BACK
 
 
+def test_failed_hatch_tap_checks_capacity_before_any_retry() -> None:
+    planner = make_full_planner()
+    planner._capacity_checked = True
+
+    planner.on_action_failure(hatch.HATCH_BUTTON)
+
+    assert planner._hatch_capacity_check_pending
+    assert not planner._capacity_checked
+    assert planner._stage == "recover_home"
+
+    home = [detection(hatch.HOME_ANCHOR, 59, 561)]
+    assert planner.choose(frame(), home) is None
+    target = planner.choose(frame(), home)
+
+    assert target is not None and target.type == CAVE_SWIPE
+    assert planner._stage == "capacity_preflight"
+
+
 def test_failed_egg_pile_tap_checks_full_capacity_before_retry(monkeypatch) -> None:
     _patch_capacity(monkeypatch, 350)
     planner = make_full_planner()
@@ -2330,6 +2386,19 @@ def test_last_claim_can_finish_on_unready_egg_detail_and_close_safely() -> None:
     assert 650 <= target.x <= 723
     assert 1146 <= target.y <= 1213
     assert planner._hatch_child.hatched == 1
+
+
+def test_home_recovery_closes_hatch_detail_after_capacity_dialog_is_dismissed() -> None:
+    planner = HatchHomeRecoveryPlanner()
+    image = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    image[1136:1238, 339:560] = (40, 180, 255)
+    image[1146:1213, 652:723] = (115, 125, 255)
+
+    target = planner.choose(frame(image), [])
+
+    assert target is not None and target.type == HATCH_DETAIL_CLOSE
+    assert 650 <= target.x <= 723
+    assert 1146 <= target.y <= 1213
 
 
 def test_home_recovery_uses_named_cave_close_before_falling_back_to_back() -> None:
