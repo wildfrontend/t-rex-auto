@@ -43,9 +43,12 @@ ATTACK_PARENT_REGIONS: tuple[StatRegions, StatRegions] = (
 # The My Nest list stacks identical cards at a fixed pitch. Nest 1's stat
 # regions above are the anchor; later nests are the same crops shifted down.
 NEST_CARD_PITCH = 280
-# Each card carries a green bar down its left edge. Counting those bars is how
-# many nests are actually on screen, rather than assuming a fixed number.
+# Each card carries a saturated colour bar down its left edge. The hue is the
+# tag's, not the card's -- attack nests are green, HP nests blue -- so the bar
+# is found by "strongly coloured", never by one specific colour. Everything
+# else in that column is neutral: white card, grey gap, black border.
 NEST_MARKER_COLUMN: tuple[int, int] = (181, 191)
+NEST_MARKER_MIN_SATURATION = 60
 NEST_CARD_HEIGHT = 256
 
 
@@ -65,7 +68,7 @@ def shift_parent_regions(
 
 
 def count_visible_nests(image: Image, *, reference_width: float = 900.0) -> int:
-    """Count fully visible nest cards by their green left-edge bars.
+    """Count fully visible nest cards by their coloured left-edge bars.
 
     Partially scrolled cards are excluded: tapping a parent that is clipped by
     the list boundary would land outside the card. Returning 0 is a real
@@ -82,10 +85,10 @@ def count_visible_nests(image: Image, *, reference_width: float = 900.0) -> int:
     if x1 > width:
         return 0
     column = image[:, x0:x1].astype(int)
-    green = (column[:, :, 1] - column[:, :, 2] > 40) & (
-        column[:, :, 1] - column[:, :, 0] > 40
-    )
-    rows = [index for index, hit in enumerate(green.any(axis=1)) if hit]
+    coloured = (
+        column.max(axis=2) - column.min(axis=2)
+    ) >= NEST_MARKER_MIN_SATURATION
+    rows = [index for index, hit in enumerate(coloured.any(axis=1)) if hit]
     if not rows:
         return 0
     minimum_height = int(round(NEST_CARD_HEIGHT * scale * 0.8))

@@ -142,8 +142,45 @@ def s9_nest_list() -> np.ndarray:
     return image
 
 
+def s9_hp_nest_list() -> np.ndarray:
+    """The same list under the HP tag, whose marker bars are blue not green."""
+
+    encoded = (FIXTURES / "s9-nest-list-hp-3up-20260906.png.b64").read_text()
+    image = cv2.imdecode(
+        np.frombuffer(base64.b64decode(encoded), dtype=np.uint8), cv2.IMREAD_COLOR
+    )
+    assert image is not None
+    return image
+
+
 def test_three_nest_cards_are_counted_from_the_live_list() -> None:
     assert count_visible_nests(s9_nest_list()) == 3
+
+
+def test_hp_tagged_nests_are_counted_despite_a_different_bar_colour() -> None:
+    # The bar takes the tag's colour: green for attack, blue for HP. Matching
+    # one specific hue silently counted zero HP nests and screened only the
+    # first card, so the count keys on saturation instead.
+    assert count_visible_nests(s9_hp_nest_list()) == 3
+
+
+def test_hp_nests_read_their_own_parents() -> None:
+    image = s9_hp_nest_list()
+    reader = DigitReader(GLYPHS)
+    assert read_attack_parents(image, reader, nest_index=0) == (
+        Stats(10, 1, 150),
+        Stats(5530, 9, 150),
+    )
+    assert read_attack_parents(image, reader, nest_index=1) == (
+        Stats(10, 1, 150),
+        Stats(5530, 9, 150),
+    )
+    # This nest's left parent has already been replaced, proving the crop
+    # follows the card rather than repeating nest 1.
+    assert read_attack_parents(image, reader, nest_index=2) == (
+        Stats(5530, 9, 150),
+        Stats(5530, 9, 150),
+    )
 
 
 def test_each_nest_reads_its_own_parents_from_the_live_list() -> None:
@@ -193,3 +230,11 @@ def test_partially_scrolled_cards_are_not_counted() -> None:
     image[347:603, 181:191] = (105, 211, 115)
     image[627:700, 181:191] = (105, 211, 115)
     assert count_visible_nests(image) == 1
+
+
+def test_neutral_greys_are_never_mistaken_for_marker_bars() -> None:
+    # The column also holds the white card, a grey gap and a black border.
+    # None are coloured, so none may inflate the count.
+    for shade in (0, 128, 231, 255):
+        image = np.full((1600, 900, 3), shade, dtype=np.uint8)
+        assert count_visible_nests(image) == 0
