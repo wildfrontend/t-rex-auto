@@ -4,6 +4,7 @@ from dino_bot import nests
 from dino_bot.nests import (
     ATTACK_RULE,
     EXTREME_SPECIALIZATION_PARENT,
+    EXTREME_SPECIALIZATION_PARENTS,
     HP_RULE,
     MASS_RULE,
     TOP_RULE,
@@ -74,6 +75,39 @@ def test_extreme_specialization_parent_is_opt_in() -> None:
     assert not is_intentional_extreme_specialization_parent(
         EXTREME_SPECIALIZATION_PARENT, HP_RULE, enabled=False
     )
+
+
+def test_extreme_specialization_allows_a_high_speed_line() -> None:
+    # A line can deliberately sit on a high speed it never breeds away. Speed
+    # is not a combat stat, so 10/1/150 is a legitimate starting parent.
+    parent = Stats(10, 1, 150)
+    assert parent in EXTREME_SPECIALIZATION_PARENTS
+    assert is_intentional_extreme_specialization_parent(parent, HP_RULE, enabled=True)
+    assert is_intentional_extreme_specialization_parent(parent, ATTACK_RULE, enabled=True)
+    assert not is_intentional_extreme_specialization_parent(parent, HP_RULE, enabled=False)
+
+    # Each parent holds its OWN two non-primary stats constant; the 10/1/1
+    # rule must not leak in and demand speed drop back to 1.
+    assert is_extreme_specialization_candidate(parent, Stats(1300, 1, 150), HP_RULE)
+    assert not is_extreme_specialization_candidate(parent, Stats(1300, 1, 1), HP_RULE)
+    assert is_extreme_specialization_candidate(parent, Stats(10, 68, 150), ATTACK_RULE)
+    assert not is_extreme_specialization_candidate(parent, Stats(10, 68, 1), ATTACK_RULE)
+    # The primary must still grow, and the other combat stat stay floored.
+    assert not is_extreme_specialization_candidate(parent, Stats(10, 1, 150), HP_RULE)
+    assert not is_extreme_specialization_candidate(parent, Stats(1300, 68, 150), HP_RULE)
+
+
+def test_unlisted_near_miss_parent_stays_out_of_extreme_handling() -> None:
+    # Only exact listed values opt in; a neighbouring value is far more likely
+    # to be an OCR error than a new deliberate line.
+    for near_miss in (Stats(10, 1, 151), Stats(10, 1, 15), Stats(11, 1, 150)):
+        assert near_miss not in EXTREME_SPECIALIZATION_PARENTS
+        assert not is_intentional_extreme_specialization_parent(
+            near_miss, HP_RULE, enabled=True
+        )
+        assert not is_extreme_specialization_candidate(
+            near_miss, Stats(1300, 1, 150), HP_RULE
+        )
 
 
 def test_extreme_specialization_candidate_has_one_high_and_two_low_stats() -> None:

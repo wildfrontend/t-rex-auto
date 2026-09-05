@@ -108,6 +108,14 @@ class AutoPlaceRule:
 ATTACK_RULE = ReplacementRule(tag="攻擊特化", sort_option="攻擊力", primary="attack")
 HP_RULE = ReplacementRule(tag="HP特化", sort_option="HP", primary="hp")
 EXTREME_SPECIALIZATION_PARENT = Stats(10, 1, 1)
+# Breeding lines can start from more than one all-but-one-stat-floored parent.
+# Speed is not a combat stat, so a line may deliberately sit on a high speed
+# it never intends to breed away. Each entry is matched exactly; the candidate
+# rule below then holds that parent's own two non-primary stats constant.
+EXTREME_SPECIALIZATION_PARENTS: tuple[Stats, ...] = (
+    EXTREME_SPECIALIZATION_PARENT,
+    Stats(10, 1, 150),
+)
 ATTACK_AUTOPLACE_RULE = AutoPlaceRule(tag=ATTACK_RULE.tag, sort_option=ATTACK_RULE.sort_option)
 HP_AUTOPLACE_RULE = AutoPlaceRule(tag=HP_RULE.tag, sort_option=HP_RULE.sort_option)
 TOP_RULE = AutoPlaceRule(tag="頂尖", sort_option="最佳屬性組合")
@@ -130,12 +138,12 @@ def is_intentional_extreme_specialization_parent(
     *,
     enabled: bool,
 ) -> bool:
-    """Whether the configured 10/1/1 parent is intentional for this round."""
+    """Whether a configured extreme-specialization parent is intentional."""
 
     return bool(
         enabled
         and rule in (ATTACK_RULE, HP_RULE)
-        and parent == EXTREME_SPECIALIZATION_PARENT
+        and parent in EXTREME_SPECIALIZATION_PARENTS
     )
 
 
@@ -144,9 +152,9 @@ def is_extreme_specialization_candidate(
     candidate: Stats,
     rule: ReplacementRule,
 ) -> bool:
-    """Whether a candidate preserves the two low stats of a 10/1/1 line."""
+    """Whether a candidate preserves the two fixed stats of an extreme line."""
 
-    if parent != EXTREME_SPECIALIZATION_PARENT:
+    if parent not in EXTREME_SPECIALIZATION_PARENTS:
         return False
     if primary_of(candidate, rule) <= primary_of(parent, rule):
         return False
