@@ -40,6 +40,68 @@ ATTACK_PARENT_REGIONS: tuple[StatRegions, StatRegions] = (
     ),
 )
 
+# The My Nest list stacks identical cards at a fixed pitch. Nest 1's stat
+# regions above are the anchor; later nests are the same crops shifted down.
+NEST_CARD_PITCH = 280
+# Each card carries a green bar down its left edge. Counting those bars is how
+# many nests are actually on screen, rather than assuming a fixed number.
+NEST_MARKER_COLUMN: tuple[int, int] = (181, 191)
+NEST_CARD_HEIGHT = 256
+
+
+def shift_parent_regions(
+    regions: tuple[StatRegions, StatRegions],
+    nest_index: int,
+) -> tuple[StatRegions, StatRegions]:
+    """Return the stat crops for the nth visible nest card."""
+
+    if nest_index < 0:
+        raise ValueError("nest_index cannot be negative")
+    offset = nest_index * NEST_CARD_PITCH
+    return tuple(  # type: ignore[return-value]
+        tuple((x0, y0 + offset, x1, y1 + offset) for x0, y0, x1, y1 in side)
+        for side in regions
+    )
+
+
+def count_visible_nests(image: Image, *, reference_width: float = 900.0) -> int:
+    """Count fully visible nest cards by their green left-edge bars.
+
+    Partially scrolled cards are excluded: tapping a parent that is clipped by
+    the list boundary would land outside the card. Returning 0 is a real
+    answer -- the caller decides whether that means "not the nest list yet" or
+    "stop" -- so this never guesses a count it cannot see.
+    """
+
+    height, width = image.shape[:2]
+    if width <= 0 or height <= 0:
+        return 0
+    scale = width / reference_width
+    x0 = int(round(NEST_MARKER_COLUMN[0] * scale))
+    x1 = max(x0 + 1, int(round(NEST_MARKER_COLUMN[1] * scale)))
+    if x1 > width:
+        return 0
+    column = image[:, x0:x1].astype(int)
+    green = (column[:, :, 1] - column[:, :, 2] > 40) & (
+        column[:, :, 1] - column[:, :, 0] > 40
+    )
+    rows = [index for index, hit in enumerate(green.any(axis=1)) if hit]
+    if not rows:
+        return 0
+    minimum_height = int(round(NEST_CARD_HEIGHT * scale * 0.8))
+    count = 0
+    start = previous = rows[0]
+    for row in rows[1:]:
+        if row - previous > 5:
+            if previous - start >= minimum_height:
+                count += 1
+            start = row
+        previous = row
+    if previous - start >= minimum_height:
+        count += 1
+    return count
+
+
 SELECT_FIRST_ROW_REGIONS: StatRegions = (
     (304, 441, 365, 463),
     (399, 441, 449, 463),
@@ -159,10 +221,11 @@ def read_attack_parents(
     reader: DigitReader,
     *,
     stat_guards: Mapping[str, StatUpgradeGuard] = DEFAULT_STAT_UPGRADE_GUARDS,
+    nest_index: int = 0,
 ) -> tuple[Stats, Stats] | None:
     parents = tuple(
         read_stats(image, reader, regions, stat_guards=stat_guards)
-        for regions in ATTACK_PARENT_REGIONS
+        for regions in shift_parent_regions(ATTACK_PARENT_REGIONS, nest_index)
     )
     if any(parent is None for parent in parents):
         return None

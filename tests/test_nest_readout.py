@@ -1,7 +1,15 @@
+import base64
+from pathlib import Path
+
+import cv2
 import numpy as np
 
+from dino_bot.digits import DigitReader
 from dino_bot.nest_readout import (
     ATTACK_PARENT_REGIONS,
+    NEST_CARD_PITCH,
+    count_visible_nests,
+    shift_parent_regions,
     SELECT_FIRST_ROW_REGIONS,
     SELECT_ROW_PITCH,
     read_attack_parents,
@@ -112,3 +120,76 @@ def test_higher_attack_recommends_first_row_without_a_screen_coordinate() -> Non
     suggestion = rehearse_attack_replacement(parent, candidates, reader)
     assert suggestion is not None
     assert suggestion.replacement_index == 0
+
+
+FIXTURES = Path(__file__).parent / "fixtures" / "hatch"
+GLYPHS = Path(__file__).parents[1] / "assets" / "hatch" / "digits"
+
+
+def s9_nest_list() -> np.ndarray:
+    """S9's live My Nest list with three attack-tagged nests on screen.
+
+    Only the marker column and the two stat columns are kept; the rest of the
+    capture is blacked out, so the fixture proves the coordinates without
+    carrying the account's screen into the repository.
+    """
+
+    encoded = (FIXTURES / "s9-nest-list-3up-20260906.png.b64").read_text()
+    image = cv2.imdecode(
+        np.frombuffer(base64.b64decode(encoded), dtype=np.uint8), cv2.IMREAD_COLOR
+    )
+    assert image is not None
+    return image
+
+
+def test_three_nest_cards_are_counted_from_the_live_list() -> None:
+    assert count_visible_nests(s9_nest_list()) == 3
+
+
+def test_each_nest_reads_its_own_parents_from_the_live_list() -> None:
+    # The three nests hold near-identical parents (626/620/627). Reading the
+    # wrong card would silently screen the same nest three times, so pin the
+    # per-nest values rather than only the count.
+    image = s9_nest_list()
+    reader = DigitReader(GLYPHS)
+    assert read_attack_parents(image, reader, nest_index=0) == (
+        Stats(10, 1, 150),
+        Stats(40, 626, 150),
+    )
+    assert read_attack_parents(image, reader, nest_index=1) == (
+        Stats(10, 1, 150),
+        Stats(40, 620, 150),
+    )
+    assert read_attack_parents(image, reader, nest_index=2) == (
+        Stats(10, 1, 150),
+        Stats(40, 627, 150),
+    )
+
+
+def test_nest_regions_shift_by_exactly_one_card_pitch() -> None:
+    base = ATTACK_PARENT_REGIONS
+    assert shift_parent_regions(base, 0) == base
+    shifted = shift_parent_regions(base, 2)
+    for side, original in enumerate(base):
+        for index, (x0, y0, x1, y1) in enumerate(original):
+            assert shifted[side][index] == (
+                x0,
+                y0 + 2 * NEST_CARD_PITCH,
+                x1,
+                y1 + 2 * NEST_CARD_PITCH,
+            )
+
+
+def test_missing_nest_markers_count_as_none_rather_than_guessing() -> None:
+    # A screen that is not the nest list must not report phantom cards; the
+    # planner turns 0 into "screen the anchor nest only".
+    assert count_visible_nests(np.zeros((1600, 900, 3), dtype=np.uint8)) == 0
+
+
+def test_partially_scrolled_cards_are_not_counted() -> None:
+    # A card clipped by the list boundary would put its parents off-card, so
+    # only bars tall enough to be a whole card count.
+    image = np.zeros((1600, 900, 3), dtype=np.uint8)
+    image[347:603, 181:191] = (105, 211, 115)
+    image[627:700, 181:191] = (105, 211, 115)
+    assert count_visible_nests(image) == 1

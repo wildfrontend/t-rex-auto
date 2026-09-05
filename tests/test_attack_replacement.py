@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from dino_bot import attack_replacement, nest_filter, select_sort
+from dino_bot import attack_replacement, nest_filter, nest_readout, select_sort
 from dino_bot.attack_replacement import AttackReplacementTestPlanner
 from dino_bot.models import BoundingBox, Detection, Frame, VerificationResult
 from dino_bot.nest_readout import (
@@ -686,3 +686,104 @@ def test_action_vocabulary_contains_only_bounded_workflow_controls() -> None:
     assert attack_replacement.DEFAULT_SUCCESS_TRANSITIONS[CONFIRM_YES] == (
         attack_replacement.NEST_TITLE,
     )
+
+
+def multi_nest_frame(
+    reader: EncodedReader, nests: list[tuple[Stats, Stats]]
+) -> Frame:
+    """A My Nest list with one green marker bar and stat block per nest."""
+
+    image = np.zeros((1600, 900, 3), dtype=np.uint8)
+    for index, (left, right) in enumerate(nests):
+        offset = index * nest_readout.NEST_CARD_PITCH
+        image[347 + offset : 603 + offset, 181:191] = (105, 211, 115)
+        regions = nest_readout.shift_parent_regions(ATTACK_PARENT_REGIONS, index)
+        for side_regions, stats in zip(regions, (left, right), strict=True):
+            for region, value in zip(
+                side_regions,
+                (stats.hp, stats.attack, stats.speed),
+                strict=True,
+            ):
+                x0, y0, x1, y1 = map(int, region)
+                image[y0:y1, x0:x1] = reader.encode(value)
+    return Frame(image)
+
+
+def test_every_visible_nest_is_screened_in_turn() -> None:
+    # S9's live layout: three attack nests, each with the same 10/1/150 left
+    # parent and a near-identical right parent. Screening must walk all three
+    # rather than repeating the first card.
+    reader = EncodedReader()
+    nests = [
+        (Stats(10, 1, 150), Stats(40, 626, 150)),
+        (Stats(10, 1, 150), Stats(40, 620, 150)),
+        (Stats(10, 1, 150), Stats(40, 627, 150)),
+    ]
+    frames = multi_nest_frame(reader, nests)
+    no_upgrade = select_frame(reader, [Stats(10, 1, 150)])
+    planner = AttackReplacementTestPlanner(reader)  # type: ignore[arg-type]
+    finish_main_filter(planner)
+
+    tapped: list[tuple[str, float]] = []
+    for _ in range(6):
+        assert not planner.is_complete()
+        target = planner.choose(frames, nest_detections())
+        assert target is not None
+        tapped.append((target.type, target.y))
+        planner.on_action_success(target.type)
+        close = planner.choose(no_upgrade, select_detections())
+        assert close is not None
+        assert close.type == attack_replacement.SELECT_MASK_CLOSE
+        planner.on_action_success(close.type)
+
+    assert planner.is_complete()
+    # Left/right alternates, and each pair sits one card pitch further down.
+    pitch = nest_readout.NEST_CARD_PITCH
+    assert tapped == [
+        (attack_replacement.PARENT_LEFT, 407.0),
+        (attack_replacement.PARENT_RIGHT, 407.0),
+        (attack_replacement.PARENT_LEFT, 407.0 + pitch),
+        (attack_replacement.PARENT_RIGHT, 407.0 + pitch),
+        (attack_replacement.PARENT_LEFT, 407.0 + 2 * pitch),
+        (attack_replacement.PARENT_RIGHT, 407.0 + 2 * pitch),
+    ]
+
+
+def test_single_visible_nest_keeps_the_original_one_nest_flow() -> None:
+    reader = EncodedReader()
+    frames = multi_nest_frame(reader, [(Stats(10, 1, 150), Stats(40, 626, 150))])
+    no_upgrade = select_frame(reader, [Stats(10, 1, 150)])
+    planner = AttackReplacementTestPlanner(reader)  # type: ignore[arg-type]
+    finish_main_filter(planner)
+
+    for _ in range(2):
+        target = planner.choose(frames, nest_detections())
+        assert target is not None and target.y == 407.0
+        planner.on_action_success(target.type)
+        close = planner.choose(no_upgrade, select_detections())
+        assert close is not None
+        planner.on_action_success(close.type)
+    assert planner.is_complete()
+    # With one nest the stage names stay unprefixed, so existing log parsing
+    # and diagnostics keep working unchanged.
+    assert planner.last_stage() == "replacement_done"
+
+
+def test_unreadable_nest_markers_screen_only_the_anchor_nest() -> None:
+    # No green bars: the list may be mid-animation or covered. Screening the
+    # first nest is the old behaviour; tapping cards that may not be there is
+    # strictly worse than doing less.
+    reader = EncodedReader()
+    frames = nest_frame(reader, Stats(10, 1, 150), Stats(40, 626, 150))
+    no_upgrade = select_frame(reader, [Stats(10, 1, 150)])
+    planner = AttackReplacementTestPlanner(reader)  # type: ignore[arg-type]
+    finish_main_filter(planner)
+
+    for _ in range(2):
+        target = planner.choose(frames, nest_detections())
+        assert target is not None and target.y == 407.0
+        planner.on_action_success(target.type)
+        close = planner.choose(no_upgrade, select_detections())
+        assert close is not None
+        planner.on_action_success(close.type)
+    assert planner.is_complete()

@@ -21,6 +21,9 @@ from .models import Detection, Frame, Target, VerificationResult
 from .nest_filter import NestTagFilterTestPlanner
 from .nest_readout import (
     ATTACK_PARENT_REGIONS,
+    NEST_CARD_PITCH,
+    count_visible_nests,
+    shift_parent_regions,
     SELECT_ROW_PITCH,
     ConsecutiveReadConsensus,
     read_attack_parents,
@@ -143,6 +146,11 @@ class AttackReplacementTestPlanner:
         self.logger = logger or logging.getLogger("dino_bot")
         self._stage = "filter_attack"
         self._side = 0
+        # The tag filter can leave several identical nests on screen. Nest 0's
+        # coordinates are the anchor; the rest are the same layout shifted by
+        # one card pitch. The count is measured from the first nest frame.
+        self._nest_index = 0
+        self._visible_nests: int | None = None
         self._current_parent: Stats | None = None
         self._partner_parent: Stats | None = None
         self._parent_read_failures = 0
@@ -293,10 +301,12 @@ class AttackReplacementTestPlanner:
                 self._stage = "target_filter_required"
                 return None
 
+        self._observe_visible_nests(frame)
         observed_parents = read_attack_parents(
             frame.image,
             self.reader,
             stat_guards=self.stat_guards,
+            nest_index=self._nest_index,
         )
         parents = self._parent_consensus.observe(observed_parents)
         if parents is None:
@@ -311,7 +321,7 @@ class AttackReplacementTestPlanner:
                 self.parent_stats_snapshots.capture(
                     frame,
                     self.reader,
-                    ATTACK_PARENT_REGIONS,
+                    shift_parent_regions(ATTACK_PARENT_REGIONS, self._nest_index),
                     stage=evidence_stage,
                     side=self._side_name,
                     attempts=self._parent_read_failures,
@@ -364,7 +374,7 @@ class AttackReplacementTestPlanner:
         self._stage = self._side_stage("open")
         return synthetic_target(
             target_type,
-            *self._scaled(frame, self.parent_points[self._side]),
+            *self._scaled(frame, self._nest_parent_point(self._side)),
         )
 
     def _choose_select(
@@ -593,6 +603,40 @@ class AttackReplacementTestPlanner:
             *self._scaled(frame, self.mask_close_point),
         )
 
+    def _nest_total(self) -> int:
+        """How many nests this round will screen; at least the anchor nest."""
+
+        return max(1, self._visible_nests or 1)
+
+    def _nest_parent_point(self, side: int) -> tuple[float, float]:
+        x, y = self.parent_points[side]
+        return (x, y + self._nest_index * NEST_CARD_PITCH)
+
+    def _observe_visible_nests(self, frame: Frame) -> None:
+        """Measure the nest count once, from the first frame of the round.
+
+        A later frame can be mid-animation or partly covered, so re-measuring
+        could shrink the total after nests have already been screened. Falling
+        back to a single nest keeps the previous behaviour when the bars are
+        not readable rather than tapping a card that may not be there.
+        """
+
+        if self._visible_nests is not None:
+            return
+        count = count_visible_nests(frame.image, reference_width=self.reference_width)
+        self._visible_nests = count if count > 0 else 1
+        if count > 0:
+            self.logger.info(
+                "Hatch %s | %d nest(s) visible; screening each in turn",
+                self.rule.tag,
+                self._visible_nests,
+            )
+        else:
+            self.logger.warning(
+                "Hatch %s | nest markers unreadable; screening the first nest only",
+                self.rule.tag,
+            )
+
     def _advance_parent(self, *, reuse_direct_parent_panel: bool = False) -> None:
         self._parent_consensus.reset()
         self._parent_read_failures = 0
@@ -603,6 +647,26 @@ class AttackReplacementTestPlanner:
             self._partner_parent = None
             self._select_planner = None
             self._stage = "nest_right"
+        elif self._nest_index + 1 < self._nest_total():
+            # This nest is done; the next card uses the same flow one pitch
+            # further down. Screening state resets, but the extreme-parent
+            # unlock does not carry over: each nest earns it on its own.
+            self._nest_index += 1
+            self._side = 0
+            self._reuse_direct_parent_panel = False
+            self._current_parent = None
+            self._partner_parent = None
+            self._select_planner = None
+            self._suspicious_ocr_retries = 0
+            self._extreme_specialization_unlock_pending = False
+            self._extreme_specialization_unlocked = False
+            self._stage = "nest_left"
+            self.logger.info(
+                "Hatch %s | nest %d/%d done; advancing to the next nest",
+                self.rule.tag,
+                self._nest_index,
+                self._nest_total(),
+            )
         else:
             self._reuse_direct_parent_panel = False
             self._stage = "replacement_done"
@@ -642,7 +706,12 @@ class AttackReplacementTestPlanner:
 
     @property
     def _side_name(self) -> str:
-        return "left" if self._side == 0 else "right"
+        side = "left" if self._side == 0 else "right"
+        # Nests screened in one round hold near-identical parents, so logs and
+        # stage names have to say which card a line came from.
+        if self._nest_total() > 1:
+            return f"nest{self._nest_index + 1}_{side}"
+        return side
 
     @staticmethod
     def _format_stats(stats: Stats) -> str:
