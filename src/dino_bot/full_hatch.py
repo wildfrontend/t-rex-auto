@@ -42,6 +42,13 @@ from .cave_navigation import (
     SWIPE,
     CaveNavigator,
 )
+from .cooldown_boost import (
+    BOOST_ACTIONS,
+    BOOST_CANCEL,
+    BOOST_CLOSE,
+    BOOST_OPEN,
+    CooldownBoostVisit,
+)
 from .cull import EXPECTED_CAPACITY, CapacityRead, probe_dino_count, should_cull
 from .digits import DigitReader
 from .hatch_inventory import HatchBoostInventoryStore
@@ -200,6 +207,9 @@ DEFAULT_TARGET_ACTIONS: dict[str, str] = {
     HATCH_DETAIL_CLOSE: "tap",
     HATCH_BOOST_BUTTON: "tap",
     HATCH_BOOST_CONFIRM: "tap",
+    BOOST_OPEN: "tap",
+    BOOST_CLOSE: "tap",
+    BOOST_CANCEL: "tap",
     CAVE_SWIPE: "swipe",
     CAVE_RECENTER: "swipe",
     CAVE: "tap",
@@ -244,6 +254,9 @@ DEFAULT_POST_ACTION_DELAYS_MS: dict[str, int] = {
     HATCH_DETAIL_CLOSE: 3000,
     HATCH_BOOST_BUTTON: 3000,
     HATCH_BOOST_CONFIRM: 3000,
+    BOOST_OPEN: 3500,
+    BOOST_CLOSE: 3000,
+    BOOST_CANCEL: 3000,
     CAVE_SWIPE: 3000,
     CAVE_RECENTER: 3500,
     CAVE: 4000,
@@ -295,6 +308,9 @@ DEFAULT_SUCCESS_TRANSITIONS: dict[str, tuple[str, ...]] = {
     HATCH_DETAIL_CLOSE: (hatch_feature.INCUBATOR_TITLE,),
     HATCH_BOOST_BUTTON: (CONFIRM_YES, CONFIRM_NO),
     HATCH_BOOST_CONFIRM: (hatch_feature.INCUBATOR_TITLE,),
+    BOOST_OPEN: (hatch_feature.INCUBATOR_TITLE,),
+    BOOST_CLOSE: (hatch_feature.HOME_ANCHOR,),
+    BOOST_CANCEL: (hatch_feature.INCUBATOR_TITLE,),
     # The home anchor also remains visible behind My Nest; choose() verifies
     # that NEST_TITLE disappeared before advancing to cave navigation.
     NEST_MASK_CLOSE: (hatch_feature.HOME_ANCHOR,),
@@ -2279,10 +2295,7 @@ class FullHatchPlanner:
         self._management_pending = False
         self._screening_completed: set[str] = set()
         self._observed_cooldown_until: float | None = None
-        self._boost_enabled_for_cycle = False
-        self._boost_attempted = False
-        self._boost_confirmation_pending = False
-        self._boost_revisit_pending = False
+        self._boost_visit: CooldownBoostVisit | None = None
         self._collect_done_for_cycle = False
         # 洞穴容量估算：上次實讀 + 之後累積孵化；每增長門檻或達清理
         # 門檻時篩選。
@@ -2323,6 +2336,8 @@ class FullHatchPlanner:
             )
 
     def last_stage(self) -> str:
+        if self._boost_visit is not None:
+            return f"cooldown_boost:{self._boost_visit.phase}"
         child_stage = getattr(self._child, "last_stage", None)
         detail = child_stage() if callable(child_stage) else child_stage
         return f"full_{self._stage}:{detail or '-'}"
@@ -2347,8 +2362,25 @@ class FullHatchPlanner:
         )
 
     def next_ready_delay_ms(self) -> int:
+        if self._boost_visit is not None:
+            return 0
         method = getattr(self._child, "next_ready_delay_ms", None)
-        return int(method()) if callable(method) else 0
+        delay = int(method()) if callable(method) else 0
+        boost_delay = self.boost_ready_delay_ms()
+        return min(delay, boost_delay) if boost_delay is not None else delay
+
+    def boost_ready_delay_ms(self) -> int | None:
+        if self.boost_inventory is None or self.standalone_stage is not None:
+            return None
+        delay = self.boost_inventory.ready_delay_seconds()
+        return None if delay is None else math.ceil(delay * 1000)
+
+    def hunt_cooldown_delay_ms(self) -> int:
+        return self._hatch_child.next_ready_delay_ms() if self._empty_rescan_wait else 0
+
+    def defer_boost_visit(self, reason: str) -> None:
+        if self.boost_inventory is not None:
+            self.boost_inventory.defer(reason)
 
     def planning_detection_types(self) -> frozenset[str] | None:
         """Return the detector types needed by the current hatch phase.
@@ -2362,6 +2394,8 @@ class FullHatchPlanner:
 
         if not self.stage_scoped_scan:
             return None
+        if self._boost_visit is not None:
+            return HATCH_DETECTION_TYPES | RECOVERY_DETECTION_TYPES
         if self._stage == "hatch":
             return HATCH_DETECTION_TYPES
         if self._stage == "open_nest":
@@ -2392,7 +2426,8 @@ class FullHatchPlanner:
 
         return (
             self._empty_rescan_wait
-            and self.next_ready_delay_ms() > 0
+            and self._boost_visit is None
+            and self._hatch_child.next_ready_delay_ms() > 0
         )
 
     def begin_interim_collection(self) -> bool:
@@ -2407,7 +2442,7 @@ class FullHatchPlanner:
             return False
         if self._observed_cooldown_until is None:
             self._observed_cooldown_until = (
-                self.clock() + self.next_ready_delay_ms() / 1000
+                self.clock() + self.hunt_cooldown_delay_ms() / 1000
             )
         self.logger.info(
             "Hatch full | interim nest collection during hunt idle | resume=%.0fs",
@@ -2449,6 +2484,9 @@ class FullHatchPlanner:
         return True
 
     def reset_workflow(self) -> None:
+        if self._boost_visit is not None:
+            self.defer_boost_visit("workflow interrupted; recheck game state")
+            self._boost_visit = None
         self._egg_pile_failures = 0
         self._egg_pile_blocked = False
         self._egg_pile_capacity_check_pending = False
@@ -2514,6 +2552,10 @@ class FullHatchPlanner:
         self._start_hatch_cycle()
 
     def on_action_success(self, target_type: str) -> None:
+        if target_type in BOOST_ACTIONS:
+            if self._boost_visit is not None:
+                self._boost_visit.on_action_success(target_type)
+            return
         if target_type == RECOVERY_NO:
             self.logger.warning(
                 "Hatch full | cancelled unexpected auto-place confirmation"
@@ -2549,27 +2591,6 @@ class FullHatchPlanner:
                 self._egg_pile_capacity_check_pending = False
                 self._egg_pile_capacity_rechecked = False
                 self._egg_pile_retry_pending = False
-            if target_type == HATCH_BOOST_BUTTON:
-                self._boost_attempted = True
-                self._boost_confirmation_pending = True
-                return
-            if target_type == HATCH_BOOST_CONFIRM and self._boost_confirmation_pending:
-                self._boost_confirmation_pending = False
-                consumed = (
-                    self.boost_inventory.consume_one()
-                    if self.boost_inventory is not None
-                    else None
-                )
-                if consumed is None:
-                    self.logger.warning(
-                        "Hatch boost | confirmation succeeded but Bot budget was empty"
-                    )
-                else:
-                    self.logger.info(
-                        "Hatch boost | used 1 ticket | remaining budget=%d",
-                        consumed.remaining,
-                    )
-                return
             if target_type == hatch_feature.CLAIM_BUTTON:
                 self._pending_claim_verification = False
             if target_type == hatch_feature.CLOSE_BUTTON:
@@ -2691,6 +2712,9 @@ class FullHatchPlanner:
         detections: Sequence[Detection],
         result: VerificationResult,
     ) -> None:
+        if target.type in BOOST_ACTIONS:
+            self.on_action_success(target.type)
+            return
         if self._stage in ("attack", "hp"):
             if isinstance(self._child, AutoPlaceRoundPlanner):
                 self.on_action_success(target.type)
@@ -2800,6 +2824,10 @@ class FullHatchPlanner:
         return target_type == hatch_feature.CLAIM_BUTTON
 
     def on_action_failure(self, target_type: str) -> None:
+        if target_type in BOOST_ACTIONS:
+            if self._boost_visit is not None:
+                self._boost_visit.on_action_failure(target_type)
+            return
         if target_type in STARTUP_INTERRUPTS:
             # Leave the workflow stage intact. If the modal remains visible,
             # the next frame will retry it before any hatch/home action; if it
@@ -2922,6 +2950,60 @@ class FullHatchPlanner:
             if interruption is not None:
                 self._no_target_since = None
                 return detection_target(interruption)
+        # Interrupt only at a measured home/incubator boundary. The original
+        # child and screening checklist remain intact throughout the visit.
+        # This also runs before generic dialog handling: only this visit owns
+        # the confirmation raised by its verified boost-button action.
+        if self._boost_visit is None and self.boost_ready_delay_ms() == 0:
+            safe_home = (
+                self._stage in {"hatch", "open_nest"}
+                and is_centered_home_screen(frame, detections)
+            )
+            safe_panel = (
+                self._stage == "hatch"
+                and hatch_feature.INCUBATOR_TITLE in by_type
+                and hatch_feature.CLOSE_BUTTON in by_type
+                and not any(key in by_type for key in (
+                    CONFIRM_YES, CONFIRM_NO, hatch_feature.CLAIM_BUTTON,
+                    hatch_feature.EXPEL_BUTTON,
+                ))
+                and _unready_egg_detail_close(frame) is None
+            )
+            if safe_home or safe_panel:
+                assert self.boost_inventory is not None
+                if self._stage == "hatch":
+                    self._observed_cooldown_until = None
+                self._boost_visit = CooldownBoostVisit(
+                    self.boost_inventory, clock=self.clock, logger=self.logger,
+                )
+        if self._boost_visit is not None:
+            visit = self._boost_visit
+            target = visit.choose(
+                frame, detections,
+                home_centered=is_centered_home_screen(frame, detections),
+                home_point=_egg_pile_safe_tap(frame),
+                button_ready=_hatch_boost_ready(frame, reference_width=self.reference_width),
+                button_point=_hatch_boost_point(frame, reference_width=self.reference_width),
+            )
+            if visit.used and self._stage == "hatch":
+                self._observe_hatch_cooldown(frame, by_type)
+            if not visit.complete:
+                return target
+            self._boost_visit = None
+            self._no_target_since = None
+            self.logger.info("Cooldown boost | visit complete | resume=%s", self._stage)
+            if visit.failed:
+                self._begin_home_recovery("cooldown boost visit could not return home")
+            elif visit.used and self._empty_rescan_wait:
+                # The boost changed the egg timer; discard the old wait if no
+                # new timer could be read, so the next hatch pass rechecks it.
+                remaining = max(
+                    0.0, (self._observed_cooldown_until or self.clock()) - self.clock()
+                )
+                self._hatch_child.begin_rescan_wait(
+                    "cooldown boost updated egg timer", seconds=remaining
+                )
+                self._observed_cooldown_until = None
         # Same rule one step further: the parent-replacement confirmation also
         # carries cyan Yes and red No buttons, so the broad auto-place layout
         # matches it too. Its own exact templates prove which dialog is really
@@ -3197,12 +3279,6 @@ class FullHatchPlanner:
                     "home pile click would land in bottom chat band"
                 )
                 return self._choose_current(frame, detections)
-            if self._boost_confirmation_pending:
-                yes = best_detection(by_type.get(CONFIRM_YES))
-                no = best_detection(by_type.get(CONFIRM_NO))
-                if yes is not None and no is not None:
-                    return synthetic_target(HATCH_BOOST_CONFIRM, yes.x, yes.y)
-                return None
             self._observe_hatch_cooldown(frame, by_type)
             detail_close = _unready_egg_detail_close(frame)
             if detail_close is not None:
@@ -3214,32 +3290,6 @@ class FullHatchPlanner:
                         self._hatch_child.hatched,
                     )
                 return synthetic_target(HATCH_DETAIL_CLOSE, *detail_close)
-            if self._boost_allowed(by_type):
-                if not self._eggs_cooling():
-                    # 孵化器目前是空的:先收蛋讓新蛋開始冷卻,收完
-                    # 回訪再按,加速期才不會空燒在沒有蛋的時段上。
-                    if not self._boost_revisit_pending:
-                        self._boost_revisit_pending = True
-                        self.logger.info(
-                            "Hatch boost | incubator empty | defer until eggs collected"
-                        )
-                elif not _hatch_boost_ready(
-                    frame,
-                    reference_width=self.reference_width,
-                ):
-                    # 加速已在生效倒數(按鈕帶轉灰);本週期不再嘗試。
-                    self._boost_attempted = True
-                    self.logger.info(
-                        "Hatch boost | already active (gray countdown bar) | skip this cycle"
-                    )
-                else:
-                    return synthetic_target(
-                        HATCH_BOOST_BUTTON,
-                        *_hatch_boost_point(
-                            frame,
-                            reference_width=self.reference_width,
-                        ),
-                    )
             target = self._hatch_child.choose(frame, detections)
             if target is not None and target.type == hatch_feature.EGG_PILE:
                 if not self._capacity_checked:
@@ -3386,18 +3436,6 @@ class FullHatchPlanner:
                     )
                     return self._choose_current(frame, detections)
                 if self._collect_only_after_empty:
-                    if self._boost_revisit_pending:
-                        # 蛋剛收進孵化器開始冷卻;回訪按加速,讓加速期
-                        # 從冷卻第一秒就生效,同時讀到砍半後的精確倒數。
-                        self._boost_revisit_pending = False
-                        self._collect_done_for_cycle = True
-                        self.logger.info(
-                            "Hatch boost | revisiting incubator to boost collected eggs"
-                        )
-                        self._stage = "hatch"
-                        self._child = self._new_hatch()
-                        self._hatch_baseline = 0
-                        return self._choose_current(frame, detections)
                     self._start_empty_rescan_wait()
                     return self._choose_current(frame, detections)
                 missing = self._missing_screening_stages()
@@ -3676,22 +3714,8 @@ class FullHatchPlanner:
         return hatch_feature.HatchPlanner(**self._hatch_kwargs)
 
     def _start_hatch_cycle(self) -> None:
-        """Snapshot the dashboard boost permission for this hatch pass."""
-
-        self._boost_attempted = False
-        self._boost_confirmation_pending = False
-        self._boost_enabled_for_cycle = False
-        self._boost_revisit_pending = False
+        """Reset hatch-only bookkeeping; the boost schedule is independent."""
         self._collect_done_for_cycle = False
-        if self.boost_inventory is None:
-            return
-        inventory = self.boost_inventory.snapshot()
-        self._boost_enabled_for_cycle = inventory.enabled and inventory.remaining > 0
-        self.logger.info(
-            "Hatch boost | next cycle permission=%s | budget=%d",
-            self._boost_enabled_for_cycle,
-            inventory.remaining,
-        )
 
     def _start_standalone(self) -> None:
         assert self.standalone_stage is not None
@@ -3808,27 +3832,6 @@ class FullHatchPlanner:
         )
         if seconds is not None:
             self._observed_cooldown_until = self.clock() + seconds
-
-    def _boost_allowed(self, by_type: dict[str, list[Detection]]) -> bool:
-        return (
-            self._boost_enabled_for_cycle
-            and not self._boost_attempted
-            and hatch_feature.INCUBATOR_TITLE in by_type
-            and not by_type.get(hatch_feature.HATCH_LABEL)
-            and bool(by_type.get(hatch_feature.CLOSE_BUTTON))
-            and (
-                self.boost_inventory is None
-                or self.boost_inventory.snapshot().remaining > 0
-            )
-        )
-
-    def _eggs_cooling(self) -> bool:
-        """Whether the incubator currently holds eggs mid-cooldown."""
-
-        return (
-            self._observed_cooldown_until is not None
-            and self._observed_cooldown_until > self.clock()
-        )
 
     def _start_replacement(self, kind: str) -> None:
         if self.auto_place_specializations:

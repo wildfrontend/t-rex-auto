@@ -119,7 +119,7 @@ def test_dashboard_updates_local_boost_inventory(tmp_path: Path) -> None:
     assert overview["hatch_boost_inventory"]["remaining"] == 73
 
 
-def test_dashboard_toggles_boost_for_next_hatch_cycle(tmp_path: Path) -> None:
+def test_dashboard_toggles_periodic_boost(tmp_path: Path) -> None:
     assets = tmp_path / "assets"
     write_assets(assets)
     server = DashboardServer(
@@ -145,6 +145,24 @@ def test_dashboard_toggles_boost_for_next_hatch_cycle(tmp_path: Path) -> None:
             result = json.load(response)
 
     assert result["inventory"]["enabled"] is True
+    assert result["inventory"]["interval_seconds"] == 1800
+    assert result["inventory"]["next_use_at"] == 0
+
+
+def test_dashboard_reports_boost_visit_and_resumed_workflow(tmp_path: Path) -> None:
+    log = tmp_path / "20260905.log"
+    text = (
+        "01:00:00 | INFO | Hatch+Hunt | egg cooldown 3600s | switching to hunt\n"
+        "01:30:00 | INFO | Cooldown boost | due during hunt; returning to incubator\n"
+        "01:30:10 | INFO | Cooldown boost | scheduled visit starting\n"
+    )
+    log.write_text(text, encoding="utf-8")
+    assert _workflow_status(tmp_path, "hatch-hunt")["stage"] == "cooldown_boost"
+    log.write_text(
+        text + "01:30:30 | INFO | Cooldown boost | visit complete | resume=hatch\n",
+        encoding="utf-8",
+    )
+    assert _workflow_status(tmp_path, "hatch-hunt")["stage"] == "cooldown_hunt"
 
 
 def test_dashboard_controls_require_same_origin_header(tmp_path: Path) -> None:

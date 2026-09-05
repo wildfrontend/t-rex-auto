@@ -302,6 +302,43 @@ def test_handoff_arms_optional_home_collection_before_resuming_hatch() -> None:
     assert chosen is not None and chosen.type == "collect_after_home"
 
 
+def test_boost_deadline_interrupts_hunt_without_starting_collection() -> None:
+    combined, hatch_planner, hunt_planner = planner(cooldown_ms=3_600_000)
+    boost_delay = [30_000]
+    hatch_planner.boost_ready_delay_ms = lambda: boost_delay[0]
+    calls = []
+    hatch_planner.begin_home_collection = lambda: calls.append(True)
+    combined.choose(frame(), [])
+    hunt_planner.delay_ms = 600_000
+    assert combined.next_ready_delay_ms() == 30_000
+    boost_delay[0] = 0
+    hatch_planner.next_target = target("hatch_cooldown_boost_open", 450, 1330)
+    centered = [detection(hatch.HOME_ANCHOR, 59, 561)]
+    assert combined.choose(frame(), centered) is None
+    assert combined._handoff_reason == "boost"
+    chosen = combined.choose(frame(), centered)
+    assert chosen.type == "hatch_cooldown_boost_open"
+    assert not calls
+    assert hatch_planner.cooldown_ms == 3_600_000
+
+
+def test_boost_handoff_timeout_defers_and_resumes_hunt() -> None:
+    combined, hatch_planner, hunt_planner = planner(cooldown_ms=3_600_000)
+    now = [1000.0]
+    combined.clock = lambda: now[0]
+    deferred = []
+    hatch_planner.boost_ready_delay_ms = lambda: 0
+    hatch_planner.defer_boost_visit = deferred.append
+    combined.choose(frame(), [])
+    combined.choose(frame(), [])
+    assert combined._handoff_reason == "boost"
+    now[0] += 91
+    hunt_planner.next_target = target("dinosaur", 300, 700)
+    assert combined.choose(frame(), []).type == "dinosaur"
+    assert deferred and combined._mode == "hunt"
+    assert hatch_planner.cooldown_ms == 3_600_000
+
+
 def test_startup_interruption_during_hunt_restarts_hatch_first() -> None:
     combined, hatch_planner, hunt_planner = planner()
     hunt_planner.next_target = target("dinosaur", 300, 700)

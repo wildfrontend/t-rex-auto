@@ -137,7 +137,7 @@ class HatchHuntPlanner:
                 return target
             if not self.hatch.is_hunt_cooldown_active():
                 return None
-            remaining = self.hatch.next_ready_delay_ms()
+            remaining = self._hatch_cooldown_delay_ms()
             if remaining <= self.handoff_ms:
                 return None
             self._mode = "hunt"
@@ -149,7 +149,12 @@ class HatchHuntPlanner:
             return self._choose_owned(self.hunt, frame, detections)
 
         if self._mode == "hunt":
-            remaining = self.hatch.next_ready_delay_ms()
+            boost_delay = self._boost_ready_delay_ms()
+            if boost_delay == 0:
+                self._enter_handoff("boost")
+                self.logger.info("Cooldown boost | due during hunt; returning to incubator")
+                return self._choose_handoff(frame, detections)
+            remaining = self._hatch_cooldown_delay_ms()
             if (
                 not self.hatch.is_hunt_cooldown_active()
                 or remaining <= self.handoff_ms
@@ -189,12 +194,22 @@ class HatchHuntPlanner:
             return 0
         until_handoff = max(
             0,
-            self.hatch.next_ready_delay_ms() - self.handoff_ms,
+            self._hatch_cooldown_delay_ms() - self.handoff_ms,
         )
         hunt_delay = self.hunt.next_ready_delay_ms()
         if not hunt_delay:
             return 0
-        return min(hunt_delay, until_handoff)
+        delay = min(hunt_delay, until_handoff)
+        boost_delay = self._boost_ready_delay_ms()
+        return min(delay, boost_delay) if boost_delay is not None else delay
+
+    def _boost_ready_delay_ms(self) -> int | None:
+        method = getattr(self.hatch, "boost_ready_delay_ms", None)
+        return method() if callable(method) else None
+
+    def _hatch_cooldown_delay_ms(self) -> int:
+        method = getattr(self.hatch, "hunt_cooldown_delay_ms", None)
+        return method() if callable(method) else self.hatch.next_ready_delay_ms()
 
     def planning_detection_types(self) -> frozenset[str] | None:
         if self._mode == "hunt":
@@ -450,6 +465,13 @@ class HatchHuntPlanner:
             self.handoff_timeout_seconds,
             reason or "unknown",
         )
+        if reason == "boost":
+            defer = getattr(self.hatch, "defer_boost_visit", None)
+            if callable(defer):
+                defer("回訪孵化器逾時，60 秒後重試")
+            self._mode = "hunt"
+            self._centered_frames = 0
+            return self._choose_owned(self.hunt, frame, detections)
         if reason == "errand":
             abort = getattr(self.hatch, "abort_interim_collection", None)
             if callable(abort) and abort("centered home never confirmed"):
@@ -503,7 +525,7 @@ class HatchHuntPlanner:
                 "begin_home_collection",
                 None,
             )
-            if callable(begin_home_collection):
+            if callable(begin_home_collection) and self._handoff_reason != "boost":
                 begin_home_collection()
             return self._choose_owned(self.hatch, frame, detections)
 

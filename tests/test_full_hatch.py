@@ -1455,7 +1455,7 @@ def test_incubator_title_outranks_false_hunt_dialog_close_detection() -> None:
     assert planner._stage == "hatch"
 
 
-def test_boost_permission_applies_only_to_the_next_hatch_cycle(tmp_path) -> None:
+def test_boost_permission_is_live_and_stock_requires_active_bar(tmp_path) -> None:
     inventory = HatchBoostInventoryStore(tmp_path / "stats.sqlite3")
     planner = FullHatchPlanner(
         DigitReader(GLYPHS),
@@ -1467,14 +1467,10 @@ def test_boost_permission_applies_only_to_the_next_hatch_cycle(tmp_path) -> None
         detection(hatch.CLOSE_BUTTON, 800, 1380),
     ]
 
-    # The default-off setting is snapshotted when this hatch cycle begins.
-    inventory.set_enabled(True)
+    # Enabling takes effect without resetting the hatch cycle.
     target = planner.choose(boost_ready_frame(), grid)
     assert target is not None and target.type == hatch.CLOSE_BUTTON
-
-    planner._child = planner._new_hatch()
-    planner._start_hatch_cycle()
-    planner._observed_cooldown_until = planner.clock() + 300  # 蛋冷卻中
+    inventory.set_enabled(True)
     target = planner.choose(boost_ready_frame(), grid)
     assert target is not None and target.type == HATCH_BOOST_BUTTON
     planner.on_action_success(target.type)
@@ -1486,6 +1482,8 @@ def test_boost_permission_applies_only_to_the_next_hatch_cycle(tmp_path) -> None
     target = planner.choose(boost_ready_frame(), prompt)
     assert target is not None and target.type == HATCH_BOOST_CONFIRM
     planner.on_action_success(target.type)
+    assert inventory.snapshot().remaining == 100
+    planner.choose(frame(), grid)  # Fresh incubator with a gray active bar.
     assert inventory.snapshot().remaining == 99
 
 
@@ -1508,12 +1506,12 @@ def test_boost_skipped_while_countdown_bar_is_gray(tmp_path) -> None:
     # The default frame keeps the bar desaturated (active countdown): the
     # planner must fall through instead of pressing the dead button.
     target = planner.choose(frame(), grid)
-    assert target is not None and target.type == hatch.CLOSE_BUTTON
-    assert planner._boost_attempted is True
+    assert target is not None and target.type == "hatch_cooldown_boost_close"
+    assert 0 < inventory.ready_delay_seconds() <= 60
     assert inventory.snapshot().remaining == 100
 
 
-def test_boost_deferred_while_incubator_is_empty(tmp_path) -> None:
+def test_boost_is_due_even_while_incubator_is_empty(tmp_path) -> None:
     inventory = HatchBoostInventoryStore(tmp_path / "stats.sqlite3")
     inventory.set_enabled(True)
     planner = FullHatchPlanner(
@@ -1529,25 +1527,70 @@ def test_boost_deferred_while_incubator_is_empty(tmp_path) -> None:
         detection(hatch.CLOSE_BUTTON, 800, 1380),
     ]
 
-    # 空孵化器(沒有冷卻讀數):即使按鈕帶是橘色也不按,改標記回訪。
+    # 用券排程與蛋的冷卻/數量無關。
     target = planner.choose(boost_ready_frame(), grid)
-    assert target is not None and target.type == hatch.CLOSE_BUTTON
-    assert planner._boost_revisit_pending is True
+    assert target is not None and target.type == HATCH_BOOST_BUTTON
     assert inventory.snapshot().remaining == 100
 
-    # 收蛋完成回到主畫面:轉入回訪孵化器的孵化階段。
-    planner._collect_only_after_empty = True
-    planner._stage = "verify_nest_closed"
-    home = [detection(hatch.HOME_ANCHOR, 59, 561)]
-    planner.choose(frame(), home)
-    assert planner._stage == "hatch"
-    assert planner._boost_revisit_pending is False
-    assert planner._collect_done_for_cycle is True
 
-    # 回訪結束關閉孵化器:直接進入等待,不再重複收蛋。
-    planner.on_action_success(hatch.CLOSE_BUTTON)
-    assert planner._collect_done_for_cycle is False
-    assert planner._empty_rescan_wait is True
+def test_scheduled_visit_preserves_child_and_refreshes_egg_wait(tmp_path, monkeypatch) -> None:
+    now = [10_000.0]
+    inventory = HatchBoostInventoryStore(tmp_path / "stats.sqlite3", clock=lambda: now[0])
+    inventory.set_enabled(True)
+    planner = FullHatchPlanner(
+        DigitReader(GLYPHS), egg_pile_point=(450, 1330),
+        boost_inventory=inventory, clock=lambda: now[0],
+    )
+    child = planner._child
+    planner._empty_rescan_wait = True
+    child.begin_rescan_wait("existing egg cooldown", seconds=3600)
+    planner._screening_completed = {"attack", "hp"}
+    monkeypatch.setattr(
+        "dino_bot.full_hatch.is_centered_home_screen",
+        lambda frame, items: any(item.type == hatch.HOME_ANCHOR for item in items),
+    )
+    monkeypatch.setattr("dino_bot.full_hatch._egg_pile_safe_tap", lambda frame: (450, 1330))
+    monkeypatch.setattr(hatch, "read_hatch_cooldown_seconds", lambda *a, **kw: 600)
+    home = [detection(hatch.HOME_ANCHOR, 59, 561)]
+    panel = [detection(hatch.INCUBATOR_TITLE, 450, 40), detection(hatch.CLOSE_BUTTON, 800, 1380)]
+    prompt = panel + [detection(CONFIRM_YES, 365, 850), detection(CONFIRM_NO, 535, 850)]
+    assert planner.next_ready_delay_ms() == 0
+    assert planner.hunt_cooldown_delay_ms() == 3_600_000
+    assert planner.choose(frame(), home).type == "hatch_cooldown_boost_open"
+    assert planner.choose(boost_ready_frame(), panel).type == HATCH_BOOST_BUTTON
+    planner.on_action_success(HATCH_BOOST_BUTTON)
+    assert planner.choose(boost_ready_frame(), prompt).type == HATCH_BOOST_CONFIRM
+    planner.on_action_success(HATCH_BOOST_CONFIRM)
+    assert planner.choose(frame(), panel).type == "hatch_cooldown_boost_close"
+    planner.on_action_success("hatch_cooldown_boost_close")
+    assert planner.choose(frame(), home) is None
+    assert planner._boost_visit is None
+    assert planner._child is child
+    assert planner._screening_completed == {"attack", "hp"}
+    assert planner.is_hunt_cooldown_active()
+    assert planner.hunt_cooldown_delay_ms() == 600_000
+    assert inventory.ready_delay_seconds() == 1800
+    planner._start_hatch_cycle()
+    assert inventory.ready_delay_seconds() == 1800
+    planner.reset_workflow()
+    assert inventory.ready_delay_seconds() == 1800
+
+
+def test_interim_collection_preserves_egg_deadline_when_boost_is_due_sooner(tmp_path) -> None:
+    inventory = HatchBoostInventoryStore(tmp_path / "stats.sqlite3", clock=lambda: 10_000.0)
+    inventory.set_enabled(True)
+    inventory.consume_one(only_if_due=True)
+    planner = FullHatchPlanner(
+        DigitReader(GLYPHS), egg_pile_point=(450, 1330),
+        boost_inventory=inventory, clock=lambda: 10_000.0,
+    )
+    planner._empty_rescan_wait = True
+    planner._child.begin_rescan_wait("existing egg cooldown", seconds=3600)
+    assert planner.next_ready_delay_ms() == 1_800_000
+    assert planner.begin_interim_collection()
+    assert planner._observed_cooldown_until == 13_600
+    assert planner.abort_interim_collection("test returning from errand")
+    assert planner.hunt_cooldown_delay_ms() == 3_600_000
 
 
 def test_home_screen_requires_bright_unobscured_map_and_no_foreground() -> None:

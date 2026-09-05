@@ -260,6 +260,7 @@ def _workflow_status(logs_dir: Path, mode: str | None) -> dict[str, Any]:
     stage = "hunt" if mode == "hunt" else "hatch"
     label = "純狩獵" if mode == "hunt" else "檢查孵蛋"
     cooldown_remaining: int | None = None
+    before_boost: tuple[str, str] | None = None
     latest_date: str | None = None
     paths = sorted(logs_dir.glob("20*.log"))
     if paths:
@@ -276,7 +277,19 @@ def _workflow_status(logs_dir: Path, mode: str | None) -> dict[str, Any]:
         message = match.group("message")
         planning = _PLANNING_TARGET.match(message)
         planned_target = planning.group("target") if planning is not None else None
-        if message.startswith("Feature | hatch-stage | stage="):
+        if (
+            "Cooldown boost | scheduled visit starting" in message
+            or "Cooldown boost | due during hunt" in message
+        ):
+            if before_boost is None:
+                before_boost = (stage, label)
+            stage, label = "cooldown_boost", "使用冷卻加速券"
+        elif "Cooldown boost | visit complete" in message:
+            stage, label = before_boost or ("hatch", "檢查孵蛋")
+            before_boost = None
+        elif planned_target and planned_target.startswith("hatch_cooldown_boost_"):
+            stage, label = "cooldown_boost", "使用冷卻加速券"
+        elif message.startswith("Feature | hatch-stage | stage="):
             stage_name = message.split("stage=", 1)[1].split(" ", 1)[0]
             stage = {
                 "hatch": "hatch",
