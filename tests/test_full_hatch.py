@@ -134,6 +134,19 @@ def _capacity_read(count: int | None) -> CapacityRead:
     )
 
 
+def occluded_capacity_frame() -> Frame:
+    # Exact 100x19 HUD pixels from S9's auto-saved 2026-09-05 20:03:55
+    # failure. The building overlaps the slash/denominator; do not guess 303.
+    encoded = (FIXTURES / "s9-capacity-occluded-20260905.png.b64").read_text()
+    crop = cv2.imdecode(
+        np.frombuffer(base64.b64decode(encoded), dtype=np.uint8), cv2.IMREAD_COLOR
+    )
+    assert crop is not None and crop.shape == (19, 100, 3)
+    image = frame().image.copy()
+    image[239:258, 10:110] = crop
+    return frame(image)
+
+
 def _patch_capacity(monkeypatch, count: int | None) -> None:
     """Force the HUD read, bypassing the glyph matcher and its fixture crop."""
 
@@ -697,6 +710,129 @@ def test_capacity_probe_can_allow_extra_retries_for_slow_detection(monkeypatch) 
     assert target is not None and target.type == CAVE_RECENTER
 
 
+def test_s9_occluded_capacity_finishes_remaining_move_before_failing(caplog) -> None:
+    planner = CaveCullPlanner(
+        DigitReader(GLYPHS), threshold=340, capacity_limit=370,
+        capacity_read_retries=2,
+    )
+    blocked = occluded_capacity_frame()
+    read = planner._read_capacity(blocked)
+    assert read.reason == "unparsed"
+    assert read.count is None and read.text == "30310"
+    first = planner.choose(frame(), [])
+    assert first is not None and first.type == CAVE_SWIPE
+    planner.on_action_success(first.type)
+
+    cave = [detection("hatch_cave", 100, 1100)]
+    for _ in range(2):
+        assert planner.choose(blocked, cave) is None
+    target = planner.choose(blocked, cave)
+    assert target is not None and target.type == CAVE_SWIPE
+    assert (target.x, target.y) == (350, 800)
+    assert target.detection.metadata["swipe"]["x2"] == 600
+    assert target.detection.metadata["swipe"]["y2"] == 800
+    assert not planner.capacity_readable and planner.last_capacity is None
+    assert "completing remaining calibrated move" in caplog.text
+    planner.on_action_success(target.type)
+    assert planner._capacity_failures == 0
+
+    # Still obscured after the full path: no third move and no guessed count.
+    for _ in range(2):
+        assert planner.choose(blocked, cave) is None
+    target = planner.choose(blocked, cave)
+    assert target is not None and target.type == CAVE_RECENTER
+    assert (target.x, target.y) == (600, 800)
+    assert target.detection.metadata["swipe"]["x2"] == 350
+    assert planner._navigation_swipes == 2
+    assert not planner.capacity_readable
+    assert planner.last_capacity is None
+
+
+@pytest.mark.parametrize("allow_cull", [False, True])
+@pytest.mark.parametrize("count", [303, 343])
+def test_capacity_after_remaining_move_requires_two_new_reads(
+    monkeypatch, allow_cull: bool, count: int,
+) -> None:
+    planner = CaveCullPlanner(
+        DigitReader(GLYPHS), threshold=340, capacity_limit=370,
+        capacity_read_retries=1, allow_cull=allow_cull,
+    )
+    first = planner.choose(frame(), [])
+    planner.on_action_success(first.type)
+    cave = [detection("hatch_cave", 100, 1100)]
+    blocked = occluded_capacity_frame()
+    assert planner.choose(blocked, cave) is None
+    move = planner.choose(blocked, cave)
+    assert move is not None and move.type == CAVE_SWIPE
+    planner.on_action_success(move.type)
+
+    # Model a fresh legible frame, independently of the unavailable live
+    # post-swipe screenshot. Navigation must not substitute for confirmation.
+    _patch_capacity(monkeypatch, count)
+    assert planner.choose(frame(), cave) is None
+    assert not planner.capacity_readable and planner.last_capacity is None
+    target = planner.choose(frame(), cave)
+    assert target is not None
+    assert target.type == (
+        "hatch_cave" if allow_cull and count >= 340 else CAVE_RECENTER
+    )
+    assert planner.capacity_readable and planner.last_capacity == count
+    assert planner.cull_required is (count >= 340)
+
+
+def test_occluded_capacity_does_not_start_new_path_from_unknown_cave_view() -> None:
+    planner = CaveCullPlanner(
+        DigitReader(GLYPHS), threshold=340, capacity_limit=370,
+        capacity_read_retries=1,
+    )
+    blocked = occluded_capacity_frame()
+    cave = [detection("hatch_cave", 100, 1100)]
+    assert planner.choose(blocked, cave) is None
+    target = planner.choose(blocked, cave)
+    assert target is not None and target.type == CAVE_RECENTER
+    assert planner._navigation_swipes == 0
+    assert not planner.capacity_readable
+
+
+def test_occluded_capacity_remaining_move_failures_are_bounded() -> None:
+    planner = CaveCullPlanner(
+        DigitReader(GLYPHS), threshold=340, capacity_limit=370,
+        capacity_read_retries=1,
+    )
+    first = planner.choose(frame(), [])
+    planner.on_action_success(first.type)
+    cave = [detection("hatch_cave", 100, 1100)]
+    blocked = occluded_capacity_frame()
+    assert planner.choose(blocked, cave) is None
+    for _ in range(planner.navigator.max_swipe_failures + 1):
+        target = planner.choose(blocked, cave)
+        assert target is not None and target.type == CAVE_SWIPE
+        assert (target.x, target.y) == (350, 800)
+        planner.on_action_failure(target.type)
+    target = planner.choose(blocked, cave)
+    assert target is not None and target.type == CAVE_RECENTER
+    # Only the first outbound move succeeded, so do not undo a dropped move.
+    assert (target.x, target.y) == (450, 600)
+    assert planner._navigation_swipes == 1
+    assert not planner.capacity_readable and planner.last_capacity is None
+
+
+def test_wrong_capacity_limit_does_not_trigger_obstruction_navigation() -> None:
+    planner = CaveCullPlanner(
+        DigitReader(GLYPHS), threshold=340, capacity_limit=370,
+        capacity_read_retries=1,
+    )
+    first = planner.choose(frame(), [])
+    planner.on_action_success(first.type)
+    cave = [detection("hatch_cave", 100, 1100)]
+    assert planner._read_capacity(capacity_frame()).reason == "unexpected_capacity"
+    assert planner.choose(capacity_frame(), cave) is None
+    target = planner.choose(capacity_frame(), cave)
+    assert target is not None and target.type == CAVE_RECENTER
+    assert planner._navigation_swipes == 1
+    assert not planner.capacity_readable
+
+
 def test_unreadable_capacity_saves_the_frame_only_once_it_gives_up(monkeypatch) -> None:
     _patch_capacity(monkeypatch, None)
     snapshots = RecordingCapacitySnapshots()
@@ -1154,6 +1290,50 @@ def test_full_hatch_preflight_starts_initial_screening_before_first_egg_pile_tap
     assert planner._capacity_checked
     assert planner._management_pending
     assert planner._screening_baseline_population is None
+
+
+@pytest.mark.parametrize("readable_after_move", [False, True])
+def test_custom_preflight_recovers_occluded_hud_or_keeps_capacity_fuse(
+    readable_after_move: bool,
+) -> None:
+    planner = FullHatchPlanner(
+        DigitReader(GLYPHS), egg_pile_point=(450, 1330),
+        enabled_stages=("attack", "top", "collect", "cave", "hatch"),
+        capacity_read_retries=1,
+    )
+    home = [detection(hatch.HOME_ANCHOR, 59, 561)]
+    target = planner.choose(frame(), home)
+    assert target is not None and target.type == CAVE_SWIPE
+    planner.on_action_success(target.type)
+    cave = [detection("hatch_cave", 100, 1100)]
+    blocked = occluded_capacity_frame()
+    assert planner.choose(blocked, cave) is None
+    target = planner.choose(blocked, cave)
+    assert target is not None and target.type == CAVE_SWIPE
+    assert (target.x, target.y) == (350, 800)
+    planner.on_action_success(target.type)
+
+    after = capacity_frame() if readable_after_move else blocked
+    assert planner.choose(after, cave) is None
+    target = planner.choose(after, cave)
+    assert target is not None and target.type == CAVE_RECENTER
+    planner.on_action_success(target.type)
+    target = planner.choose(after, cave)
+    assert target is not None and target.type == CAVE_RECENTER
+    planner.on_action_success(target.type)
+    assert planner.choose(after, home) is None
+    target = planner.choose(after, home)
+
+    if readable_after_move:
+        assert target is not None and target.type == OPEN_NEST
+        planner.on_action_success(target.type)
+        assert planner._stage == "attack"
+        assert planner._capacity_checked and not planner.is_hatch_blocked()
+        assert planner._screening_stages == ("attack", "top")
+    else:
+        assert target is None
+        assert planner._capacity_blocked and not planner._capacity_checked
+        assert planner.is_hatch_blocked()
 
 
 def test_full_capacity_preflight_screens_before_required_cull(monkeypatch) -> None:
@@ -2560,6 +2740,49 @@ def test_home_recovery_keeps_correcting_a_damped_but_converging_camera_move() ->
         target = planner.choose(shifted_home(offset_y), home)
         assert target is not None and target.type == RECOVERY_RECENTER
         planner.on_action_success(target.type)
+
+
+def test_cave_return_history_survives_recovery_and_undo_retries() -> None:
+    planner = FullHatchPlanner(DigitReader(GLYPHS), egg_pile_point=(450, 1330))
+    cave = CaveCullPlanner(DigitReader(GLYPHS), threshold=340, capacity_limit=370)
+    cave._stage = "recenter"
+    missing_pile = frame(np.full((1600, 900, 3), 255, dtype=np.uint8))
+    home = [detection(hatch.HOME_ANCHOR, 59, 561), detection("forest_recenter_button", 841, 1296)]
+    for _ in range(2):
+        action = cave.choose(missing_pile, home)
+        assert action.type == CAVE_RECENTER
+        cave.on_action_success(action.type)
+    history = cave.camera_history()
+    assert len(history) == 2
+    planner._stage = "cave"
+    planner._child = cave
+    planner._begin_home_recovery("cave return moved pile below frame")
+    recovery = planner._child
+    undo = recovery.choose(missing_pile, home)
+    assert undo.type == RECOVERY_UNDO
+    x1, y1, x2, y2 = history[-1]
+    assert (undo.x, undo.y) == (x2, y2)
+    assert undo.detection.metadata["swipe"]["x2"] == x1
+    assert undo.detection.metadata["swipe"]["y2"] == y1
+    recovery.on_action_success(undo.type)
+    assert recovery.camera_history() == history[:-1]
+    planner._begin_home_recovery("retry after interrupted recovery")
+    assert planner._child.camera_history() == history[:-1]
+    # Once the known base is visible again, geometry must be proved; an undo
+    # alone is never treated as a successful return.
+    planner._child.choose(frame(), home)
+    planner._child.choose(frame(), home)
+    assert planner._child.is_complete()
+
+
+def test_failed_cave_return_swipe_is_not_available_for_undo() -> None:
+    cave = CaveCullPlanner(DigitReader(GLYPHS), threshold=340, capacity_limit=370)
+    cave._stage = "recenter"
+    missing_pile = frame(np.full((1600, 900, 3), 255, dtype=np.uint8))
+    action = cave.choose(missing_pile, [detection(hatch.HOME_ANCHOR, 59, 561)])
+    assert action.type == CAVE_RECENTER
+    cave.on_action_failure(action.type)
+    assert cave.camera_history() == ()
 
 
 def test_home_recovery_undoes_its_own_swipe_when_the_landmark_disappears() -> None:

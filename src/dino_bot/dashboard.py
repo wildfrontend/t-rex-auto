@@ -277,7 +277,16 @@ def _workflow_status(logs_dir: Path, mode: str | None) -> dict[str, Any]:
         message = match.group("message")
         planning = _PLANNING_TARGET.match(message)
         planned_target = planning.group("target") if planning is not None else None
-        if (
+        if message.startswith("Bot started"):
+            stage, label = ("hunt", "純狩獵") if mode == "hunt" else ("hatch", "檢查孵蛋")
+            before_boost = None
+        elif "Hatch+Hunt | hatch calibration blocked; switching to hunt" in message:
+            stage, label = "hatch_blocked_hunt", "孵蛋已鎖住，僅繼續狩獵"
+            cooldown_remaining = None
+        elif planned_target in {"dinosaur", "hunt_button", "hunt_confirm_button"}:
+            if stage not in {"hatch_blocked_hunt", "cooldown_hunt"}:
+                stage, label = "hunt", "狩獵"
+        elif (
             "Cooldown boost | scheduled visit starting" in message
             or "Cooldown boost | due during hunt" in message
         ):
@@ -931,6 +940,14 @@ class DashboardController:
         status = _get_json(f"http://127.0.0.1:{instance.status_port}/status") or {}
         if health and health.get("service") == "dino-mutant-bot-status":
             mode, mode_label = self._mode_info(health.get("feature"))
+            live_workflow = status.get("workflow")
+            workflow = (
+                live_workflow
+                if isinstance(live_workflow, dict)
+                and isinstance(live_workflow.get("stage"), str)
+                and isinstance(live_workflow.get("label"), str)
+                else _workflow_status(instance.logs_dir, mode)
+            )
             return {
                 "instance_id": instance.instance_id,
                 "name": instance.name,
@@ -942,7 +959,7 @@ class DashboardController:
                 "mode_label": mode_label,
                 "port": instance.status_port,
                 "status": status,
-                "workflow": _workflow_status(instance.logs_dir, mode),
+                "workflow": workflow,
             }
         return {
             "instance_id": instance.instance_id,

@@ -79,9 +79,30 @@ class HatchHuntPlanner:
         return bool(is_complete()) if callable(is_complete) else False
 
     def last_stage(self) -> str:
-        child = self.hatch if self._mode == "hatch" else self.hunt
+        child = self.hatch if self._mode in {"hatch", "boost"} else self.hunt
         stage = child.last_stage()
         return f"hatch_hunt_{self._mode}:{stage}"
+
+    def workflow_status(self) -> dict[str, Any]:
+        """Live state for Dashboard; unlike log inference this cannot age out."""
+        blocked = self._hatch_is_blocked()
+        state: dict[str, Any] = {"hatch_blocked": blocked, "planner_stage": self.last_stage()}
+        if self._mode == "boost" or (
+            self._mode == "handoff" and self._handoff_reason == "boost"
+        ):
+            state.update(stage="cooldown_boost", label="使用冷卻加速券")
+        elif blocked:
+            state.update(stage="hatch_blocked_hunt", label="孵蛋已鎖住，僅繼續狩獵")
+        elif self._mode == "hunt":
+            state.update(stage="cooldown_hunt", label="冷卻期間狩獵")
+        elif self._mode == "handoff":
+            state.update(stage="handoff", label="返回孵蛋首頁")
+        else:
+            return state
+        state["cooldown_remaining_seconds"] = (
+            max(0, self._hatch_cooldown_delay_ms() // 1000) if not blocked else None
+        )
+        return state
 
     def choose(
         self,
@@ -91,7 +112,7 @@ class HatchHuntPlanner:
         # A login/restart screen invalidates the old cooldown/map context.
         # Re-enter hatch-first mode so the incubator is always checked before
         # hunting resumes. FullHatchPlanner owns the startup shortcut choice.
-        if self._mode != "hatch" and any(
+        if self._mode not in {"hatch", "boost"} and any(
             item.type in STARTUP_DETECTION_TYPES for item in detections
         ):
             self.logger.info(
@@ -107,7 +128,7 @@ class HatchHuntPlanner:
         # 找恐龍、點離開巢穴鈕,兩者都被面板蓋住,於是整輪空轉到重試耗盡。
         # 面板是孵蛋側的畫面:先關掉它,再把控制權交還孵蛋側重新判斷冷卻,
         # 而不是在原地接著狩獵。
-        if self._mode != "hatch":
+        if self._mode not in {"hatch", "boost"}:
             if any(item.type == NEST_TITLE for item in detections):
                 return self._close_stray_nest_panel(frame, detections)
             if self._nest_close_attempts:
@@ -120,7 +141,35 @@ class HatchHuntPlanner:
                 self._centered_frames = 0
                 return self._choose_owned(self.hatch, frame, detections)
 
-        if self._hatch_is_blocked():
+        # Use-only visits and their handoff run outside the hatch safety fuse.
+        # The fuse still stops every hatch/management action below.
+        if self._mode == "boost":
+            target = self._choose_owned(self.hatch, frame, detections)
+            if self.hatch.boost_visit_active():
+                return target
+            self._mode = "hunt" if self._hatch_is_blocked() else "hatch"
+            self.logger.info("Cooldown boost | resumed %s after visit", self._mode)
+            if target is not None:
+                return target
+            if self._mode == "hunt":
+                return self._choose_owned(self.hunt, frame, detections)
+
+        if self._mode == "handoff" and self._handoff_reason == "boost":
+            if self._handoff_expired():
+                return self._abandon_handoff(frame, detections)
+            return self._choose_handoff(frame, detections)
+
+        blocked = self._hatch_is_blocked()
+        if (
+            self._mode == "hunt"
+            and (not blocked or self._continue_hunting_when_blocked())
+            and self._boost_ready_delay_ms() == 0
+        ):
+            self._enter_handoff("boost")
+            self.logger.info("Cooldown boost | due during hunt; returning to incubator")
+            return self._choose_handoff(frame, detections)
+
+        if blocked:
             if not self._continue_hunting_when_blocked():
                 return None
             if self._mode != "hunt":
@@ -149,11 +198,6 @@ class HatchHuntPlanner:
             return self._choose_owned(self.hunt, frame, detections)
 
         if self._mode == "hunt":
-            boost_delay = self._boost_ready_delay_ms()
-            if boost_delay == 0:
-                self._enter_handoff("boost")
-                self.logger.info("Cooldown boost | due during hunt; returning to incubator")
-                return self._choose_handoff(frame, detections)
             remaining = self._hatch_cooldown_delay_ms()
             if (
                 not self.hatch.is_hunt_cooldown_active()
@@ -188,6 +232,8 @@ class HatchHuntPlanner:
         return self._choose_handoff(frame, detections)
 
     def next_ready_delay_ms(self) -> int:
+        if self._mode == "boost":
+            return 0
         if self._mode == "hatch":
             return self.hatch.next_ready_delay_ms()
         if self._mode == "handoff":
@@ -199,7 +245,7 @@ class HatchHuntPlanner:
         hunt_delay = self.hunt.next_ready_delay_ms()
         if not hunt_delay:
             return 0
-        delay = min(hunt_delay, until_handoff)
+        delay = hunt_delay if self._hatch_is_blocked() else min(hunt_delay, until_handoff)
         boost_delay = self._boost_ready_delay_ms()
         return min(delay, boost_delay) if boost_delay is not None else delay
 
@@ -369,25 +415,25 @@ class HatchHuntPlanner:
 
     # Hunt diagnostics remain available to the shared engine while combined.
     def take_blind_escape(self) -> dict[str, Any] | None:
-        return self.hunt.take_blind_escape() if self._mode != "hatch" else None
+        return self.hunt.take_blind_escape() if self._mode in {"hunt", "handoff"} else None
 
     def last_rejections(self) -> dict[str, int]:
-        return self.hunt.last_rejections() if self._mode != "hatch" else {}
+        return self.hunt.last_rejections() if self._mode in {"hunt", "handoff"} else {}
 
     def last_idle_seconds(self) -> float:
-        return self.hunt.last_idle_seconds() if self._mode != "hatch" else 0.0
+        return self.hunt.last_idle_seconds() if self._mode in {"hunt", "handoff"} else 0.0
 
     def last_recenter_reason(self) -> str | None:
-        return self.hunt.last_recenter_reason() if self._mode != "hatch" else None
+        return self.hunt.last_recenter_reason() if self._mode in {"hunt", "handoff"} else None
 
     def last_blind_seconds(self) -> float:
-        return self.hunt.last_blind_seconds() if self._mode != "hatch" else 0.0
+        return self.hunt.last_blind_seconds() if self._mode in {"hunt", "handoff"} else 0.0
 
     def last_supply(self) -> int:
-        return self.hunt.last_supply() if self._mode != "hatch" else 0
+        return self.hunt.last_supply() if self._mode in {"hunt", "handoff"} else 0
 
     def anchor_measured(self) -> bool:
-        return self.hunt.anchor_measured() if self._mode != "hatch" else False
+        return self.hunt.anchor_measured() if self._mode in {"hunt", "handoff"} else False
 
     def _hatch_is_blocked(self) -> bool:
         method = getattr(self.hatch, "is_hatch_blocked", None)
@@ -515,11 +561,22 @@ class HatchHuntPlanner:
             self._centered_frames += 1
             if self._centered_frames < 2:
                 return None
-            self.logger.info("Hatch+Hunt | centered home confirmed | resuming hatch")
+            self.logger.info(
+                "Hatch+Hunt | centered home confirmed | resuming %s",
+                "boost" if self._handoff_reason == "boost" else "hatch",
+            )
             self.hunt.reset_workflow()
             self._mode = "hatch"
             self._centered_frames = 0
             self._handoff_deadline = None
+            if self._handoff_reason == "boost":
+                begin = getattr(self.hatch, "begin_boost_visit", None)
+                if callable(begin):
+                    if begin():
+                        self._mode = "boost"
+                    elif self._hatch_is_blocked():
+                        self._mode = "hunt"
+                        return self._choose_owned(self.hunt, frame, detections)
             begin_home_collection = getattr(
                 self.hatch,
                 "begin_home_collection",

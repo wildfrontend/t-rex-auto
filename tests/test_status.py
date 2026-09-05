@@ -98,6 +98,16 @@ def test_local_status_server_exposes_read_only_json(tmp_path: Path) -> None:
     assert settings["timing"]["idle_delay_ms"] == 250
 
 
+def test_local_status_server_reports_live_workflow_without_log_history(tmp_path: Path) -> None:
+    current = {"stage": "hatch_blocked_hunt", "label": "孵蛋已鎖住，僅繼續狩獵"}
+    with LocalStatusServer(tmp_path, port=0, workflow_provider=lambda: dict(current)) as server:
+        with urlopen(f"{server.url}/status", timeout=2) as response:  # noqa: S310
+            assert json.load(response)["workflow"]["stage"] == "hatch_blocked_hunt"
+        current.update(stage="cooldown_boost", label="使用冷卻加速券")
+        with urlopen(f"{server.url}/status", timeout=2) as response:  # noqa: S310
+            assert json.load(response)["workflow"]["stage"] == "cooldown_boost"
+
+
 def test_local_status_server_accepts_allowlisted_controls(tmp_path: Path) -> None:
     requested: list[str] = []
     with LocalStatusServer(

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
+import pytest
 
 from dino_bot import hatch
 from dino_bot.full_hatch import (
@@ -337,6 +340,82 @@ def test_boost_handoff_timeout_defers_and_resumes_hunt() -> None:
     assert combined.choose(frame(), []).type == "dinosaur"
     assert deferred and combined._mode == "hunt"
     assert hatch_planner.cooldown_ms == 3_600_000
+
+
+@pytest.mark.parametrize("fuse", ["_egg_pile_blocked", "_screening_blocked", "_capacity_blocked"])
+@pytest.mark.parametrize("available", [True, False])
+def test_blocked_hatch_still_visits_boost_and_returns_to_hunt(tmp_path, fuse, available):
+    from dino_bot.cooldown_boost import BOOST_BUTTON, BOOST_CLOSE, BOOST_CONFIRM, BOOST_OPEN
+    from dino_bot.digits import DigitReader
+    from dino_bot.full_hatch import FullHatchPlanner
+    from dino_bot.hatch_inventory import HatchBoostInventoryStore
+    from dino_bot.overlays import CONFIRM_NO, CONFIRM_YES
+
+    now = [10_000.0]
+    inventory = HatchBoostInventoryStore(tmp_path / "stats.sqlite3", clock=lambda: now[0])
+    inventory.set_enabled(True)
+    full = FullHatchPlanner(
+        DigitReader(Path(__file__).parents[1] / "assets/hatch/digits"),
+        egg_pile_point=(450, 1330), boost_inventory=inventory, clock=lambda: now[0],
+    )
+    setattr(full, fuse, True)
+    full._stage = "hatch_blocked"
+    full._screening_completed = {"attack", "hp"}
+    original_child = full._child
+    hunt = StubHunt()
+    hunt.next_target = target("dinosaur", 300, 700)
+    combined = HatchHuntPlanner(full, hunt, clock=lambda: now[0])
+    combined._mode = "hunt"
+    home = [detection(hatch.HOME_ANCHOR, 59, 561)]
+    panel = [detection(hatch.INCUBATOR_TITLE, 450, 40), detection(hatch.CLOSE_BUTTON, 800, 1380)]
+    assert not combined.is_complete()
+    assert combined.choose(frame(), home) is None
+    assert combined._handoff_reason == "boost"
+    assert combined.choose(frame(), home).type == BOOST_OPEN
+    assert combined.workflow_status()["stage"] == "cooldown_boost"
+    assert combined.workflow_status()["hatch_blocked"] is True
+    combined.on_action_success(BOOST_OPEN)
+    if available:
+        ready = frame()
+        ready.image[1355:1405, 380:520] = (0, 140, 255)
+        assert combined.choose(ready, panel).type == BOOST_BUTTON
+        combined.on_action_success(BOOST_BUTTON)
+        prompt = panel + [detection(CONFIRM_YES, 365, 850), detection(CONFIRM_NO, 535, 850)]
+        assert combined.choose(ready, prompt).type == BOOST_CONFIRM
+        combined.on_action_success(BOOST_CONFIRM)
+    assert combined.choose(frame(), panel).type == BOOST_CLOSE
+    combined.on_action_success(BOOST_CLOSE)
+    assert combined.choose(frame(), home).type == "dinosaur"
+    assert combined._mode == "hunt"
+    assert full._child is original_child
+    assert full._stage == "hatch_blocked"
+    assert full._screening_completed == {"attack", "hp"}
+    assert getattr(full, fuse)
+    assert combined.workflow_status()["stage"] == "hatch_blocked_hunt"
+    assert inventory.snapshot().remaining == (99 if available else 100)
+    delay = 1800 if available else 60
+    hunt.delay_ms = 3_600_000
+    assert combined.next_ready_delay_ms() == delay * 1000
+    now[0] += delay
+    assert combined.choose(frame(), home) is None
+    assert combined._handoff_reason == "boost"
+
+
+def test_blocked_hatch_boost_handoff_timeout_keeps_fuse_and_hunting():
+    combined, full, hunt = planner(cooldown_ms=0)
+    full.blocked = True
+    now = [0.0]
+    combined.clock = lambda: now[0]
+    combined._mode = "hunt"
+    full.boost_ready_delay_ms = lambda: 0
+    deferred = []
+    full.defer_boost_visit = deferred.append
+    assert combined.choose(frame(), []) is None
+    now[0] += 91
+    hunt.next_target = target("dinosaur", 300, 700)
+    assert combined.choose(frame(), []).type == "dinosaur"
+    assert deferred and full.blocked
+    assert combined.workflow_status()["stage"] == "hatch_blocked_hunt"
 
 
 def test_startup_interruption_during_hunt_restarts_hatch_first() -> None:

@@ -45,10 +45,12 @@ class _StatusHttpServer(ThreadingHTTPServer):
         logs_dir: Path,
         control_handlers: dict[str, Callable[[], bool | None]],
         metadata: dict[str, Any] | None = None,
+        workflow_provider: Callable[[], dict[str, Any]] | None = None,
     ) -> None:
         self.logs_dir = logs_dir
         self.control_handlers = control_handlers
         self.metadata = dict(metadata or {})
+        self.workflow_provider = workflow_provider
         super().__init__(address, _StatusHandler)
 
 
@@ -83,6 +85,8 @@ class _StatusHandler(BaseHTTPRequestHandler):
             return
         status = build_runtime_status(self.server.logs_dir)
         if path == "/status":
+            if self.server.workflow_provider is not None:
+                status["workflow"] = self.server.workflow_provider()
             self._send_json(200, status)
         elif path == "/actions":
             self._send_json(
@@ -144,11 +148,13 @@ class LocalStatusServer:
         *,
         control_handlers: dict[str, Callable[[], bool | None]] | None = None,
         metadata: dict[str, Any] | None = None,
+        workflow_provider: Callable[[], dict[str, Any]] | None = None,
     ) -> None:
         self.logs_dir = logs_dir
         self.port = port
         self.control_handlers = dict(control_handlers or {})
         self.metadata = dict(metadata or {})
+        self.workflow_provider = workflow_provider
         self._server: _StatusHttpServer | None = None
         self._thread: threading.Thread | None = None
 
@@ -165,6 +171,7 @@ class LocalStatusServer:
             self.logs_dir,
             self.control_handlers,
             self.metadata,
+            self.workflow_provider,
         )
         self._thread = threading.Thread(
             target=self._server.serve_forever,

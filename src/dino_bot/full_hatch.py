@@ -1048,6 +1048,7 @@ class HatchHomeRecoveryPlanner:
         # still stops immediately below rather than spending the extra budget.
         max_measured_corrections: int = 4,
         max_hunt_dialog_dismissals: int = 3,
+        applied_swipes: Sequence[tuple[int, int, int, int]] = (),
     ) -> None:
         self.reference_width = reference_width
         self.logger = logger or logging.getLogger("dino_bot")
@@ -1070,8 +1071,8 @@ class HatchHomeRecoveryPlanner:
         self._measured_corrections = 0
         self._last_offset: tuple[float, float] | None = None
         self._autoplace_notice_without_no = False
-        self._applied_swipes: list[tuple[int, int, int, int]] = []
-        self._applied_offsets: list[tuple[float, float] | None] = []
+        self._applied_swipes = list(applied_swipes)
+        self._applied_offsets: list[tuple[float, float] | None] = [None] * len(applied_swipes)
         self._pending_swipe: tuple[int, int, int, int] | None = None
         self._pending_measured_offset: tuple[float, float] | None = None
         self._pending_undo_swipe: tuple[int, int, int, int] | None = None
@@ -1092,6 +1093,9 @@ class HatchHomeRecoveryPlanner:
 
     def is_failed(self) -> bool:
         return self._failed
+
+    def camera_history(self) -> tuple[tuple[int, int, int, int], ...]:
+        return tuple(self._applied_swipes)
 
     def on_action_success(self, target_type: str) -> None:
         if target_type == RECOVERY_RECENTER:
@@ -1797,6 +1801,8 @@ class CaveCullPlanner:
         self._capacity_failures = 0
         self._navigation_swipes = 0
         self._return_swipes = 0
+        self._applied_return_swipes: list[tuple[int, int, int, int]] = []
+        self._pending_return_swipe: tuple[int, int, int, int] | None = None
         self._recenter_checks = 0
         self._home_frames = 0
         self._complete = False
@@ -1809,6 +1815,9 @@ class CaveCullPlanner:
 
     def last_stage(self) -> str:
         return f"cave_{self._stage}"
+
+    def camera_history(self) -> tuple[tuple[int, int, int, int], ...]:
+        return tuple(self._applied_return_swipes)
 
     def is_complete(self) -> bool:
         return self._complete
@@ -1861,6 +1870,9 @@ class CaveCullPlanner:
         if target_type == CAVE_SWIPE:
             self.navigator.on_swipe_result(moved=True)
             self._navigation_swipes += 1
+            # A changed camera view needs fresh, consecutive HUD samples.
+            self._capacity_failures = 0
+            self._reset_capacity_confirmation()
         elif target_type == CAVE:
             self._stage = "cave_screen"
         elif target_type == CAVE_SELECT_BUTTON:
@@ -1887,6 +1899,9 @@ class CaveCullPlanner:
                 )
             self._stage = "recenter"
         elif target_type == CAVE_RECENTER:
+            if self._pending_return_swipe is not None:
+                self._applied_return_swipes.append(self._pending_return_swipe)
+                self._pending_return_swipe = None
             self._return_swipes += 1
             self._stage = "recenter"
 
@@ -1894,6 +1909,7 @@ class CaveCullPlanner:
         if target_type == CAVE_SWIPE:
             self.navigator.on_swipe_result(moved=False)
             return
+        self._pending_return_swipe = None
         self._stage = f"failed_{target_type}"
 
     def choose(self, frame: Frame, detections: Sequence[Detection]) -> Target | None:
@@ -1992,6 +2008,27 @@ class CaveCullPlanner:
                         self.capacity_read_retries,
                     )
                     return None
+                if read.reason == "unparsed" and (
+                    0 < self._navigation_swipes < len(self.navigator.swipe_vectors)
+                ):
+                    # S9 can reveal the cave after only the vertical move,
+                    # while a building still overlaps the fixed capacity HUD.
+                    # Finish only the remaining calibrated outbound gesture;
+                    # never start a fresh path from an unknown cave view or
+                    # repeat a successful swipe to try to manufacture a read.
+                    step = self.navigator.next_step(
+                        cave_visible=False, frame_width=frame.width
+                    )
+                    if step.kind == SWIPE:
+                        assert step.vector is not None
+                        self.logger.warning(
+                            "Hatch cave | capacity unreadable after retries"
+                            " | glyphs=%r | completing remaining calibrated move"
+                            " | swipe=%s",
+                            read.text,
+                            step.vector,
+                        )
+                        return swipe_target(CAVE_SWIPE, *step.vector)
                 self._capacity_readable = False
                 # Every retry saw the same still frame, so the log line below
                 # is the same whether the HUD is absent, covered, or merely
@@ -2081,6 +2118,7 @@ class CaveCullPlanner:
                     vectors[self._return_swipes],
                     self.reference_width,
                 )
+                self._pending_return_swipe = (x1, y1, x2, y2)
                 return swipe_target(CAVE_RECENTER, x1, y1, x2, y2)
             self._stage = "verify_recenter"
             return self.choose(frame, detections)
@@ -2381,6 +2419,26 @@ class FullHatchPlanner:
     def defer_boost_visit(self, reason: str) -> None:
         if self.boost_inventory is not None:
             self.boost_inventory.defer(reason)
+
+    def begin_boost_visit(self) -> bool:
+        """Start a use-only visit after the caller has proved centered home.
+
+        Capacity/calibration fuses belong to hatching. This visit never clears
+        them and never runs a hatch, collection, screening or cull action.
+        """
+        if self._boost_visit is not None:
+            return True
+        if self.boost_ready_delay_ms() != 0:
+            return False
+        assert self.boost_inventory is not None
+        self._observed_cooldown_until = None
+        self._boost_visit = CooldownBoostVisit(
+            self.boost_inventory, clock=self.clock, logger=self.logger,
+        )
+        return True
+
+    def boost_visit_active(self) -> bool:
+        return self._boost_visit is not None
 
     def planning_detection_types(self) -> frozenset[str] | None:
         """Return the detector types needed by the current hatch phase.
@@ -2803,6 +2861,10 @@ class FullHatchPlanner:
         """Return uncertain hatch mutations to a proven centred home screen."""
 
         del frame, detections
+        if target.type in BOOST_ACTIONS:
+            if self._boost_visit is not None:
+                self._boost_visit.on_action_failure(target.type)
+            return True
         if self.is_hatch_blocked():
             return False
         self.logger.warning(
@@ -2930,7 +2992,7 @@ class FullHatchPlanner:
             )
 
     def choose(self, frame: Frame, detections: Sequence[Detection]) -> Target | None:
-        if self.is_complete():
+        if self.is_complete() and not self.boost_visit_active():
             return None
 
         # Login overlays sit above a still-detectable outdoor HUD. Handle them
@@ -2970,12 +3032,7 @@ class FullHatchPlanner:
                 and _unready_egg_detail_close(frame) is None
             )
             if safe_home or safe_panel:
-                assert self.boost_inventory is not None
-                if self._stage == "hatch":
-                    self._observed_cooldown_until = None
-                self._boost_visit = CooldownBoostVisit(
-                    self.boost_inventory, clock=self.clock, logger=self.logger,
-                )
+                self.begin_boost_visit()
         if self._boost_visit is not None:
             visit = self._boost_visit
             target = visit.choose(
@@ -2992,6 +3049,10 @@ class FullHatchPlanner:
             self._boost_visit = None
             self._no_target_since = None
             self.logger.info("Cooldown boost | visit complete | resume=%s", self._stage)
+            if self.is_complete():
+                # Returning from an independent visit must not unlock or
+                # restart an unsafe hatch workflow, even when the visit failed.
+                return None
             if visit.failed:
                 self._begin_home_recovery("cooldown boost visit could not return home")
             elif visit.used and self._empty_rescan_wait:
@@ -3567,10 +3628,16 @@ class FullHatchPlanner:
             # A fresh episode, not one of its own retries: start the wall-clock
             # budget for the bounded same-map recovery episode.
             self._recovery_started_at = self.clock()
+        history = (
+            self._child.camera_history()
+            if isinstance(self._child, (CaveCullPlanner, HatchHomeRecoveryPlanner))
+            else ()
+        )
         self._stage = "recover_home"
         self._child = HatchHomeRecoveryPlanner(
             reference_width=self.reference_width,
             logger=self.logger,
+            applied_swipes=history,
         )
         self._no_target_since = None
         self._recovery_reason = reason

@@ -537,6 +537,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.status_port,
                 control_handlers=control_handlers,
                 metadata={"feature": args.feature},
+                workflow_provider=getattr(engine.context.planner, "workflow_status", None),
             )
             try:
                 status_server.start()

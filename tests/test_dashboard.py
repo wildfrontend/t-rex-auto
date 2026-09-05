@@ -27,6 +27,33 @@ def write_assets(root: Path) -> None:
     (root / "dashboard.js").write_text("", encoding="utf-8")
 
 
+def test_dashboard_prefers_live_workflow_over_truncated_logs(tmp_path, monkeypatch):
+    controller = object.__new__(DashboardController)
+    monkeypatch.setattr(controller, "_instance_serial", lambda instance: "127.0.0.1:16384")
+    instance = dashboard_module.BotInstance("main", "S9", tmp_path / "config.json", 8765)
+    live = {"stage": "hatch_blocked_hunt", "label": "孵蛋已鎖住，僅繼續狩獵"}
+    monkeypatch.setattr(
+        dashboard_module, "_get_json",
+        lambda url: {"service": "dino-mutant-bot-status", "feature": "hatch-hunt"}
+        if url.endswith("/health") else {"running": True, "workflow": live},
+    )
+    assert controller._discover_instance(instance)["workflow"] == live
+    live.update(stage="cooldown_boost", label="使用冷卻加速券")
+    assert controller._discover_instance(instance)["workflow"] == live
+
+
+def test_dashboard_log_fallback_never_labels_active_hunts_as_hatching(tmp_path):
+    log = tmp_path / "20260905.log"
+    hunt = "20:00:00 | INFO | Planning | hunt_button at (450,800) confidence=1.0\n"
+    log.write_text(hunt, encoding="utf-8")
+    assert _workflow_status(tmp_path, "hatch-hunt")["stage"] == "hunt"
+    log.write_text(
+        "19:23:34 | ERROR | Hatch+Hunt | hatch calibration blocked; switching to hunt\n" + hunt,
+        encoding="utf-8",
+    )
+    assert _workflow_status(tmp_path, "hatch-hunt")["stage"] == "hatch_blocked_hunt"
+
+
 def test_dashboard_ignores_client_disconnect_tracebacks(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
