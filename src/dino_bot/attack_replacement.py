@@ -36,7 +36,6 @@ from .nests import (
     StatUpgradeGuard,
     descending_prefix,
     find_primary_ocr_conflict,
-    is_extreme_specialization_candidate,
     is_intentional_extreme_specialization_parent,
     pick_replacement,
     pick_specialization_replacement,
@@ -166,8 +165,6 @@ class AttackReplacementTestPlanner:
         )
         self._select_planner: SelectSortTestPlanner | None = None
         self._suspicious_ocr_retries = 0
-        self._extreme_specialization_unlock_pending = False
-        self._extreme_specialization_unlocked = False
         self._complete = False
 
     def last_stage(self) -> str:
@@ -198,14 +195,6 @@ class AttackReplacementTestPlanner:
             )
             return
         if target_type == CANDIDATE_ROW:
-            if self._extreme_specialization_unlock_pending:
-                self._extreme_specialization_unlock_pending = False
-                self._extreme_specialization_unlocked = True
-                self.logger.info(
-                    "Hatch OCR | extreme specialization condition satisfied"
-                    " | rule=%s | mode=normal replacement flow",
-                    self.rule.tag,
-                )
             self._stage = self._side_stage("confirm")
             return
         if target_type == NESTED_PARENT_YES:
@@ -234,14 +223,6 @@ class AttackReplacementTestPlanner:
             and NESTED_PARENT_WARNING not in visible
         )
         if direct_selection:
-            if self._extreme_specialization_unlock_pending:
-                self._extreme_specialization_unlock_pending = False
-                self._extreme_specialization_unlocked = True
-                self.logger.info(
-                    "Hatch OCR | extreme specialization condition satisfied"
-                    " | rule=%s | mode=normal replacement flow",
-                    self.rule.tag,
-                )
             self.logger.info(
                 "Hatch %s | side=%s | candidate applied directly; continuing",
                 self.rule.tag,
@@ -370,6 +351,25 @@ class AttackReplacementTestPlanner:
             self._format_stats(parents[0]),
             self._format_stats(parents[1]),
         )
+        if is_intentional_extreme_specialization_parent(
+            self._current_parent,
+            self.rule,
+            enabled=self.allow_extreme_specialization_parent,
+        ):
+            # A deliberately floored parent is the seed of a breeding line, not
+            # a slot to upgrade. Skip it before the panel is even opened: the
+            # candidate list cannot replace what it never sees, and a "purity
+            # preserving" swap still takes the seeded dino out of the nest.
+            self.logger.info(
+                "Hatch %s | side=%s | parent=%s | decision=keep parent"
+                " | reason=deliberate extreme specialization parent is locked",
+                self.rule.tag,
+                self._side_name,
+                self._format_stats(self._current_parent),
+            )
+            self._advance_parent()
+            return None
+
         target_type = PARENT_LEFT if self._side == 0 else PARENT_RIGHT
         self._stage = self._side_stage("open")
         return synthetic_target(
@@ -426,49 +426,6 @@ class AttackReplacementTestPlanner:
                 self._side_name,
                 [primary_of(row, self.rule) for row in raw_rows],
                 [primary_of(row, self.rule) for row in rows],
-            )
-        intentional_extreme_parent = is_intentional_extreme_specialization_parent(
-            self._current_parent,
-            self.rule,
-            enabled=(
-                self.allow_extreme_specialization_parent
-                and not self.prefer_specialization_purity
-                and not self._extreme_specialization_unlocked
-            ),
-        )
-        if intentional_extreme_parent:
-            extreme_rows = [
-                row
-                for row in rows
-                if is_extreme_specialization_candidate(
-                    self._current_parent,
-                    row,
-                    self.rule,
-                )
-            ]
-            if not extreme_rows:
-                self._suspicious_ocr_retries = 0
-                self.logger.info(
-                    "Hatch %s | side=%s | parent=%s | candidates=%s"
-                    " | decision=keep parent"
-                    " | reason=extreme parent requires specialized primary"
-                    " with two low stats",
-                    self.rule.tag,
-                    self._side_name,
-                    self._format_stats(self._current_parent),
-                    [self._format_stats(row) for row in rows],
-                )
-                return self._close_list(frame)
-            rows = extreme_rows
-            self._extreme_specialization_unlock_pending = True
-            self.logger.info(
-                "Hatch OCR | intentional extreme specialization parent allowed"
-                " | side=%s | rule=%s | parent=%s"
-                " | candidates=%s",
-                self._side_name,
-                self.rule.tag,
-                self._format_stats(self._current_parent),
-                [self._format_stats(row) for row in rows],
             )
         conflict = find_primary_ocr_conflict(self._current_parent, rows, self.rule)
         if conflict is not None:
@@ -658,8 +615,6 @@ class AttackReplacementTestPlanner:
             self._partner_parent = None
             self._select_planner = None
             self._suspicious_ocr_retries = 0
-            self._extreme_specialization_unlock_pending = False
-            self._extreme_specialization_unlocked = False
             self._stage = "nest_left"
             self.logger.info(
                 "Hatch %s | nest %d/%d done; advancing to the next nest",
