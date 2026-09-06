@@ -13,6 +13,7 @@ from dino_bot.full_hatch import (
 )
 from dino_bot.hatch_hunt import (
     MAX_ANCHOR_ONLY_HANDOFF_FRAMES,
+    MAX_HANDOFF_PROGRESS_EXTENSIONS,
     HatchHuntPlanner,
 )
 from dino_bot.models import BoundingBox, Detection, Frame, Target, VerificationResult
@@ -448,6 +449,87 @@ def test_handoff_that_never_centers_gives_up_instead_of_toggling_forever() -> No
     assert len(recoveries) == 1
     assert chosen is not None and chosen.type == "hatch_button"
     assert combined._mode == "hatch"
+
+
+def test_verified_step_towards_home_extends_the_handoff_deadline() -> None:
+    """S9 trace: a working exit sequence was guillotined 2s in.
+
+    The exit was planned at 10:28:55, verified at 10:28:57 and the deadline
+    fired at 10:29:04, throwing away progress that was two taps from home.
+    A verified step has to buy the sequence time to finish.
+    """
+
+    now = [0.0]
+    combined, hatch_planner, hunt_planner = planner()
+    combined.clock = lambda: now[0]
+    assert combined.choose(frame(), []) is None
+    hatch_planner.cooldown_ms = 20_000
+    hunt_planner.next_target = target("map_exit_nest_button", 840, 1295)
+    map_view = [detection("map_exit_nest_button", 840, 1295)]
+
+    assert combined.choose(frame(), map_view) is not None
+    assert combined._mode == "handoff"
+
+    # 88 秒後才點到離開鍵並驗證成功:原本再 2 秒就會被砍掉。
+    now[0] = 88.0
+    combined.on_action_success("map_exit_nest_button")
+
+    now[0] = 95.0
+    assert not combined._handoff_expired()
+    assert combined._mode == "handoff"
+
+    # 期限只是延後,不是取消。
+    now[0] = 119.0
+    assert combined._handoff_expired()
+
+
+def test_handoff_extension_is_capped_so_a_toggling_map_still_gives_up() -> None:
+    """A map that keeps tapping without ever centring is still a stall."""
+
+    now = [0.0]
+    combined, hatch_planner, hunt_planner = planner()
+    combined.clock = lambda: now[0]
+    assert combined.choose(frame(), []) is None
+    hatch_planner.cooldown_ms = 20_000
+    hunt_planner.next_target = target("map_exit_nest_button", 840, 1295)
+    map_view = [detection("map_exit_nest_button", 840, 1295)]
+    assert combined.choose(frame(), map_view) is not None
+
+    # 一直在離開/置中之間來回,但永遠到不了首頁。
+    for step in range(10):
+        now[0] = 80.0 + step * 20.0
+        combined.on_action_success("map_exit_nest_button")
+
+    assert combined._handoff_extensions == MAX_HANDOFF_PROGRESS_EXTENSIONS
+
+    recoveries: list[str] = []
+    hatch_planner.begin_home_recovery = lambda reason: recoveries.append(reason) or True
+    hatch_planner.next_target = target("hatch_button", 450, 800)
+    chosen = combined.choose(frame(), map_view)
+
+    assert len(recoveries) == 1
+    assert chosen is not None and chosen.type == "hatch_button"
+    assert combined._mode == "hatch"
+
+
+def test_unrelated_taps_do_not_extend_the_handoff_deadline() -> None:
+    """Only steps towards home count; a hunt tap must not renew the window."""
+
+    now = [0.0]
+    combined, hatch_planner, hunt_planner = planner()
+    combined.clock = lambda: now[0]
+    assert combined.choose(frame(), []) is None
+    hatch_planner.cooldown_ms = 20_000
+    hunt_planner.next_target = target("map_exit_nest_button", 840, 1295)
+    map_view = [detection("map_exit_nest_button", 840, 1295)]
+    assert combined.choose(frame(), map_view) is not None
+
+    now[0] = 88.0
+    combined.on_action_success("dinosaur")
+
+    assert combined._handoff_extensions == 0
+    now[0] = 95.0
+    assert combined._handoff_expired()
 
 
 def test_timed_out_errand_is_abandoned_back_to_hunting() -> None:

@@ -24,6 +24,18 @@ from .planning import HuntPlanner
 # 90s deadline.
 MAX_ANCHOR_ONLY_HANDOFF_FRAMES = 3
 
+# How much of the deadline a verified step towards home buys back.  An S9 trace
+# tapped the exit at 10:28:55, verified it at 10:28:57 and was killed at
+# 10:29:04: a working exit sequence guillotined 2s in.  One step is worth a
+# fresh window, but no more than the deadline itself.
+HANDOFF_PROGRESS_EXTENSION_SECONDS = 30.0
+
+# Total extension a single handoff may earn.  Progress that never arrives at a
+# centred home is still a stall; without this cap a map that alternates exit
+# and recentre taps forever would keep renewing its own deadline, which is the
+# exact silent burn the deadline exists to stop.
+MAX_HANDOFF_PROGRESS_EXTENSIONS = 3
+
 
 class HatchHuntPlanner:
     """Run hunts while a hatch workflow is in its no-ready-egg rescan wait.
@@ -67,6 +79,7 @@ class HatchHuntPlanner:
         self._nest_close_attempts = 0
         self._handoff_deadline: float | None = None
         self._handoff_reason = ""
+        self._handoff_extensions = 0
         # 狩獵閒置差事:狩獵側全目標冷卻時,把空窗拿去收巢蛋。
         self.errand_min_idle_ms = 15_000
         self.errand_margin_ms = 90_000
@@ -263,6 +276,7 @@ class HatchHuntPlanner:
         return method(target_type) if callable(method) else frozenset()
 
     def on_action_success(self, target_type: str) -> None:
+        self._extend_handoff_for_progress(target_type)
         method = getattr(self._action_owner, "on_action_success", None)
         if callable(method):
             method(target_type)
@@ -276,6 +290,9 @@ class HatchHuntPlanner:
     ) -> None:
         method = getattr(self._action_owner, "on_action_success_context", None)
         if callable(method):
+            # ``on_action_success`` is skipped on this path, so the handoff
+            # needs its own credit for the step.
+            self._extend_handoff_for_progress(target.type)
             method(target, frame, detections, result)
             return
         self.on_action_success(target.type)
@@ -452,11 +469,56 @@ class HatchHuntPlanner:
         self._mode = "handoff"
         self._centered_frames = 0
         self._anchor_only_frames = 0
+        self._handoff_extensions = 0
         self._handoff_reason = reason
         self._handoff_deadline = (
             self.clock() + self.handoff_timeout_seconds
             if self.handoff_timeout_seconds
             else None
+        )
+
+    def _handoff_progress_types(self) -> frozenset[str]:
+        """Taps that prove the map is walking back towards the hatch home.
+
+        Read off the hunt planner rather than hardcoded, so a renamed asset
+        cannot silently turn the extension off.
+        """
+
+        return frozenset(
+            {self.hunt.map_exit_type, self.hunt.forest_recenter_type},
+        )
+
+    def _extend_handoff_for_progress(self, target_type: str) -> None:
+        """Give a verified step towards home more time to finish.
+
+        The deadline measures wall clock, not progress, so it cannot tell a
+        map toggling in place apart from one that is two taps from the hatch
+        home.  A verified exit or recentre is proof of the latter, so it buys
+        a fresh window -- capped, because progress that never reaches a centred
+        home is still a stall.
+        """
+
+        if self._mode != "handoff" or self._handoff_deadline is None:
+            return
+        if target_type not in self._handoff_progress_types():
+            return
+        if self._handoff_extensions >= MAX_HANDOFF_PROGRESS_EXTENSIONS:
+            return
+        extended = max(
+            self._handoff_deadline,
+            self.clock() + HANDOFF_PROGRESS_EXTENSION_SECONDS,
+        )
+        if extended <= self._handoff_deadline:
+            return
+        self._handoff_extensions += 1
+        self._handoff_deadline = extended
+        self.logger.info(
+            "Hatch+Hunt | handoff progress via %s | deadline extended %.0fs"
+            " (%d/%d)",
+            target_type,
+            HANDOFF_PROGRESS_EXTENSION_SECONDS,
+            self._handoff_extensions,
+            MAX_HANDOFF_PROGRESS_EXTENSIONS,
         )
 
     def _handoff_expired(self) -> bool:
