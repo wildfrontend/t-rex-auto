@@ -193,7 +193,8 @@
       "click_offset": [
         83,
         39
-      ]
+      ],
+      "match_scale": 0.5
     }
   ],
   "hsv_ranges": [
