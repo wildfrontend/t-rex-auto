@@ -3008,3 +3008,95 @@ def test_cave_estimate_below_trigger_keeps_collect_only_cycle() -> None:
     # 估算 212 < 330，維持一般收蛋循環。
     assert planner._management_pending is False
     assert planner._collect_only_after_empty is True
+
+
+def _edge_home_frame(bar_top: int) -> Frame:
+    """Home map whose pile base sits at ``bar_top``, measured by the cyan bar."""
+
+    image = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    image[bar_top : bar_top + 12, 330:573] = (220, 180, 20)
+    return frame(image)
+
+
+def test_home_recovery_accepts_pile_the_camera_cannot_move_further() -> None:
+    """S9 trace: the map bottomed out 165px short and recovery never converged.
+
+    Every nudge swiped, the map sprang back, and the next measurement returned
+    the same offset until the attempt budget ran out and the run died.  Two
+    stalled corrections now prove the camera is against the edge, so recovery
+    accepts the position instead of failing.
+    """
+
+    planner = HatchHomeRecoveryPlanner()
+    home = [detection(hatch.HOME_ANCHOR, 59, 561)]
+    # 165px short of HOME_PILE_BASE, exactly as the live trace measured.
+    stuck = _edge_home_frame(1285)
+
+    # The map does not move, so every measurement returns the same offset.
+    for _ in range(2):
+        nudge = planner.choose(stuck, home)
+        assert nudge is not None and nudge.type == RECOVERY_RECENTER
+        planner.on_action_success(nudge.type)
+
+    # Two stalled corrections are enough to conclude the map is at its edge.
+    planner.choose(stuck, home)
+    assert planner._camera_at_limit is True
+    # Crucially it did not burn the whole budget nor mark itself failed.
+    assert planner.is_failed() is False
+    assert planner._measured_corrections < planner.max_measured_corrections
+
+    # It must go on to *prove* home rather than merely stop nudging: the run
+    # that crashed did so because recovery never reached a completed state.
+    for _ in range(5):
+        target = planner.choose(stuck, home)
+        if target is not None:
+            planner.on_action_success(target.type)
+    assert planner.is_complete() is True
+    assert planner.is_failed() is False
+
+
+def test_home_recovery_still_corrects_a_camera_that_is_actually_moving() -> None:
+    """A converging camera must not be mistaken for one stuck at the edge."""
+
+    planner = HatchHomeRecoveryPlanner()
+    home = [detection(hatch.HOME_ANCHOR, 59, 561)]
+
+    first = planner.choose(_edge_home_frame(1100), home)
+    assert first is not None and first.type == RECOVERY_RECENTER
+    planner.on_action_success(first.type)
+
+    # The offset shrank by well over the stall threshold: keep correcting.
+    second = planner.choose(_edge_home_frame(1285), home)
+    assert second is not None and second.type == RECOVERY_RECENTER
+    assert planner._camera_at_limit is False
+
+
+def test_cooldown_hunt_queries_survive_a_recovery_child() -> None:
+    """Regression: 0.0.65 died mid-recovery with an AssertionError.
+
+    ``_begin_home_recovery`` swaps in a HatchHomeRecoveryPlanner but left the
+    rescan flag set, so the next cooldown query reached for ``_hatch_child``
+    and asserted.  The flag must clear, and the queries must stay answerable
+    whatever child is installed.
+    """
+
+    planner = FullHatchPlanner(DigitReader(GLYPHS), egg_pile_point=(450, 1330))
+    planner._child = planner._new_hatch()
+    planner._empty_rescan_wait = True
+
+    planner._begin_home_recovery("handoff could not confirm centered home")
+
+    assert planner._empty_rescan_wait is False
+    assert planner.is_hunt_cooldown_active() is False
+    assert planner.hunt_cooldown_delay_ms() == 0
+
+
+def test_cooldown_hunt_queries_tolerate_a_stale_rescan_flag() -> None:
+    """Belt and braces: several stages park a non-hatch child on that flag."""
+
+    planner = FullHatchPlanner(DigitReader(GLYPHS), egg_pile_point=(450, 1330))
+    planner._child = object()
+    planner._empty_rescan_wait = True
+
+    assert planner.is_hunt_cooldown_active() is False
+    assert planner.hunt_cooldown_delay_ms() == 0

@@ -379,6 +379,18 @@ MAX_SCREENING_RECOVERY_FAILURES = 3
 HOME_PILE_BASE: tuple[float, float] = (450.0, 1455.0)
 HOME_PILE_TOLERANCE = 100.0
 
+# `HOME_PILE_BASE` describes where the pile sits when the camera still has room
+# to travel, but the home map has a hard bottom edge.  An S9 trace measured the
+# basin base parked at y~=1290 with the map already scrolled to that edge: the
+# remaining 165px error was unreachable, so four "corrections" each swiped, let
+# the map spring straight back, and re-measured the same offset before recovery
+# gave up and the run died.  A drag that returns the camera to within this many
+# pixels of where it started moved nothing, and repeating it cannot help.
+CAMERA_LIMIT_PROGRESS_PX = 12.0
+# One stalled drag can also be a dropped gesture, so require two in a row
+# before concluding the camera is against its edge.
+MAX_CAMERA_LIMIT_HITS = 2
+
 # The cyan strip above only exists on the upgraded stone basin.  The starter
 # nest is straw on brick with no cyan anywhere, so that account measured
 # nothing at all and every "am I home yet" test answered no forever.  Its base
@@ -1070,6 +1082,10 @@ class HatchHomeRecoveryPlanner:
         self._hunt_dialog_dismissals = 0
         self._measured_corrections = 0
         self._last_offset: tuple[float, float] | None = None
+        self._camera_limit_hits = 0
+        # Set once the camera proves it cannot close the remaining offset, so
+        # the completion gate stops demanding a position the map cannot reach.
+        self._camera_at_limit = False
         self._autoplace_notice_without_no = False
         self._applied_swipes = list(applied_swipes)
         self._applied_offsets: list[tuple[float, float] | None] = [None] * len(applied_swipes)
@@ -1187,7 +1203,14 @@ class HatchHomeRecoveryPlanner:
             )
             self._stage = "recenter_cave_view"
             return self._swipe(RECOVERY_RECENTER, x1, y1, x2, y2, cave_leg=True)
-        if is_centered_home_screen(frame, home_detections) and not _home_pile_click_blocked(
+        # A camera parked against the map edge cannot satisfy the centred
+        # offset, so fall back to the weaker "this really is the home map"
+        # test for it.  The click-blocked guard below still has to pass, which
+        # is what the hatch flow actually depends on.
+        centered = is_centered_home_screen(frame, home_detections)
+        if not centered and self._camera_at_limit:
+            centered = is_home_screen(frame, home_detections)
+        if centered and not _home_pile_click_blocked(
             frame,
             home_detections,
         ):
@@ -1432,7 +1455,29 @@ class HatchHomeRecoveryPlanner:
             and not click_blocked
         ):
             return None
-        if (
+        if self._last_offset is not None and (
+            abs(_hypot(offset) - _hypot(self._last_offset))
+            <= CAMERA_LIMIT_PROGRESS_PX * scale
+        ):
+            # The drag neither improved nor worsened the offset: the map did
+            # not move at all, which on this map means the camera is against
+            # an edge.  Accept the position instead of burning the remaining
+            # attempts on gestures the game will keep springing back, since
+            # everything downstream only needs a stable, unobscured home map.
+            self._camera_limit_hits += 1
+            if self._camera_limit_hits >= MAX_CAMERA_LIMIT_HITS and not click_blocked:
+                self.logger.warning(
+                    "Hatch recovery | camera at map edge; accepting home"
+                    " offset (%.0f,%.0f)px after %d stalled corrections",
+                    offset[0],
+                    offset[1],
+                    self._camera_limit_hits,
+                )
+                self._last_offset = None
+                self._camera_limit_hits = 0
+                self._camera_at_limit = True
+                return None
+        elif (
             self._last_offset is not None
             and _hypot(offset) >= _hypot(self._last_offset)
         ):
@@ -2414,7 +2459,13 @@ class FullHatchPlanner:
         return None if delay is None else math.ceil(delay * 1000)
 
     def hunt_cooldown_delay_ms(self) -> int:
-        return self._hatch_child.next_ready_delay_ms() if self._empty_rescan_wait else 0
+        # Same stale-flag hazard as `is_hunt_cooldown_active`: report "no
+        # cooldown" rather than assert when a non-hatch child is installed.
+        if not self._empty_rescan_wait:
+            return 0
+        if not isinstance(self._child, hatch_feature.HatchPlanner):
+            return 0
+        return self._child.next_ready_delay_ms()
 
     def defer_boost_visit(self, reason: str) -> None:
         if self.boost_inventory is not None:
@@ -2482,10 +2533,16 @@ class FullHatchPlanner:
     def is_hunt_cooldown_active(self) -> bool:
         """Whether the no-ready-egg cooldown can be spent hunting."""
 
+        # `_empty_rescan_wait` only describes a countdown a HatchPlanner owns.
+        # Several stages park a non-hatch child (recovery, My Nest, cave) while
+        # that flag is still set, so prove the child before reading it rather
+        # than asserting on it: a stale flag must answer "no cooldown to hunt",
+        # not crash the run.
         return (
             self._empty_rescan_wait
             and self._boost_visit is None
-            and self._hatch_child.next_ready_delay_ms() > 0
+            and isinstance(self._child, hatch_feature.HatchPlanner)
+            and self._child.next_ready_delay_ms() > 0
         )
 
     def begin_interim_collection(self) -> bool:
@@ -3055,13 +3112,19 @@ class FullHatchPlanner:
                 return None
             if visit.failed:
                 self._begin_home_recovery("cooldown boost visit could not return home")
-            elif visit.used and self._empty_rescan_wait:
+            elif (
+                visit.used
+                and self._empty_rescan_wait
+                and isinstance(self._child, hatch_feature.HatchPlanner)
+            ):
                 # The boost changed the egg timer; discard the old wait if no
                 # new timer could be read, so the next hatch pass rechecks it.
+                # A boost can also start from a non-hatch panel, so the child
+                # only owns a rescan wait when it is really a HatchPlanner.
                 remaining = max(
                     0.0, (self._observed_cooldown_until or self.clock()) - self.clock()
                 )
-                self._hatch_child.begin_rescan_wait(
+                self._child.begin_rescan_wait(
                     "cooldown boost updated egg timer", seconds=remaining
                 )
                 self._observed_cooldown_until = None
@@ -3639,6 +3702,12 @@ class FullHatchPlanner:
             logger=self.logger,
             applied_swipes=history,
         )
+        # Recovery replaces the HatchPlanner that owns the rescan countdown, so
+        # the cooldown-hunting window has to close with it.  Leaving the flag
+        # set let `is_hunt_cooldown_active` reach for `_hatch_child` while a
+        # HatchHomeRecoveryPlanner was installed, which asserted and killed the
+        # whole run mid-recovery.
+        self._empty_rescan_wait = False
         self._no_target_since = None
         self._recovery_reason = reason
 
