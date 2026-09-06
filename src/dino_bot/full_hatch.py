@@ -172,6 +172,11 @@ SCREENING_STAGES: tuple[str, ...] = ("attack", "hp", "top", "mass")
 FULL_HATCH_STAGES: frozenset[str] = frozenset(
     {*SCREENING_STAGES, "collect", "cave", "hatch"}
 )
+# What the default hatch+hunt cycle runs when no explicit stage list is given.
+# Mass placement is deliberately absent: it is the least valuable screening
+# pass per minute spent, and every stage delays the first hunt of a session.
+# It stays in FULL_HATCH_STAGES so the custom workflow can still select it.
+DEFAULT_FULL_HATCH_STAGES: frozenset[str] = FULL_HATCH_STAGES - {"mass"}
 
 PLACE_SORT_BEST = "hatch_place_sort_best"
 PLACE_SORT_LEVEL = "hatch_place_sort_level"
@@ -2322,7 +2327,9 @@ class FullHatchPlanner:
             raise ValueError(f"unsupported standalone hatch stage: {standalone_stage}")
         self.standalone_stage = standalone_stage
         selected_stages = (
-            FULL_HATCH_STAGES if enabled_stages is None else frozenset(enabled_stages)
+            DEFAULT_FULL_HATCH_STAGES
+            if enabled_stages is None
+            else frozenset(enabled_stages)
         )
         unknown_stages = selected_stages - FULL_HATCH_STAGES
         if unknown_stages:

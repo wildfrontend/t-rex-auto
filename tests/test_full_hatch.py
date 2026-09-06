@@ -51,6 +51,8 @@ from dino_bot.full_hatch import (
     RECOVERY_NO,
     RECOVERY_RECENTER,
     RECOVERY_UNDO,
+    DEFAULT_FULL_HATCH_STAGES,
+    FULL_HATCH_STAGES,
     SCREENING_STAGES,
     SELECT_CHOOSE_BUTTON,
     SELECT_WEAKEST_BUTTON,
@@ -347,7 +349,15 @@ def test_full_hatch_schedules_top_and_mass_before_collect() -> None:
     assert "top" not in STANDALONE_STAGES
     assert "mass" not in STANDALONE_STAGES
 
-    planner = make_full_planner()
+    # Mass is off in the default cycle, so ask for it explicitly: this test
+    # covers the top -> mass -> collect ordering machinery, which still has to
+    # work for anyone who selects mass in the custom workflow.
+    planner = FullHatchPlanner(
+        DigitReader(GLYPHS),
+        egg_pile_point=(450, 1330),
+        max_scrolls=0,
+        enabled_stages=FULL_HATCH_STAGES,
+    )
     planner._management_pending = True
     planner._screening_completed = {"attack", "hp"}
     planner._start_next_screening_stage()
@@ -1416,7 +1426,8 @@ def test_cleanup_gate_reopens_nest_when_one_screening_stage_is_missing() -> None
 
     assert target is not None and target.type == OPEN_NEST
     assert target.type != CAVE_SWIPE
-    assert planner._missing_screening_stages() == ("hp", "top", "mass")
+    # Mass is not part of the default cycle, so it is not owed here either.
+    assert planner._missing_screening_stages() == ("hp", "top")
 
 
 def test_cleanup_gate_allows_cave_only_after_every_screening_stage() -> None:
@@ -3100,3 +3111,34 @@ def test_cooldown_hunt_queries_tolerate_a_stale_rescan_flag() -> None:
 
     assert planner.is_hunt_cooldown_active() is False
     assert planner.hunt_cooldown_delay_ms() == 0
+
+
+def test_default_hatch_cycle_skips_mass_placement() -> None:
+    """Mass placement is off by default but still selectable on request.
+
+    It is the least valuable screening pass per minute spent, and every stage
+    delays the first hunt of a session.  Removing it from the default must not
+    remove the capability, nor leave the cleanup gate waiting on a stage that
+    can never run.
+    """
+
+    assert "mass" in FULL_HATCH_STAGES
+    assert "mass" not in DEFAULT_FULL_HATCH_STAGES
+    # Nothing else was dropped along with it.
+    assert FULL_HATCH_STAGES - DEFAULT_FULL_HATCH_STAGES == {"mass"}
+
+    planner = make_full_planner()
+    assert planner._screening_stages == ("attack", "hp", "top")
+    # The cleanup gate must stay satisfiable: it can only ever owe these three.
+    assert planner._missing_screening_stages() == ("attack", "hp", "top")
+    planner._screening_completed = {"attack", "hp", "top"}
+    assert planner._missing_screening_stages() == ()
+
+    # The custom workflow can still ask for it by name.
+    explicit = FullHatchPlanner(
+        DigitReader(GLYPHS),
+        egg_pile_point=(450, 1330),
+        max_scrolls=0,
+        enabled_stages=("hatch", "collect", "mass"),
+    )
+    assert explicit._screening_stages == ("mass",)

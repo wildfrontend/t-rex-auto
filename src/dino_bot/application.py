@@ -307,6 +307,21 @@ def _build_hunt_planner(config: AppConfig) -> HuntPlanner:
     )
 
 
+def _format_default_stages() -> str:
+    """Name the stages the default hatch cycle really runs, in run order.
+
+    Derived from the constant rather than spelled out, so a banner can never
+    advertise a stage the planner has stopped running.
+    """
+
+    order = (*full_hatch_feature.SCREENING_STAGES, "collect", "cave")
+    return ",".join(
+        stage
+        for stage in ("hatch", *order)
+        if stage in full_hatch_feature.DEFAULT_FULL_HATCH_STAGES
+    )
+
+
 def _create_hatch_engine(
     config: AppConfig,
     *,
@@ -350,13 +365,14 @@ def _create_hatch_engine(
     elif hunt_during_cooldown:
         logger.info(
             "Feature | hatch-hunt | full hatch + hunt during cooldown"
-            " | handoff=30s | cull>%d",
+            " | stages=%s | handoff=30s | cull>%d",
+            _format_default_stages(),
             hatch.cull_threshold,
         )
     elif full:
         logger.info(
-            "Feature | hatch-full | hatch -> Attack -> HP"
-            " -> Top(best) -> Mass(level) -> collect -> cave | cull>%d",
+            "Feature | hatch-full | stages=%s | cull>%d",
+            _format_default_stages(),
             hatch.cull_threshold,
         )
     elif hp_test:
