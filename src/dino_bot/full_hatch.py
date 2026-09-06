@@ -2456,8 +2456,7 @@ class FullHatchPlanner:
             return 0
         method = getattr(self._child, "next_ready_delay_ms", None)
         delay = int(method()) if callable(method) else 0
-        boost_delay = self.boost_ready_delay_ms()
-        return min(delay, boost_delay) if boost_delay is not None else delay
+        return delay
 
     def boost_ready_delay_ms(self) -> int | None:
         if self.boost_inventory is None or self.standalone_stage is not None:
@@ -2478,8 +2477,8 @@ class FullHatchPlanner:
         if self.boost_inventory is not None:
             self.boost_inventory.defer(reason)
 
-    def begin_boost_visit(self) -> bool:
-        """Start a use-only visit after the caller has proved centered home.
+    def begin_boost_visit(self, *, keep_incubator_open: bool = False) -> bool:
+        """Check boost eligibility on a proven home or incubator screen.
 
         Capacity/calibration fuses belong to hatching. This visit never clears
         them and never runs a hatch, collection, screening or cull action.
@@ -2492,6 +2491,7 @@ class FullHatchPlanner:
         self._observed_cooldown_until = None
         self._boost_visit = CooldownBoostVisit(
             self.boost_inventory, clock=self.clock, logger=self.logger,
+            keep_incubator_open=keep_incubator_open,
         )
         return True
 
@@ -3076,27 +3076,23 @@ class FullHatchPlanner:
             if interruption is not None:
                 self._no_target_since = None
                 return detection_target(interruption)
-        # Interrupt only at a measured home/incubator boundary. The original
-        # child and screening checklist remain intact throughout the visit.
-        # This also runs before generic dialog handling: only this visit owns
-        # the confirmation raised by its verified boost-button action.
+        # Check boosts during a normal incubator visit, after ready eggs.
+        # Keep the panel open so the child can finish its scan and read timers.
+        # Only this check owns a confirmation raised by its boost-button action.
         if self._boost_visit is None and self.boost_ready_delay_ms() == 0:
-            safe_home = (
-                self._stage in {"hatch", "open_nest"}
-                and is_centered_home_screen(frame, detections)
-            )
             safe_panel = (
                 self._stage == "hatch"
                 and hatch_feature.INCUBATOR_TITLE in by_type
                 and hatch_feature.CLOSE_BUTTON in by_type
                 and not any(key in by_type for key in (
                     CONFIRM_YES, CONFIRM_NO, hatch_feature.CLAIM_BUTTON,
-                    hatch_feature.EXPEL_BUTTON,
+                    hatch_feature.EXPEL_BUTTON, hatch_feature.HATCH_LABEL,
+                    hatch_feature.HATCH_BUTTON,
                 ))
                 and _unready_egg_detail_close(frame) is None
             )
-            if safe_home or safe_panel:
-                self.begin_boost_visit()
+            if safe_panel:
+                self.begin_boost_visit(keep_incubator_open=True)
         if self._boost_visit is not None:
             visit = self._boost_visit
             target = visit.choose(
@@ -3966,7 +3962,10 @@ class FullHatchPlanner:
     ) -> None:
         if hatch_feature.INCUBATOR_TITLE not in by_type:
             return
-        if by_type.get(hatch_feature.HATCH_LABEL):
+        if any(key in by_type for key in (
+            CONFIRM_YES, CONFIRM_NO, hatch_feature.CLAIM_BUTTON,
+            hatch_feature.EXPEL_BUTTON, hatch_feature.HATCH_BUTTON,
+        )):
             return
         seconds = hatch_feature.read_hatch_cooldown_seconds(
             frame.image,

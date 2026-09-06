@@ -29,6 +29,7 @@ class CooldownBoostVisit:
         self, inventory: HatchBoostInventoryStore, *,
         clock: Callable[[], float] = time.monotonic,
         logger: logging.Logger | None = None,
+        keep_incubator_open: bool = False,
     ) -> None:
         self.inventory = inventory
         self.clock = clock
@@ -39,7 +40,11 @@ class CooldownBoostVisit:
         self.failed = False
         self.used = False
         self.confirm_sent = False
-        self.logger.info("Cooldown boost | scheduled visit starting")
+        self.keep_incubator_open = keep_incubator_open
+        self.logger.info(
+            "Cooldown boost | %s",
+            "incubator check starting" if keep_incubator_open else "scheduled visit starting",
+        )
 
     def finish(self, reason: str) -> None:
         if self.phase == "close":
@@ -94,6 +99,9 @@ class CooldownBoostVisit:
         if self.phase == "close":
             if no is not None:
                 return synthetic_target(BOOST_CANCEL, no.x, no.y)
+            if panel and self.keep_incubator_open:
+                self.complete = True
+                return None
             if panel and close is not None:
                 return synthetic_target(BOOST_CLOSE, close.x, close.y)
             if home_centered:
@@ -115,9 +123,15 @@ class CooldownBoostVisit:
         if panel:
             if delay != 0:
                 self.finish("use is no longer due")
+                if self.keep_incubator_open:
+                    self.complete = True
+                    return None
                 return synthetic_target(BOOST_CLOSE, close.x, close.y)
             if not button_ready:
-                self.finish("加速仍生效或按鈕不可用，60 秒後複查")
+                self.finish("加速仍生效或按鈕不可用，下次正常開啟孵化器時複查")
+                if self.keep_incubator_open:
+                    self.complete = True
+                    return None
                 return synthetic_target(BOOST_CLOSE, close.x, close.y)
             return synthetic_target(BOOST_BUTTON, *button_point)
         if home_centered and home_point is not None:

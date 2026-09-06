@@ -288,6 +288,7 @@ def _workflow_status(logs_dir: Path, mode: str | None) -> dict[str, Any]:
                 stage, label = "hunt", "狩獵"
         elif (
             "Cooldown boost | scheduled visit starting" in message
+            or "Cooldown boost | incubator check starting" in message
             or "Cooldown boost | due during hunt" in message
         ):
             if before_boost is None:
@@ -1812,7 +1813,7 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                     "action": action,
                     "inventory": inventory.as_dict(),
                     "message": (
-                        "下一輪孵化將使用冷卻加速券"
+                        "已開啟：正常進入孵化器時檢查加速券，不中斷狩獵"
                         if enabled
                         else "已關閉冷卻加速券使用"
                     ),

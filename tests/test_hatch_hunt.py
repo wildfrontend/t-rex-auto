@@ -308,117 +308,48 @@ def test_handoff_arms_optional_home_collection_before_resuming_hatch() -> None:
     assert chosen is not None and chosen.type == "collect_after_home"
 
 
-def test_boost_deadline_interrupts_hunt_without_starting_collection() -> None:
-    combined, hatch_planner, hunt_planner = planner(cooldown_ms=3_600_000)
-    boost_delay = [30_000]
-    hatch_planner.boost_ready_delay_ms = lambda: boost_delay[0]
-    calls = []
-    hatch_planner.begin_home_collection = lambda: calls.append(True)
+@pytest.mark.parametrize("boost_delay", [0, 30_000])
+def test_boost_deadline_does_not_interrupt_hunt_or_shorten_wait(boost_delay):
+    combined, full, hunt = planner(cooldown_ms=3_600_000)
+    full.boost_ready_delay_ms = lambda: boost_delay
+    hunt.next_target = target("dinosaur", 300, 700)
     combined.choose(frame(), [])
-    hunt_planner.delay_ms = 600_000
-    assert combined.next_ready_delay_ms() == 30_000
-    boost_delay[0] = 0
-    hatch_planner.next_target = target("hatch_cooldown_boost_open", 450, 1330)
-    centered = [detection(hatch.HOME_ANCHOR, 59, 561)]
-    assert combined.choose(frame(), centered) is None
-    assert combined._handoff_reason == "boost"
-    chosen = combined.choose(frame(), centered)
-    assert chosen.type == "hatch_cooldown_boost_open"
-    assert not calls
-    assert hatch_planner.cooldown_ms == 3_600_000
-
-
-def test_boost_handoff_timeout_defers_and_resumes_hunt() -> None:
-    combined, hatch_planner, hunt_planner = planner(cooldown_ms=3_600_000)
-    now = [1000.0]
-    combined.clock = lambda: now[0]
-    deferred = []
-    hatch_planner.boost_ready_delay_ms = lambda: 0
-    hatch_planner.defer_boost_visit = deferred.append
-    combined.choose(frame(), [])
-    combined.choose(frame(), [])
-    assert combined._handoff_reason == "boost"
-    now[0] += 91
-    hunt_planner.next_target = target("dinosaur", 300, 700)
     assert combined.choose(frame(), []).type == "dinosaur"
-    assert deferred and combined._mode == "hunt"
-    assert hatch_planner.cooldown_ms == 3_600_000
+    assert combined._mode == "hunt"
+    hunt.delay_ms = 60_000
+    assert combined.next_ready_delay_ms() == 60_000
+    assert not hunt.recenter_requests
+    full.cooldown_ms = 0
+    combined.choose(frame(), [])
+    assert combined._mode == "handoff"
+    assert combined._handoff_reason == "cooldown"
 
 
 @pytest.mark.parametrize("fuse", ["_egg_pile_blocked", "_screening_blocked", "_capacity_blocked"])
-@pytest.mark.parametrize("available", [True, False])
-def test_blocked_hatch_still_visits_boost_and_returns_to_hunt(tmp_path, fuse, available):
-    from dino_bot.cooldown_boost import BOOST_BUTTON, BOOST_CLOSE, BOOST_CONFIRM, BOOST_OPEN
+def test_blocked_hatch_does_not_leave_hunt_for_boost(tmp_path, fuse):
     from dino_bot.digits import DigitReader
     from dino_bot.full_hatch import FullHatchPlanner
     from dino_bot.hatch_inventory import HatchBoostInventoryStore
-    from dino_bot.overlays import CONFIRM_NO, CONFIRM_YES
 
-    now = [10_000.0]
-    inventory = HatchBoostInventoryStore(tmp_path / "stats.sqlite3", clock=lambda: now[0])
+    inventory = HatchBoostInventoryStore(tmp_path / "stats.sqlite3")
     inventory.set_enabled(True)
     full = FullHatchPlanner(
         DigitReader(Path(__file__).parents[1] / "assets/hatch/digits"),
-        egg_pile_point=(450, 1330), boost_inventory=inventory, clock=lambda: now[0],
+        egg_pile_point=(450, 1330), boost_inventory=inventory,
     )
     setattr(full, fuse, True)
     full._stage = "hatch_blocked"
-    full._screening_completed = {"attack", "hp"}
-    original_child = full._child
+    child = full._child
     hunt = StubHunt()
     hunt.next_target = target("dinosaur", 300, 700)
-    combined = HatchHuntPlanner(full, hunt, clock=lambda: now[0])
-    combined._mode = "hunt"
-    home = [detection(hatch.HOME_ANCHOR, 59, 561)]
-    panel = [detection(hatch.INCUBATOR_TITLE, 450, 40), detection(hatch.CLOSE_BUTTON, 800, 1380)]
-    assert not combined.is_complete()
-    assert combined.choose(frame(), home) is None
-    assert combined._handoff_reason == "boost"
-    assert combined.choose(frame(), home).type == BOOST_OPEN
-    assert combined.workflow_status()["stage"] == "cooldown_boost"
-    assert combined.workflow_status()["hatch_blocked"] is True
-    combined.on_action_success(BOOST_OPEN)
-    if available:
-        ready = frame()
-        ready.image[1355:1405, 380:520] = (0, 140, 255)
-        assert combined.choose(ready, panel).type == BOOST_BUTTON
-        combined.on_action_success(BOOST_BUTTON)
-        prompt = panel + [detection(CONFIRM_YES, 365, 850), detection(CONFIRM_NO, 535, 850)]
-        assert combined.choose(ready, prompt).type == BOOST_CONFIRM
-        combined.on_action_success(BOOST_CONFIRM)
-    assert combined.choose(frame(), panel).type == BOOST_CLOSE
-    combined.on_action_success(BOOST_CLOSE)
-    assert combined.choose(frame(), home).type == "dinosaur"
-    assert combined._mode == "hunt"
-    assert full._child is original_child
-    assert full._stage == "hatch_blocked"
-    assert full._screening_completed == {"attack", "hp"}
-    assert getattr(full, fuse)
-    assert combined.workflow_status()["stage"] == "hatch_blocked_hunt"
-    assert inventory.snapshot().remaining == (99 if available else 100)
-    delay = 1800 if available else 60
     hunt.delay_ms = 3_600_000
-    assert combined.next_ready_delay_ms() == delay * 1000
-    now[0] += delay
-    assert combined.choose(frame(), home) is None
-    assert combined._handoff_reason == "boost"
-
-
-def test_blocked_hatch_boost_handoff_timeout_keeps_fuse_and_hunting():
-    combined, full, hunt = planner(cooldown_ms=0)
-    full.blocked = True
-    now = [0.0]
-    combined.clock = lambda: now[0]
+    combined = HatchHuntPlanner(full, hunt)
     combined._mode = "hunt"
-    full.boost_ready_delay_ms = lambda: 0
-    deferred = []
-    full.defer_boost_visit = deferred.append
-    assert combined.choose(frame(), []) is None
-    now[0] += 91
-    hunt.next_target = target("dinosaur", 300, 700)
     assert combined.choose(frame(), []).type == "dinosaur"
-    assert deferred and full.blocked
+    assert combined.next_ready_delay_ms() == 3_600_000
     assert combined.workflow_status()["stage"] == "hatch_blocked_hunt"
+    assert full._child is child and getattr(full, fuse)
+    assert inventory.snapshot().remaining == 100
 
 
 def test_startup_interruption_during_hunt_restarts_hatch_first() -> None:

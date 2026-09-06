@@ -173,8 +173,8 @@ function render(data) {
   const boostEnabled = inventory.enabled === true;
   $("boostEnabled").checked = boostEnabled;
   $("boostEnabledLabel").textContent = boostEnabled
-    ? "每 30 分鐘自動使用：開啟"
-    : "每 30 分鐘自動使用：關閉";
+    ? "孵化時自動檢查加速：開啟"
+    : "孵化時自動檢查加速：關閉";
   const boostWait = Math.max(0, Math.ceil(Number(inventory.next_check_at || 0) - Date.now() / 1000));
   $("boostSchedule").textContent = !boostEnabled
     ? "已關閉自動使用"
@@ -183,8 +183,8 @@ function render(data) {
     : !["hatch-hunt", "custom-workflow", "hatch-full"].includes(data.active.feature)
       ? "適用於自動孵蛋與自訂循環模式"
     : boostWait > 0
-      ? `下次檢查：${Math.floor(boostWait / 60)} 分 ${boostWait % 60} 秒${inventory.waiting_reason ? `（${inventory.waiting_reason}）` : ""}`
-      : "已到期，等待安全切換至孵化器";
+      ? `最早可再檢查：${Math.floor(boostWait / 60)} 分 ${boostWait % 60} 秒${inventory.waiting_reason ? `（${inventory.waiting_reason}）` : ""}`
+      : "等待正常開啟孵化器時檢查（不中斷狩獵）";
   if (document.activeElement !== $("boostStockInput")) {
     $("boostStockInput").value = stock;
   }
@@ -497,7 +497,7 @@ $("boostEnabled").addEventListener("change", async () => {
   checkbox.disabled = true;
   result.classList.remove("error");
   result.textContent = checkbox.checked
-    ? "開啟每 30 分鐘自動使用加速券…"
+    ? "開啟孵化時自動檢查加速券…"
     : "關閉加速券使用…";
   try {
     const suffix = selectedInstanceId ? `?instance=${encodeURIComponent(selectedInstanceId)}` : "";

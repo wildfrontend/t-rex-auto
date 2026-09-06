@@ -1697,7 +1697,7 @@ def test_boost_skipped_while_countdown_bar_is_gray(tmp_path) -> None:
     # The default frame keeps the bar desaturated (active countdown): the
     # planner must fall through instead of pressing the dead button.
     target = planner.choose(frame(), grid)
-    assert target is not None and target.type == "hatch_cooldown_boost_close"
+    assert target is not None and target.type == hatch.CLOSE_BUTTON
     assert 0 < inventory.ready_delay_seconds() <= 60
     assert inventory.snapshot().remaining == 100
 
@@ -1745,8 +1745,10 @@ def test_scheduled_visit_preserves_child_and_refreshes_egg_wait(tmp_path, monkey
     home = [detection(hatch.HOME_ANCHOR, 59, 561)]
     panel = [detection(hatch.INCUBATOR_TITLE, 450, 40), detection(hatch.CLOSE_BUTTON, 800, 1380)]
     prompt = panel + [detection(CONFIRM_YES, 365, 850), detection(CONFIRM_NO, 535, 850)]
-    assert planner.next_ready_delay_ms() == 0
+    assert planner.next_ready_delay_ms() == 3_600_000
     assert planner.hunt_cooldown_delay_ms() == 3_600_000
+    assert planner.choose(frame(), home) is None
+    assert planner.begin_boost_visit()
     assert planner.choose(frame(), home).type == "hatch_cooldown_boost_open"
     assert planner.choose(boost_ready_frame(), panel).type == HATCH_BOOST_BUTTON
     planner.on_action_success(HATCH_BOOST_BUTTON)
@@ -1777,7 +1779,7 @@ def test_interim_collection_preserves_egg_deadline_when_boost_is_due_sooner(tmp_
     )
     planner._empty_rescan_wait = True
     planner._child.begin_rescan_wait("existing egg cooldown", seconds=3600)
-    assert planner.next_ready_delay_ms() == 1_800_000
+    assert planner.next_ready_delay_ms() == 3_600_000
     assert planner.begin_interim_collection()
     assert planner._observed_cooldown_until == 13_600
     assert planner.abort_interim_collection("test returning from errand")
@@ -3142,3 +3144,47 @@ def test_default_hatch_cycle_skips_mass_placement() -> None:
         enabled_stages=("hatch", "collect", "mass"),
     )
     assert explicit._screening_stages == ("mass",)
+
+
+@pytest.mark.parametrize("ready", [False, True])
+def test_incubator_hatches_ready_eggs_and_reads_timer_before_inline_boost(
+    tmp_path, monkeypatch, ready,
+):
+    now = [10_000.0]
+    inventory = HatchBoostInventoryStore(tmp_path / "stats.sqlite3", clock=lambda: now[0])
+    inventory.set_enabled(True)
+    planner = FullHatchPlanner(
+        DigitReader(GLYPHS), egg_pile_point=(450, 1330),
+        boost_inventory=inventory, clock=lambda: now[0],
+    )
+    planner._capacity_checked = True
+    planner._screening_completed = {"attack", "hp", "top"}
+    child = planner._child
+    monkeypatch.setattr(hatch, "read_hatch_cooldown_seconds", lambda *a, **kw: 600)
+    panel = [detection(hatch.INCUBATOR_TITLE, 450, 40), detection(hatch.CLOSE_BUTTON, 800, 1380)]
+    ready_egg = panel + [detection(hatch.HATCH_LABEL, 270, 436)]
+    screen = boost_ready_frame() if ready else frame()
+    chosen = planner.choose(screen, ready_egg)
+    assert chosen.type == hatch.HATCH_LABEL
+    assert planner._observed_cooldown_until == 10_600
+    assert not planner.boost_visit_active()
+    planner.on_action_success(chosen.type)
+    assert planner.choose(screen, [detection(hatch.HATCH_BUTTON, 450, 1185)]).type == hatch.HATCH_BUTTON
+    planner.on_action_success(hatch.HATCH_BUTTON)
+    assert planner.choose(screen, [detection(hatch.CLAIM_BUTTON, 330, 1242)]).type == hatch.CLAIM_BUTTON
+    planner.on_action_success(hatch.CLAIM_BUTTON)
+    assert child.hatched == 1
+    if ready:
+        assert planner.choose(screen, panel).type == HATCH_BOOST_BUTTON
+        planner.on_action_success(HATCH_BOOST_BUTTON)
+        prompt = panel + [detection(CONFIRM_YES, 365, 850), detection(CONFIRM_NO, 535, 850)]
+        assert planner.choose(screen, prompt).type == HATCH_BOOST_CONFIRM
+        planner.on_action_success(HATCH_BOOST_CONFIRM)
+        monkeypatch.setattr(hatch, "read_hatch_cooldown_seconds", lambda *a, **kw: 300)
+    chosen = planner.choose(frame(), panel)
+    assert chosen.type == hatch.CLOSE_BUTTON
+    assert not planner.boost_visit_active()
+    assert planner._child is child
+    assert planner._screening_completed == {"attack", "hp", "top"}
+    assert planner._observed_cooldown_until == (10_300 if ready else 10_600)
+    assert inventory.snapshot().remaining == (99 if ready else 100)

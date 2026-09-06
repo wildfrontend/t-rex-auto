@@ -104,3 +104,21 @@ def test_visit_and_return_timeouts_are_bounded(setup_visit):
     assert choose(visit, []) is None
     assert visit.complete and visit.failed
     assert inventory.snapshot().remaining == 100
+
+
+@pytest.mark.parametrize("ready", [False, True])
+def test_inline_check_returns_open_incubator_without_navigation(setup_visit, ready):
+    _, inventory, now = setup_visit
+    visit = CooldownBoostVisit(
+        inventory, clock=lambda: now[0], keep_incubator_open=True,
+    )
+    if ready:
+        assert choose(visit).type == BOOST_BUTTON
+        visit.on_action_success(BOOST_BUTTON)
+        assert choose(visit, PROMPT).type == BOOST_CONFIRM
+        visit.on_action_success(BOOST_CONFIRM)
+    assert choose(visit, ready=False) is None
+    assert visit.complete and not visit.failed
+    assert inventory.snapshot().remaining == (99 if ready else 100)
+    choose(visit, ready=False)
+    assert inventory.snapshot().remaining == (99 if ready else 100)
