@@ -17,6 +17,13 @@ from .models import Detection, Frame, Target, VerificationResult
 from .parent_open import NEST_TITLE
 from .planning import HuntPlanner
 
+# How many consecutive handoff frames may show only the hunt map's centre egg
+# before the handoff stops waiting and leaves the map by its own controls.
+# Detection runs at roughly one frame every 2-6s here, so a few frames absorb a
+# genuinely transient miss while capping the stall at seconds, not the full
+# 90s deadline.
+MAX_ANCHOR_ONLY_HANDOFF_FRAMES = 3
+
 
 class HatchHuntPlanner:
     """Run hunts while a hatch workflow is in its no-ready-egg rescan wait.
@@ -53,6 +60,10 @@ class HatchHuntPlanner:
         self._mode = "hatch"
         self._action_owner: Any = None
         self._centered_frames = 0
+        # Consecutive handoff frames whose only home-ish proof was the hunt
+        # map's centre egg.  Bounded so a centred map cannot stall the handoff
+        # for its whole deadline.
+        self._anchor_only_frames = 0
         self._nest_close_attempts = 0
         self._handoff_deadline: float | None = None
         self._handoff_reason = ""
@@ -478,6 +489,7 @@ class HatchHuntPlanner:
     def _enter_handoff(self, reason: str) -> None:
         self._mode = "handoff"
         self._centered_frames = 0
+        self._anchor_only_frames = 0
         self._handoff_reason = reason
         self._handoff_deadline = (
             self.clock() + self.handoff_timeout_seconds
@@ -589,8 +601,20 @@ class HatchHuntPlanner:
         self._centered_frames = 0
         # A centred hunt egg with a temporarily missed hatch HUD anchor is
         # already safe; wait for the second proof instead of leaving the map.
+        #
+        # Only briefly, though.  The hunt map's centre egg proves the map is
+        # in a normal state, never that the hatch home is reachable, so a map
+        # parked with that egg centred satisfies this test on every frame: an
+        # S9 trace sat 13px from centre and burned the whole 90s deadline in a
+        # 152s loop (91s stalled, 61s hunting) while the nest button it needed
+        # was visible at 0.957 the entire time.  Wait out a transient miss,
+        # then fall through to the map-exit path below.
         if center_anchor is not None:
-            return None
+            self._anchor_only_frames += 1
+            if self._anchor_only_frames <= MAX_ANCHOR_ONLY_HANDOFF_FRAMES:
+                return None
+        else:
+            self._anchor_only_frames = 0
 
         hunt_controls = any(
             item.type in self.hunt.hunt_button_types for item in detections

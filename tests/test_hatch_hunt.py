@@ -11,7 +11,10 @@ from dino_bot.full_hatch import (
     STARTUP_GROWTH_RESULT,
     STARTUP_NEST_SHORTCUT,
 )
-from dino_bot.hatch_hunt import HatchHuntPlanner
+from dino_bot.hatch_hunt import (
+    MAX_ANCHOR_ONLY_HANDOFF_FRAMES,
+    HatchHuntPlanner,
+)
 from dino_bot.models import BoundingBox, Detection, Frame, Target, VerificationResult
 from dino_bot.parent_open import NEST_TITLE
 
@@ -559,3 +562,57 @@ def test_nest_panel_that_never_closes_hands_back_to_hatch_recovery() -> None:
     chosen = combined.choose(frame(), panel)
     assert chosen is not None and chosen.type == "hatch_button"
     assert combined._mode == "hatch"
+
+
+def test_handoff_leaves_a_map_parked_with_its_centre_egg_centred() -> None:
+    """S9 trace: a centred hunt egg stalled every handoff for its full deadline.
+
+    The centre egg proves the hunt map is in a normal state, never that the
+    hatch home is reachable, so a map parked with it centred satisfied the
+    "wait one more frame" test on every frame.  The observed run sat 13px from
+    centre and burned 90s per handoff in a 152s loop (91s stalled, 61s
+    hunting) while the nest button it needed was visible the whole time.
+    """
+
+    combined, hatch_planner, hunt_planner = planner()
+    assert combined.choose(frame(), []) is None
+    hatch_planner.cooldown_ms = 20_000
+    hunt_planner.next_target = target("map_exit_nest_button", 840, 1295)
+    # The measured live frame: egg centre (450, 787) on a 900x1600 screen is
+    # 13px from centre, and the nest button is visible alongside it.
+    parked = [
+        detection("map_center_egg", 450, 787),
+        detection("map_exit_nest_button", 840, 1295),
+        detection("mailbox_button", 841, 1208),
+    ]
+
+    # A brief wait is still allowed: a transient missed HUD anchor is normal.
+    for _ in range(MAX_ANCHOR_ONLY_HANDOFF_FRAMES):
+        assert combined.choose(frame(), parked) is None
+
+    # But it must then leave the map by its own controls rather than waiting
+    # out the deadline.
+    chosen = combined.choose(frame(), parked)
+    assert chosen is not None and chosen.type == "map_exit_nest_button"
+    assert hunt_planner.recenter_requests == ["hatch cooldown handoff"]
+
+
+def test_handoff_anchor_wait_resets_when_the_egg_leaves_the_centre() -> None:
+    """The bounded wait is for consecutive frames, not a lifetime budget."""
+
+    combined, hatch_planner, hunt_planner = planner()
+    assert combined.choose(frame(), []) is None
+    hatch_planner.cooldown_ms = 20_000
+    hunt_planner.next_target = target("map_exit_nest_button", 840, 1295)
+    centred = [detection("map_center_egg", 450, 787)]
+    off_centre = [
+        detection("map_center_egg", 450, 200),
+        detection("map_exit_nest_button", 840, 1295),
+    ]
+
+    assert combined.choose(frame(), centred) is None
+    # An off-centre egg is not the stalling case, so the streak restarts.
+    assert combined.choose(frame(), off_centre) is not None
+    for _ in range(MAX_ANCHOR_ONLY_HANDOFF_FRAMES):
+        assert combined.choose(frame(), centred) is None
+    assert combined.choose(frame(), centred) is not None
