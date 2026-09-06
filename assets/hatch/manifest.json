@@ -41,7 +41,8 @@
     {
       "type": "hatch_home_anchor",
       "file": "templates/hatch-home-anchor.png",
-      "threshold": 0.78
+      "threshold": 0.78,
+      "match_scale": 0.5
     },
     {
       "type": "hatch_tag_all",
@@ -213,7 +214,8 @@
     {
       "type": "hatch_autoplace_button",
       "file": "templates/hatch-autoplace-button.png",
-      "threshold": 0.88
+      "threshold": 0.88,
+      "match_scale": 0.5
     },
     {
       "type": "hatch_collect_eggs_button",
