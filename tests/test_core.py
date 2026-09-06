@@ -3711,3 +3711,42 @@ def test_closed_transport_still_reconnects_once(
 
     client.run(["shell", "input", "tap", "1", "2"])
     assert any("reconnect" in call for call in client._test_calls)  # type: ignore[attr-defined]
+
+
+def test_half_resolution_templates_keep_their_margin_on_a_real_screen() -> None:
+    """A halved template must still clear its threshold on an actual screen.
+
+    Synthetic validation is not enough to justify ``match_scale``: pasting a
+    template into a blank frame scored hatch_nest_gear at 0.982, while the same
+    template against a real diagnostic snapshot scored 0.870 under its 0.88
+    threshold.  Halving it there would have stopped the nest gear being
+    detected at all, with no error anywhere.  Anything already searched at half
+    resolution has to keep a real margin on a real frame.
+    """
+
+    import cv2
+
+    from dino_bot.detection import OpenCvDetector
+    from dino_bot.models import Frame
+
+    root = Path(__file__).parent.parent
+    snapshot = root / "debug/dino-diagnostic-20260822-154049/snapshot.png"
+    if not snapshot.exists():  # pragma: no cover - snapshot is optional locally
+        pytest.skip("diagnostic snapshot not available")
+
+    image = cv2.imread(str(snapshot))
+    assert image is not None
+    detector = OpenCvDetector(root / "assets/hatch/manifest.json")
+    halved = {
+        asset.type for asset in detector.templates if asset.match_scale < 1.0
+    }
+    assert halved, "expected at least one half-resolution hatch template"
+
+    found = {item.type: item.confidence for item in detector.detect(Frame(image))}
+    thresholds = {asset.type: asset.threshold for asset in detector.templates}
+    for name in ("hatch_home_anchor", "hatch_autoplace_button", "hatch_nest_gear"):
+        assert name in found, f"{name} disappeared from the real snapshot"
+        if name in halved:
+            assert found[name] >= thresholds[name] + 0.03, (
+                f"{name} has no margin left at half resolution"
+            )
