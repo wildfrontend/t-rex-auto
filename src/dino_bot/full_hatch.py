@@ -2067,14 +2067,15 @@ class CaveCullPlanner:
                         self.capacity_read_retries,
                     )
                     return None
-                if read.reason == "unparsed" and (
-                    0 < self._navigation_swipes < len(self.navigator.swipe_vectors)
-                ):
+                if 0 < self._navigation_swipes < len(self.navigator.swipe_vectors):
                     # S9 can reveal the cave after only the vertical move,
                     # while a building still overlaps the fixed capacity HUD.
-                    # Finish only the remaining calibrated outbound gesture;
-                    # never start a fresh path from an unknown cave view or
-                    # repeat a successful swipe to try to manufacture a read.
+                    # The overlap can make the glyph reader return either
+                    # unparsed text or a plausible but wrong denominator
+                    # (312/370 became 312/8 in a live S9 trace). Complete
+                    # only the remaining calibrated outbound gesture; never
+                    # start a fresh path from an unknown cave view or repeat
+                    # a successful swipe to try to manufacture a read.
                     step = self.navigator.next_step(
                         cave_visible=False, frame_width=frame.width
                     )
@@ -2082,8 +2083,10 @@ class CaveCullPlanner:
                         assert step.vector is not None
                         self.logger.warning(
                             "Hatch cave | capacity unreadable after retries"
-                            " | glyphs=%r | completing remaining calibrated move"
+                            " | reason=%s | glyphs=%r"
+                            " | completing remaining calibrated move"
                             " | swipe=%s",
+                            read.reason,
                             read.text,
                             step.vector,
                         )
@@ -2423,6 +2426,10 @@ class FullHatchPlanner:
         self._autoplace_without_no_button = False
         self._screening_blocked = False
         self._capacity_blocked = False
+        # A combined Hatch+Hunt run may make one bounded map round-trip after
+        # a failed capacity preflight. The hunt map recentres a HUD that can be
+        # obscured by home-map scenery; a second failure still fuses hatching.
+        self._capacity_camera_refresh_used = False
         self.population_limit_reached = False
         self._screening_recovery_failures: dict[str, int] = {}
         self.completed_management_cycles = 0
@@ -2462,6 +2469,57 @@ class FullHatchPlanner:
             or self._screening_blocked
             or self._capacity_blocked
         )
+
+    def begin_hunt_map_capacity_refresh(self) -> bool:
+        """Let a combined workflow make one no-hunt camera refresh attempt.
+
+        This is deliberately offered only after the ordinary cave preflight
+        has exhausted its own calibrated moves and refused the HUD. A
+        standalone hatch run has no verified hunt handoff owner, so it remains
+        safely blocked instead of trying to leave the map itself.
+        """
+
+        if (
+            self._capacity_camera_refresh_used
+            or not self._capacity_blocked
+            or self._stage != "capacity_blocked"
+        ):
+            return False
+        self._capacity_camera_refresh_used = True
+        self._capacity_blocked = False
+        self._stage = "capacity_camera_refresh"
+        self._no_target_since = None
+        self.logger.warning(
+            "Hatch capacity | unreadable after calibrated cave route; "
+            "requesting one hunt-map camera refresh"
+        )
+        return True
+
+    def complete_hunt_map_capacity_refresh(self) -> bool:
+        """Restart the preflight only after the outer handoff proved home."""
+
+        if self._stage != "capacity_camera_refresh":
+            return False
+        self.logger.info(
+            "Hatch capacity | hunt-map camera refresh returned home; retrying preflight"
+        )
+        self._begin_capacity_preflight("after hunt-map camera refresh")
+        return True
+
+    def fail_hunt_map_capacity_refresh(self, reason: str) -> bool:
+        """Consume the one refresh attempt and restore the conservative fuse."""
+
+        if self._stage != "capacity_camera_refresh":
+            return False
+        self._capacity_blocked = True
+        self._stage = "capacity_blocked"
+        self._no_target_since = None
+        self.logger.error(
+            "Hatch capacity | hunt-map camera refresh failed; hatching remains blocked"
+            " | reason=%s",
+            reason,
+        )
+        return True
 
     def _population_limit_pending(self) -> bool:
         if (

@@ -827,7 +827,7 @@ def test_occluded_capacity_remaining_move_failures_are_bounded() -> None:
     assert not planner.capacity_readable and planner.last_capacity is None
 
 
-def test_wrong_capacity_limit_does_not_trigger_obstruction_navigation() -> None:
+def test_wrong_capacity_limit_finishes_remaining_move_then_fails_safely() -> None:
     planner = CaveCullPlanner(
         DigitReader(GLYPHS), threshold=340, capacity_limit=370,
         capacity_read_retries=1,
@@ -838,8 +838,21 @@ def test_wrong_capacity_limit_does_not_trigger_obstruction_navigation() -> None:
     assert planner._read_capacity(capacity_frame()).reason == "unexpected_capacity"
     assert planner.choose(capacity_frame(), cave) is None
     target = planner.choose(capacity_frame(), cave)
+    assert target is not None and target.type == CAVE_SWIPE
+    assert (target.x, target.y) == (350, 800)
+    assert target.detection.metadata["swipe"] == {
+        "x2": 600,
+        "y2": 800,
+        "duration_ms": 400,
+    }
+    planner.on_action_success(target.type)
+
+    # A genuinely wrong configured cap still cannot pass the second read, but
+    # the full calibrated route has been tried once before it fails safely.
+    assert planner.choose(capacity_frame(), cave) is None
+    target = planner.choose(capacity_frame(), cave)
     assert target is not None and target.type == CAVE_RECENTER
-    assert planner._navigation_swipes == 1
+    assert planner._navigation_swipes == 2
     assert not planner.capacity_readable
 
 

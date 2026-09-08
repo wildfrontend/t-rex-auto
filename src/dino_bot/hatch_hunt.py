@@ -119,6 +119,8 @@ class HatchHuntPlanner:
             state.update(stage="cooldown_hunt", label="冷卻期間狩獵")
         elif self._mode == "handoff":
             state.update(stage="handoff", label="返回孵蛋首頁")
+        elif self._mode == "capacity_camera_refresh_depart":
+            state.update(stage="capacity_camera_refresh", label="刷新人口地圖位置")
         else:
             return state
         state["cooldown_remaining_seconds"] = (
@@ -162,6 +164,27 @@ class HatchHuntPlanner:
                 self._mode = "hatch"
                 self._centered_frames = 0
                 return self._choose_owned(self.hatch, frame, detections)
+
+        if self._mode == "hatch" and self._begin_capacity_camera_refresh():
+            self._mode = "capacity_camera_refresh_depart"
+            self._centered_frames = 0
+            self._anchor_only_frames = 0
+            self._handoff_extensions = 0
+            self._handoff_reason = "capacity camera refresh"
+            self._handoff_deadline = (
+                self.clock() + self.handoff_timeout_seconds
+                if self.handoff_timeout_seconds
+                else None
+            )
+            self.logger.warning(
+                "Hatch+Hunt | capacity unreadable; entering hunt map for one camera refresh"
+            )
+            return self._choose_capacity_camera_refresh_depart(frame, detections)
+
+        if self._mode == "capacity_camera_refresh_depart":
+            if self._handoff_expired():
+                return self._fail_capacity_camera_refresh(frame, detections, "hunt map not reached")
+            return self._choose_capacity_camera_refresh_depart(frame, detections)
 
         blocked = self._hatch_is_blocked()
         if blocked:
@@ -232,7 +255,7 @@ class HatchHuntPlanner:
     def next_ready_delay_ms(self) -> int:
         if self._mode == "hatch":
             return self.hatch.next_ready_delay_ms()
-        if self._mode == "handoff":
+        if self._mode in {"handoff", "capacity_camera_refresh_depart"}:
             return 0
         until_handoff = max(
             0,
@@ -263,7 +286,7 @@ class HatchHuntPlanner:
             return full_method() if callable(full_method) else None
         hatch_method = getattr(self.hatch, "planning_detection_types", None)
         hatch_types = hatch_method() if callable(hatch_method) else None
-        if self._mode != "handoff":
+        if self._mode not in {"handoff", "capacity_camera_refresh_depart"}:
             return hatch_types
 
         # Handoff still needs the hunt map evidence to decide whether the
@@ -407,6 +430,8 @@ class HatchHuntPlanner:
         self._action_owner = None
         self._centered_frames = 0
         self._nest_close_attempts = 0
+        self._handoff_deadline = None
+        self._handoff_reason = ""
 
     # Hunt diagnostics remain available to the shared engine while combined.
     def take_blind_escape(self) -> dict[str, Any] | None:
@@ -563,6 +588,13 @@ class HatchHuntPlanner:
                 self._centered_frames = 0
                 return self._choose_owned(self.hunt, frame, detections)
 
+        if reason == "capacity camera refresh":
+            return self._fail_capacity_camera_refresh(
+                frame,
+                detections,
+                "centered home handoff timed out",
+            )
+
         self.hunt.reset_workflow()
         self._mode = "hatch"
         self._centered_frames = 0
@@ -602,6 +634,16 @@ class HatchHuntPlanner:
             self._mode = "hatch"
             self._centered_frames = 0
             self._handoff_deadline = None
+            complete_refresh = getattr(
+                self.hatch,
+                "complete_hunt_map_capacity_refresh",
+                None,
+            )
+            if callable(complete_refresh) and complete_refresh():
+                self.logger.info(
+                    "Hatch+Hunt | hunt-map camera refresh complete | retrying capacity"
+                )
+                return self._choose_owned(self.hatch, frame, detections)
             begin_home_collection = getattr(
                 self.hatch,
                 "begin_home_collection",
@@ -654,7 +696,57 @@ class HatchHuntPlanner:
             for item in detections
         )
         if map_evidence and not hunt_controls:
-            self.hunt.request_external_recenter("hatch cooldown handoff")
+            recenter_reason = (
+                "capacity camera refresh"
+                if self._handoff_reason == "capacity camera refresh"
+                else "hatch cooldown handoff"
+            )
+            self.hunt.request_external_recenter(recenter_reason)
+        return self._choose_owned(self.hunt, frame, detections)
+
+    def _begin_capacity_camera_refresh(self) -> bool:
+        method = getattr(self.hatch, "begin_hunt_map_capacity_refresh", None)
+        return bool(method()) if callable(method) else False
+
+    def _fail_capacity_camera_refresh(
+        self,
+        frame: Frame,
+        detections: Sequence[Detection],
+        reason: str,
+    ) -> Target | None:
+        fail = getattr(self.hatch, "fail_hunt_map_capacity_refresh", None)
+        if callable(fail):
+            fail(reason)
+        self.hunt.reset_workflow()
+        self._mode = "hatch"
+        self._centered_frames = 0
+        self._handoff_deadline = None
+        return self.choose(frame, detections)
+
+    def _choose_capacity_camera_refresh_depart(
+        self,
+        frame: Frame,
+        detections: Sequence[Detection],
+    ) -> Target | None:
+        """Enter the hunt map, then hand straight back without selecting prey."""
+
+        hunt_map_visible = any(
+            item.type
+            in {
+                self.hunt.map_exit_type,
+                self.hunt.center_anchor_type,
+                self.hunt.mailbox_type,
+                self.hunt.dinosaur_type,
+                *self.hunt.own_path_types,
+            }
+            for item in detections
+        )
+        if hunt_map_visible:
+            self._enter_handoff("capacity camera refresh")
+            self.logger.info(
+                "Hatch+Hunt | hunt map reached for capacity camera refresh; returning home"
+            )
+            return self._choose_handoff(frame, detections)
         return self._choose_owned(self.hunt, frame, detections)
 
     def _choose_owned(

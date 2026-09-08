@@ -49,6 +49,11 @@ class StubHatch:
         self.blocked = False
         self.continue_hunting = True
         self.success_contexts: list[tuple[str, str]] = []
+        self.camera_refresh_available = False
+        self.camera_refresh_active = False
+        self.camera_refresh_started = 0
+        self.camera_refresh_completed = 0
+        self.camera_refresh_failed: list[str] = []
 
     def choose(self, frame: Frame, detections: list[Detection]) -> Target | None:
         return self.next_target
@@ -67,6 +72,28 @@ class StubHatch:
 
     def continue_hunting_when_blocked(self) -> bool:
         return self.continue_hunting
+
+    def begin_hunt_map_capacity_refresh(self) -> bool:
+        if not self.camera_refresh_available or not self.blocked:
+            return False
+        self.camera_refresh_available = False
+        self.camera_refresh_started += 1
+        self.camera_refresh_active = True
+        self.blocked = False
+        return True
+
+    def complete_hunt_map_capacity_refresh(self) -> bool:
+        if not self.camera_refresh_active:
+            return False
+        self.camera_refresh_active = False
+        self.camera_refresh_completed += 1
+        return True
+
+    def fail_hunt_map_capacity_refresh(self, reason: str) -> bool:
+        self.camera_refresh_active = False
+        self.camera_refresh_failed.append(reason)
+        self.blocked = True
+        return True
 
     def on_action_success(self, target_type: str) -> None:
         self.successes.append(target_type)
@@ -237,6 +264,41 @@ def test_blocked_hatch_falls_back_to_hunting_in_combined_mode() -> None:
         {"dinosaur", NEST_TITLE}
     )
     assert not combined.is_complete()
+
+
+def test_capacity_refresh_round_trip_enters_and_leaves_hunt_without_hunting() -> None:
+    combined, hatch_planner, hunt_planner = planner(cooldown_ms=0)
+    hatch_planner.blocked = True
+    hatch_planner.camera_refresh_available = True
+    hunt_planner.next_target = target("forest_recenter_button", 841, 1296)
+
+    # The only outbound action is the map switch, never a dinosaur target.
+    outbound = combined.choose(frame(), [])
+    assert outbound is not None and outbound.type == "forest_recenter_button"
+    assert combined.workflow_status()["stage"] == "capacity_camera_refresh"
+    assert {"hatch_button", "dinosaur"} <= set(
+        combined.planning_detection_types() or ()
+    )
+    combined.on_action_success(outbound.type)
+
+    # As soon as hunt-map evidence arrives, hand straight back to home instead
+    # of allowing another hunt planner action.
+    hunt_planner.next_target = target("map_exit_nest_button", 841, 1295)
+    inbound = combined.choose(
+        frame(), [detection("map_exit_nest_button", 841, 1295)]
+    )
+    assert inbound is not None and inbound.type == "map_exit_nest_button"
+    assert hunt_planner.recenter_requests == ["capacity camera refresh"]
+    combined.on_action_success(inbound.type)
+
+    hatch_planner.next_target = target("hatch_button", 450, 1330)
+    centered = [detection(hatch.HOME_ANCHOR, 59, 561)]
+    assert combined.choose(frame(), centered) is None
+    resumed = combined.choose(frame(), centered)
+    assert resumed is not None and resumed.type == "hatch_button"
+    assert hatch_planner.camera_refresh_started == 1
+    assert hatch_planner.camera_refresh_completed == 1
+    assert "dinosaur" not in hunt_planner.successes
 
 
 def test_safety_blocked_hatch_stops_the_combined_workflow() -> None:
