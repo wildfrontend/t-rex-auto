@@ -827,7 +827,7 @@ def test_occluded_capacity_remaining_move_failures_are_bounded() -> None:
     assert not planner.capacity_readable and planner.last_capacity is None
 
 
-def test_wrong_capacity_limit_does_not_trigger_obstruction_navigation() -> None:
+def test_wrong_capacity_limit_is_still_rejected_after_repositioning() -> None:
     planner = CaveCullPlanner(
         DigitReader(GLYPHS), threshold=340, capacity_limit=370,
         capacity_read_retries=1,
@@ -838,8 +838,12 @@ def test_wrong_capacity_limit_does_not_trigger_obstruction_navigation() -> None:
     assert planner._read_capacity(capacity_frame()).reason == "unexpected_capacity"
     assert planner.choose(capacity_frame(), cave) is None
     target = planner.choose(capacity_frame(), cave)
+    assert target is not None and target.type == CAVE_SWIPE
+    planner.on_action_success(target.type)
+    assert planner.choose(capacity_frame(), cave) is None
+    target = planner.choose(capacity_frame(), cave)
     assert target is not None and target.type == CAVE_RECENTER
-    assert planner._navigation_swipes == 1
+    assert planner._navigation_swipes == 2
     assert not planner.capacity_readable
 
 
@@ -3303,3 +3307,136 @@ def test_custom_return_collects_then_hatches_boosts_and_waits_once(tmp_path, mon
     assert planner.hunt_cooldown_delay_ms() == 300_000
     assert planner.choose(frame(), home) is None
     assert planner._stage == "hatch"  # No second collection before hunting.
+
+
+def obscured_s9_capacity_frame() -> Frame:
+    # Exact HUD pixels saved at 12:29:44 on 2026-09-08, when 308/370
+    # overlapped a building and OCR read 308/1.
+    encoded = (FIXTURES / 's9-capacity-obscured-20260908.png.b64').read_text()
+    crop = cv2.imdecode(np.frombuffer(base64.b64decode(encoded), dtype=np.uint8), cv2.IMREAD_COLOR)
+    assert crop.shape == (19, 100, 3)
+    image = frame().image.copy()
+    image[239:258, 10:110] = crop
+    return frame(image)
+
+
+def test_real_s9_wrong_denominator_finishes_known_path_before_retrying():
+    planner = CaveCullPlanner(
+        DigitReader(GLYPHS), threshold=370, capacity_limit=370,
+        capacity_read_retries=1, allow_cull=False,
+    )
+    blocked = obscured_s9_capacity_frame()
+    read = planner._read_capacity(blocked)
+    assert read.text == '308/1'
+    assert read.reason == 'unexpected_capacity' and read.count is None
+    first = planner.choose(frame(), [])
+    planner.on_action_success(first.type)
+    cave = [detection('hatch_cave', 100, 1100)]
+    assert planner.choose(blocked, cave) is None
+    second = planner.choose(blocked, cave)
+    assert second.type == CAVE_SWIPE
+    assert (second.x, second.y) == (350, 800)
+    assert second.detection.metadata['swipe']['x2'] == 600
+    planner.on_action_success(second.type)
+    assert planner.choose(blocked, cave) is None
+    back = planner.choose(blocked, cave)
+    assert back.type == CAVE_RECENTER
+    assert not planner.capacity_readable
+    assert planner.last_capacity is None
+    assert planner._navigation_swipes == 2
+
+
+@pytest.mark.parametrize('next_count', [308, 370, None])
+def test_custom_unreadable_population_retries_after_wait_and_rechecks_limit(
+    tmp_path, monkeypatch, next_count,
+):
+    now = [1000.0]
+    inventory = HatchBoostInventoryStore(tmp_path / 'stats.sqlite3', clock=lambda: now[0])
+    inventory.set_enabled(True)
+    planner = FullHatchPlanner(
+        DigitReader(GLYPHS), egg_pile_point=(450, 1330),
+        enabled_stages=('collect', 'hatch'), capacity_limit=370, cull_threshold=370,
+        capacity_read_retries=1, clock=lambda: now[0], boost_inventory=inventory,
+    )
+    planner._cave_population = 308  # Cached count must not allow a hatch.
+    planner._screening_baseline_population = 298
+    home = [detection(hatch.HOME_ANCHOR, 59, 561)]
+    cave = [detection('hatch_cave', 100, 1100)]
+    for _ in range(2):
+        move = planner.choose(frame(), home)
+        assert move.type == CAVE_SWIPE
+        planner.on_action_success(move.type)
+    blocked = obscured_s9_capacity_frame()
+    assert planner.choose(blocked, cave) is None
+    for _ in range(2):
+        back = planner.choose(blocked, cave)
+        assert back.type == CAVE_RECENTER
+        planner.on_action_success(back.type)
+    assert planner.choose(frame(), home) is None
+    assert planner.choose(frame(), home) is None
+    assert planner.capacity_retry_pending and not planner.is_hatch_blocked()
+    assert not planner._capacity_checked
+    assert planner.is_hunt_cooldown_active()
+    assert planner.hunt_cooldown_delay_ms() == 600_000
+    assert not planner.begin_home_collection()
+    assert not planner.begin_interim_collection()
+    assert not planner.begin_boost_visit()
+    assert planner.choose(boost_ready_frame(), [detection(hatch.HATCH_LABEL)]) is None
+    assert inventory.snapshot().remaining == 100
+    now[0] += 601
+    # Fresh navigation comes before any egg/claim/boost.
+    for _ in range(2):
+        move = planner.choose(frame(), home)
+        assert move.type == CAVE_SWIPE
+        planner.on_action_success(move.type)
+    monkeypatch.setattr(
+        'dino_bot.full_hatch.probe_dino_count',
+        lambda *a, **kw: CapacityRead(
+            next_count, '' if next_count is None else f'{next_count}/370',
+            None if next_count is None else (next_count, 370),
+            (10, 239, 110, 258), 'unparsed' if next_count is None else 'ok',
+        ),
+    )
+    assert planner.choose(frame(), cave) is None
+    for _ in range(2):
+        back = planner.choose(frame(), cave)
+        assert back.type == CAVE_RECENTER
+        planner.on_action_success(back.type)
+    assert planner.choose(frame(), home) is None
+    chosen = planner.choose(frame(), home)
+    if next_count == 308:
+        assert chosen.type == hatch.EGG_PILE
+        assert planner._capacity_checked
+        assert not planner.capacity_retry_pending
+        assert not planner.is_hatch_blocked()
+    elif next_count == 370:
+        assert chosen is None
+        assert planner.population_limit_reached and planner.is_hatch_blocked()
+        assert not planner.capacity_retry_pending
+    else:
+        assert chosen is None
+        assert planner.capacity_retry_pending
+        assert not planner._capacity_checked
+        assert not planner.is_hatch_blocked()
+        assert planner.hunt_cooldown_delay_ms() == 600_000
+
+
+def test_cooldown_preserves_wait_on_shifted_home_and_recovers_only_when_due():
+    now = [1000.0]
+    planner = FullHatchPlanner(
+        DigitReader(GLYPHS), egg_pile_point=(450, 1330), clock=lambda: now[0],
+    )
+    planner._capacity_checked = True
+    planner._start_empty_rescan_wait()
+    shifted = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    shifted[1085:1097, 342:585] = (220, 180, 20)
+    home = [detection(hatch.HOME_ANCHOR, 59, 561)]
+    assert is_home_screen(frame(shifted), home)
+    assert not is_centered_home_screen(frame(shifted), home)
+    assert planner.choose(frame(shifted), home) is None
+    assert planner.is_hunt_cooldown_active()
+    assert planner._stage == 'hatch'
+    now[0] += 601
+    planner.choose(frame(shifted), home)
+    assert planner._stage == 'recover_home'
+    assert not planner.is_hunt_cooldown_active()

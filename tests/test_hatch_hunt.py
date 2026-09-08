@@ -645,3 +645,38 @@ def test_population_stop_keeps_hunting_without_cooldown_handoff():
     assert combined.workflow_status()["stage"] == "population_limit_hunt"
     assert combined.workflow_status()["cooldown_remaining_seconds"] is None
     assert not hunt.recenter_requests
+
+
+def test_failed_capacity_read_hunts_then_hands_back_for_a_fresh_preflight():
+    from dino_bot.digits import DigitReader
+    from dino_bot.full_hatch import CAVE_SWIPE, FullHatchPlanner
+
+    now = [1000.0]
+    full = FullHatchPlanner(
+        DigitReader(Path(__file__).parents[1] / 'assets/hatch/digits'),
+        egg_pile_point=(450, 1330), enabled_stages=('collect', 'hatch'),
+        clock=lambda: now[0],
+    )
+    full._begin_capacity_preflight('test unreadable capacity after returning home')
+    full._capacity_child._complete = True
+    full._capacity_child._capacity_readable = False
+    hunt = StubHunt()
+    hunt.next_target = target('dinosaur', 300, 700)
+    hunt.delay_ms = 60_000
+    combined = HatchHuntPlanner(full, hunt, clock=lambda: now[0])
+    home = [detection(hatch.HOME_ANCHOR, 59, 561)]
+    assert combined.choose(frame(), home).type == 'dinosaur'
+    state = combined.workflow_status()
+    assert state['stage'] == 'capacity_retry_hunt'
+    assert state['hatch_blocked'] is False
+    assert state['cooldown_remaining_seconds'] == 600
+    assert not combined.is_complete()
+    assert combined.next_ready_delay_ms() == 60_000
+    assert combined.choose(frame(), home).type == 'dinosaur'
+    assert not hunt.recenter_requests
+    now[0] += 601
+    assert combined.choose(frame(), home) is None
+    chosen = combined.choose(frame(), home)
+    assert chosen.type == CAVE_SWIPE
+    assert full._stage == 'capacity_preflight'
+    assert not full._capacity_checked

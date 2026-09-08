@@ -115,6 +115,8 @@ class HatchHuntPlanner:
             state.update(stage="population_limit_hunt", label="已達安全人口，持續狩獵")
         elif blocked:
             state.update(stage="hatch_blocked_hunt", label="孵蛋已鎖住，僅繼續狩獵")
+        elif self._mode == "hunt" and getattr(self.hatch, "capacity_retry_pending", False):
+            state.update(stage="capacity_retry_hunt", label="人口讀取失敗，狩獵後重試")
         elif self._mode == "hunt":
             state.update(stage="cooldown_hunt", label="冷卻期間狩獵")
         elif self._mode == "handoff":
@@ -189,10 +191,16 @@ class HatchHuntPlanner:
                 return None
             self._mode = "hunt"
             self._centered_frames = 0
-            self.logger.info(
-                "Hatch+Hunt | egg cooldown %.0fs | switching to hunt",
-                remaining / 1000,
-            )
+            if getattr(self.hatch, "capacity_retry_pending", False):
+                self.logger.info(
+                    "Hatch+Hunt | capacity recheck in %.0fs | switching to hunt",
+                    remaining / 1000,
+                )
+            else:
+                self.logger.info(
+                    "Hatch+Hunt | egg cooldown %.0fs | switching to hunt",
+                    remaining / 1000,
+                )
             return self._choose_owned(self.hunt, frame, detections)
 
         if self._mode == "hunt":
