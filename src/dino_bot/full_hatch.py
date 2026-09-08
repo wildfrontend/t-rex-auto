@@ -396,6 +396,18 @@ CAMERA_LIMIT_PROGRESS_PX = 12.0
 # before concluding the camera is against its edge.
 MAX_CAMERA_LIMIT_HITS = 2
 
+# The cyan basin has to be told apart from the small fixed incubator nests,
+# which share its exact hue.  Width alone cannot do it: the basin's cyan water
+# narrows as eggs are consumed, and an S9 v0.0.73 frame measured it at 140px
+# against a 121px nest - close enough that the original 170px gate discarded
+# the real pile, left recovery with no measurement at all, and fused hatching
+# off while the map was already centred.  Height separates them cleanly, since
+# the basin is a deep bowl (118px there) while every nest is a shallow dish
+# (43-67px across that same frame).
+CYAN_STRIP_MIN_WIDTH = 170.0
+CYAN_BASIN_MIN_WIDTH = 120.0
+CYAN_BASIN_MIN_HEIGHT = 90.0
+
 # The cyan strip above only exists on the upgraded stone basin.  The starter
 # nest is straw on brick with no cyan anywhere, so that account measured
 # nothing at all and every "am I home yet" test answered no forever.  Its base
@@ -957,15 +969,25 @@ def _egg_pile_base_center(frame: Frame) -> tuple[float, float] | None:
     count, _, stats, centers = cv2.connectedComponentsWithStats(cyan)
     candidates: list[tuple[float, float]] = []
     for index in range(1, count):
-        x, y, width, _height, area = stats[index]
+        x, y, width, height, area = stats[index]
         center_x, center_y = centers[index]
         if (
-            area >= 350 * scale * scale
-            and width >= 170 * scale
-            and y >= 850 * scale
-            and 150 * scale <= center_x <= 750 * scale
+            area < 350 * scale * scale
+            or y < 850 * scale
+            or not 150 * scale <= center_x <= 750 * scale
         ):
+            continue
+        if width >= CYAN_STRIP_MIN_WIDTH * scale:
+            # A wide, flat strip: its centroid already sits on the base line.
             candidates.append((float(center_x), float(center_y)))
+        elif (
+            width >= CYAN_BASIN_MIN_WIDTH * scale
+            and height >= CYAN_BASIN_MIN_HEIGHT * scale
+        ):
+            # A deep bowl of water. Its centroid floats in the middle of the
+            # basin rather than on the map anchor, so report the bottom edge
+            # the flat-strip case measures directly.
+            candidates.append((float(center_x), float(y + height)))
     if candidates:
         return max(candidates, key=lambda center: center[1])
     blue_stone = _blue_stone_base_center(frame)

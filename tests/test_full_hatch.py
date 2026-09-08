@@ -64,6 +64,7 @@ from dino_bot.full_hatch import (
     CaveCullPlanner,
     FullHatchPlanner,
     HatchHomeRecoveryPlanner,
+    _egg_pile_base_center,
     _egg_pile_safe_tap,
     _hatch_boost_point,
     _hatch_boost_ready,
@@ -1949,6 +1950,85 @@ def test_upgraded_basin_keeps_its_cyan_measurement_and_skips_the_sweep() -> None
     offset = home_pile_offset(frame())
     assert offset is not None
     assert max(abs(offset[0]), abs(offset[1])) <= 2
+
+
+def deep_basin_home_frame(dx: int = 0, dy: int = 0) -> Frame:
+    """The live upgraded basin: a deep bowl of water, not a painted strip.
+
+    Measured on the S9 v0.0.73 frame that fused hatching off: the basin's cyan
+    spans 140x118 with its base at y=1250, while the fixed incubator nests
+    around it are the same hue at 105-121 wide but only 43-67 tall.
+    """
+
+    image = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    # Shallow incubator nests: wide enough to pass a width-only gate.  They sit
+    # on the map, so a camera move carries them along with the basin.
+    for nest_x, nest_y in ((180, 900), (620, 940), (300, 1000)):
+        cv2.rectangle(
+            image,
+            (nest_x + dx, nest_y + dy),
+            (nest_x + dx + 121, nest_y + dy + 60),
+            (220, 180, 20),
+            thickness=-1,
+        )
+    cv2.rectangle(
+        image,
+        (381 + dx, 1132 + dy),
+        (521 + dx, 1250 + dy),
+        (220, 180, 20),
+        thickness=-1,
+    )
+    return Frame(image)
+
+
+def test_deep_basin_is_measured_by_its_base_not_its_floating_centroid() -> None:
+    # A 118px-deep bowl puts its colour centroid ~60px above the map anchor.
+    # Reporting that centroid would hand recovery a phantom offset and send it
+    # dragging the map away from a home it had already reached.
+    base = _egg_pile_base_center(deep_basin_home_frame())
+    assert base is not None
+    assert abs(base[0] - 450) <= 3
+    assert abs(base[1] - 1250) <= 2
+
+
+def test_shallow_incubator_nests_are_never_mistaken_for_the_basin() -> None:
+    # The nests share the basin's exact hue and come within 19px of its width,
+    # so only their depth separates them.
+    image = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    for nest_x, nest_y in ((180, 900), (620, 940), (300, 1000)):
+        cv2.rectangle(
+            image,
+            (nest_x, nest_y),
+            (nest_x + 121, nest_y + 60),
+            (220, 180, 20),
+            thickness=-1,
+        )
+    assert _egg_pile_base_center(Frame(image)) is None
+
+
+def test_herd_merged_home_still_measures_its_offset() -> None:
+    # The regression this guards: dinosaurs bridging the nests to the pile made
+    # the structure locator return nothing, so recovery had no measurement,
+    # swiped blind, undid itself, and fused hatching off on an already-centred
+    # home. The cyan basin cannot merge with a herd - dinosaurs are not cyan.
+    settled = home_pile_offset(deep_basin_home_frame())
+    shifted = deep_basin_home_frame(dy=-205)
+    offset = home_pile_offset(shifted)
+    assert settled is not None and offset is not None
+    # The camera move is measured, not merely detected: recovery drags by this
+    # vector, so an offset that ignored the shift would swipe the wrong way.
+    assert abs((offset[1] - settled[1]) - 205) <= 2
+
+    planner = HatchHomeRecoveryPlanner()
+    target = planner.choose(
+        shifted,
+        [
+            detection(hatch.HOME_ANCHOR, 49, 562),
+            detection("forest_recenter_button", 841, 1296),
+        ],
+    )
+    assert target is not None
+    assert target.type == RECOVERY_RECENTER
 
 
 def test_lava_nest_base_proves_centered_home_without_cyan() -> None:
