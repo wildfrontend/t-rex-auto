@@ -629,3 +629,19 @@ def test_handoff_anchor_wait_resets_when_the_egg_leaves_the_centre() -> None:
     for _ in range(MAX_ANCHOR_ONLY_HANDOFF_FRAMES):
         assert combined.choose(frame(), centred) is None
     assert combined.choose(frame(), centred) is not None
+
+
+def test_population_stop_keeps_hunting_without_cooldown_handoff():
+    combined, full, hunt = planner(cooldown_ms=0)
+    full.blocked = True
+    full.population_limit_reached = True
+    full.next_target = target(hatch.HATCH_LABEL, 270, 436)
+    hunt.next_target = target("dinosaur", 300, 700)
+    hunt.delay_ms = 60_000
+    for _ in range(3):
+        assert combined.choose(frame(), []).type == "dinosaur"
+        assert not combined.is_complete()
+        assert combined.next_ready_delay_ms() == 60_000
+    assert combined.workflow_status()["stage"] == "population_limit_hunt"
+    assert combined.workflow_status()["cooldown_remaining_seconds"] is None
+    assert not hunt.recenter_requests

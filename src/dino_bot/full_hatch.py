@@ -1837,8 +1837,8 @@ class CaveCullPlanner:
             raise ValueError("capacity_limit must be greater than zero")
         if threshold <= 0:
             raise ValueError("threshold must be greater than zero")
-        if threshold >= capacity_limit:
-            raise ValueError("threshold must be less than capacity_limit")
+        if threshold > capacity_limit:
+            raise ValueError("threshold cannot exceed capacity_limit")
         self.capacity_limit = capacity_limit
         self.threshold = threshold
         self.capacity_read_retries = max(1, capacity_read_retries)
@@ -2297,8 +2297,8 @@ class FullHatchPlanner:
             raise ValueError("capacity_limit must be greater than zero")
         if cull_threshold <= 0:
             raise ValueError("cull_threshold must be greater than zero")
-        if cull_threshold >= capacity_limit:
-            raise ValueError("cull_threshold must be less than capacity_limit")
+        if cull_threshold > capacity_limit:
+            raise ValueError("cull_threshold cannot exceed capacity_limit")
         self.capacity_limit = capacity_limit
         self.cull_threshold = cull_threshold
         self.stat_upgrade_guards = dict(stat_upgrade_guards)
@@ -2344,6 +2344,8 @@ class FullHatchPlanner:
         )
         self._collect_enabled = "collect" in selected_stages
         self._cave_enabled = "cave" in selected_stages
+        self._custom_cycle = enabled_stages is not None and standalone_stage is None
+        self._collect_before_hatch = False
         self.clock = clock or time.monotonic
         self._hatch_kwargs = dict(
             egg_pile_point=egg_pile_point,
@@ -2412,6 +2414,7 @@ class FullHatchPlanner:
         self._autoplace_without_no_button = False
         self._screening_blocked = False
         self._capacity_blocked = False
+        self.population_limit_reached = False
         self._screening_recovery_failures: dict[str, int] = {}
         self.completed_management_cycles = 0
         self._start_hatch_cycle()
@@ -2450,6 +2453,18 @@ class FullHatchPlanner:
             or self._screening_blocked
             or self._capacity_blocked
         )
+
+    def _population_limit_pending(self) -> bool:
+        if (
+            self._cave_enabled or not self._capacity_checked
+            or self._cave_population is None or self._stage != "hatch"
+        ):
+            return False
+        estimate = (
+            self._cave_population + self._hatched_since_cave_read
+            + self._hatch_child.hatched - self._hatch_baseline
+        )
+        return estimate >= self.cull_threshold
 
     def next_ready_delay_ms(self) -> int:
         if self._boost_visit is not None:
@@ -2552,6 +2567,19 @@ class FullHatchPlanner:
             and self._child.next_ready_delay_ms() > 0
         )
 
+    def begin_home_collection(self) -> bool:
+        """Collect before hatching on a custom cycle's normal return home."""
+        if (
+            not self._custom_cycle or not self._collect_enabled
+            or not self._capacity_checked or self.is_complete()
+            or self._stage != "hatch"
+        ):
+            return False
+        self._collect_before_hatch = True
+        self._observed_cooldown_until = None
+        self._enter_open_nest(collect_only=True)
+        return True
+
     def begin_interim_collection(self) -> bool:
         """Spend a hunt idle window on one collect-only nest round.
 
@@ -2606,6 +2634,10 @@ class FullHatchPlanner:
         return True
 
     def reset_workflow(self) -> None:
+        self.population_limit_reached = False
+        self._collect_before_hatch = False
+        if self._custom_cycle and not self._cave_enabled:
+            self._capacity_checked = False
         if self._boost_visit is not None:
             self.defer_boost_visit("workflow interrupted; recheck game state")
             self._boost_visit = None
@@ -2722,6 +2754,7 @@ class FullHatchPlanner:
                 hatched = hatch.hatched - self._hatch_baseline
                 if hatched > 0:
                     self._hatched_since_cave_read += hatched
+                    self._hatch_baseline = hatch.hatched
                     estimate = (
                         None
                         if self._cave_population is None
@@ -2741,7 +2774,9 @@ class FullHatchPlanner:
                         growth is not None
                         and growth >= self.screening_growth_interval
                     )
-                    management_trigger = capacity_trigger or growth_trigger
+                    management_trigger = capacity_trigger or (
+                        growth_trigger and bool(self._screening_stages)
+                    )
                     self.logger.info(
                         "Hatch full | phase A complete | hatched=%d | cave≈%s"
                         " | growth=%s | trigger=%s",
@@ -2752,23 +2787,21 @@ class FullHatchPlanner:
                         if capacity_trigger
                         else ("growth" if growth_trigger else "none"),
                     )
+                    if capacity_trigger and not self._cave_enabled:
+                        self._hatch_capacity_check_pending = True
+                        self._begin_home_recovery("verify safe population before hunting only")
+                        return
                     if management_trigger and not self._management_pending:
                         self._queue_management(
                             population=estimate,
                             cave_cleanup_after=capacity_trigger,
                         )
-                    if capacity_trigger and not self._cave_enabled:
-                        self._capacity_blocked = True
-                        self.logger.error(
-                            "Hatch custom | safe population reached but cave stage"
-                            " is disabled | estimate=%s/%d | switching to hunt",
-                            "?" if estimate is None else estimate,
-                            self.capacity_limit,
-                        )
-                        return
                     if management_trigger:
                         self._begin_queued_management()
+                    elif self._custom_cycle and self._collect_done_for_cycle:
+                        self._start_empty_rescan_wait()
                     elif self._collect_enabled:
+                        self._collect_before_hatch = self._custom_cycle
                         self._enter_open_nest(collect_only=True)
                     else:
                         self._start_empty_rescan_wait()
@@ -2783,6 +2816,7 @@ class FullHatchPlanner:
                             "Hatch full | no ready incubator eggs | "
                             "collect all nest eggs before cooldown"
                         )
+                        self._collect_before_hatch = self._custom_cycle
                         self._enter_open_nest(collect_only=True)
                     else:
                         self.logger.info(
@@ -3076,6 +3110,12 @@ class FullHatchPlanner:
             if interruption is not None:
                 self._no_target_since = None
                 return detection_target(interruption)
+        # Stop before another egg or boost when verified claims reach the
+        # configured stop line. Re-read the HUD and recenter before hunting.
+        if self._population_limit_pending():
+            self._hatch_capacity_check_pending = True
+            self._begin_home_recovery("verify safe population before further hatching")
+            return self.choose(frame, detections)
         # Check boosts during a normal incubator visit, after ready eggs.
         # Keep the panel open so the child can finish its scan and read timers.
         # Only this check owns a confirmation raised by its boost-button action.
@@ -3454,6 +3494,16 @@ class FullHatchPlanner:
                     self._hatch_capacity_check_pending = False
                     self._egg_pile_capacity_rechecked = False
                     self._egg_pile_retry_pending = False
+                    if not self._cave_enabled:
+                        self._capacity_blocked = True
+                        self.population_limit_reached = True
+                        self._stage = "capacity_blocked"
+                        self.logger.info(
+                            "Hatch custom | safe population reached | capacity=%d/%d"
+                            " | hatching stopped; hunt remains active",
+                            self._cave_population, self.capacity_limit,
+                        )
+                        return None
                     if self._capacity_blocked:
                         return None
                     self._begin_queued_management()
@@ -3563,6 +3613,16 @@ class FullHatchPlanner:
                     )
                     return self._choose_current(frame, detections)
                 if self._collect_only_after_empty:
+                    if self._collect_before_hatch:
+                        self._collect_before_hatch = False
+                        self._collect_only_after_empty = False
+                        self._observed_cooldown_until = None
+                        self._stage = "hatch"
+                        self._child = self._new_hatch()
+                        self._hatch_baseline = 0
+                        self._start_hatch_cycle()
+                        self._collect_done_for_cycle = True
+                        return self._choose_current(frame, detections)
                     self._start_empty_rescan_wait()
                     return self._choose_current(frame, detections)
                 missing = self._missing_screening_stages()
@@ -3665,6 +3725,11 @@ class FullHatchPlanner:
         )
 
     def _begin_home_recovery(self, reason: str) -> None:
+        self._collect_before_hatch = False
+        if self._custom_cycle and not self._cave_enabled:
+            # The replacement child loses any pending hatch count, so prove
+            # population again before allowing more hatches after recovery.
+            self._capacity_checked = False
         if self.standalone_stage is not None and self._standalone_started:
             self._standalone_returning = True
         if "parent_stats_unreadable" in reason:
@@ -3817,6 +3882,8 @@ class FullHatchPlanner:
         self._hatch_baseline = 0
         self._start_hatch_cycle()
 
+        self._collect_done_for_cycle = self._custom_cycle and self._collect_enabled
+
     def _remember_capacity_preflight_result(self) -> None:
         """Persist a valid capacity read before cave recentering can recover."""
 
@@ -3828,13 +3895,8 @@ class FullHatchPlanner:
         self._hatched_since_cave_read = 0
         if child.cull_required:
             if not self._cave_enabled:
-                self._capacity_blocked = True
-                self.logger.error(
-                    "Hatch custom | capacity=%d/%d requires cleanup, but cave"
-                    " stage is disabled | hatching stopped; hunt remains active",
-                    reading,
-                    self.capacity_limit,
-                )
+                # The capacity child must finish returning home before the
+                # blocked flag permits the combined planner to start hunting.
                 return
             if not self._management_pending:
                 self.logger.warning(

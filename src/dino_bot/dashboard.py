@@ -280,11 +280,14 @@ def _workflow_status(logs_dir: Path, mode: str | None) -> dict[str, Any]:
         if message.startswith("Bot started"):
             stage, label = ("hunt", "純狩獵") if mode == "hunt" else ("hatch", "檢查孵蛋")
             before_boost = None
+        elif "Hatch+Hunt | safe population reached; switching to hunt" in message:
+            stage, label = "population_limit_hunt", "已達安全人口，持續狩獵"
+            cooldown_remaining = None
         elif "Hatch+Hunt | hatch calibration blocked; switching to hunt" in message:
             stage, label = "hatch_blocked_hunt", "孵蛋已鎖住，僅繼續狩獵"
             cooldown_remaining = None
         elif planned_target in {"dinosaur", "hunt_button", "hunt_confirm_button"}:
-            if stage not in {"hatch_blocked_hunt", "cooldown_hunt"}:
+            if stage not in {"hatch_blocked_hunt", "cooldown_hunt", "population_limit_hunt"}:
                 stage, label = "hunt", "狩獵"
         elif (
             "Cooldown boost | scheduled visit starting" in message
@@ -602,8 +605,8 @@ class DashboardController:
                 raise ValueError(f"{label} must be an integer")
             if value <= 0:
                 raise ValueError(f"{label} must be greater than zero")
-        if cull_threshold >= capacity_limit:
-            raise ValueError("cull_threshold must be less than capacity_limit")
+        if cull_threshold > capacity_limit:
+            raise ValueError("cull_threshold cannot exceed capacity_limit")
         if (
             allow_extreme_specialization_parent is not None
             and not isinstance(allow_extreme_specialization_parent, bool)

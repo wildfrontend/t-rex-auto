@@ -784,12 +784,19 @@ def test_dashboard_saves_hatch_tuning_to_the_instance_config(tmp_path: Path) -> 
     }
 
 
-@pytest.mark.parametrize("cull_threshold", [250, 260])
-def test_dashboard_refuses_a_cull_line_at_or_above_the_population_cap(
+def test_dashboard_accepts_safe_population_equal_to_cap(tmp_path: Path) -> None:
+    controller = tuning_controller(tmp_path)
+    instance = controller.instances[0]
+    controller.set_hatch_tuning(instance.instance_id, 250, 250, 20)
+    tuning = controller.hatch_tuning(instance)
+    assert tuning["capacity_limit"] == tuning["cull_threshold"] == 250
+
+
+@pytest.mark.parametrize("cull_threshold", [251, 260])
+def test_dashboard_refuses_a_cull_line_above_the_population_cap(
     tmp_path: Path,
     cull_threshold: int,
 ) -> None:
-    # 安全人口等於或高於上限會失去預留空間,而且畫面上看起來像設定成功了。
     controller = tuning_controller(tmp_path)
     instance = controller.instances[0]
 
@@ -952,3 +959,14 @@ def test_dashboard_serves_and_accepts_hatch_tuning_over_http(tmp_path: Path) -> 
     # 被拒絕的請求不能留下半套設定。
     saved = json.loads((app / "config.json").read_text(encoding="utf-8"))
     assert saved["hatch"] == expected
+
+
+def test_dashboard_keeps_population_stop_status_while_hunting(tmp_path: Path):
+    (tmp_path / "20260908.log").write_text(
+        "01:00:00 | INFO | Hatch+Hunt | safe population reached; switching to hunt\n"
+        "01:00:01 | INFO | Planning | target=dinosaur | x=300 y=700\n",
+        encoding="utf-8",
+    )
+    state = _workflow_status(tmp_path, "custom-workflow")
+    assert state["stage"] == "population_limit_hunt"
+    assert state["cooldown_remaining_seconds"] is None

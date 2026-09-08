@@ -111,7 +111,9 @@ class HatchHuntPlanner:
         """Live state for Dashboard; unlike log inference this cannot age out."""
         blocked = self._hatch_is_blocked()
         state: dict[str, Any] = {"hatch_blocked": blocked, "planner_stage": self.last_stage()}
-        if blocked:
+        if getattr(self.hatch, "population_limit_reached", False):
+            state.update(stage="population_limit_hunt", label="已達安全人口，持續狩獵")
+        elif blocked:
             state.update(stage="hatch_blocked_hunt", label="孵蛋已鎖住，僅繼續狩獵")
         elif self._mode == "hunt":
             state.update(stage="cooldown_hunt", label="冷卻期間狩獵")
@@ -168,9 +170,12 @@ class HatchHuntPlanner:
             if self._mode != "hunt":
                 self._mode = "hunt"
                 self._centered_frames = 0
-                self.logger.error(
-                    "Hatch+Hunt | hatch calibration blocked; switching to hunt"
-                )
+                if getattr(self.hatch, "population_limit_reached", False):
+                    self.logger.info("Hatch+Hunt | safe population reached; switching to hunt")
+                else:
+                    self.logger.error(
+                        "Hatch+Hunt | hatch calibration blocked; switching to hunt"
+                    )
             return self._choose_owned(self.hunt, frame, detections)
 
         if self._mode == "hatch":

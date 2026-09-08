@@ -247,7 +247,7 @@ class HatchConfig:
     # Keep this configurable because the game can expand the population cap.
     capacity_limit: int = 350
     # Cull once the cave-view population readout reaches this safety limit.
-    # This lower threshold leaves headroom below the configured cap.
+    # May equal the configured cap when no spare population is desired.
     cull_threshold: int = 330
     # Below the cull line, rerun nest screening every this many newly added
     # dinosaurs, measured from the last completed screening.
@@ -946,9 +946,9 @@ def _validate(config: AppConfig) -> None:
         raise ConfigError("hatch.capacity_limit must be greater than zero")
     if config.hatch.cull_threshold <= 0:
         raise ConfigError("hatch.cull_threshold must be greater than zero")
-    if config.hatch.cull_threshold >= config.hatch.capacity_limit:
+    if config.hatch.cull_threshold > config.hatch.capacity_limit:
         raise ConfigError(
-            "hatch.cull_threshold must be less than hatch.capacity_limit"
+            "hatch.cull_threshold cannot exceed hatch.capacity_limit"
         )
     if config.hatch.screening_growth_interval <= 0:
         raise ConfigError(

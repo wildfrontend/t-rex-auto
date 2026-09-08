@@ -26,7 +26,9 @@ from dino_bot.full_hatch import (
     CAVE_SELECT_BUTTON,
     CAVE_SWIPE,
     COLLECT_EGGS_BUTTON,
+    DEFAULT_FULL_HATCH_STAGES,
     DEFAULT_SUCCESS_TRANSITIONS,
+    FULL_HATCH_STAGES,
     HATCH_BOOST_BUTTON,
     HATCH_BOOST_CONFIRM,
     HATCH_DETAIL_CLOSE,
@@ -51,8 +53,6 @@ from dino_bot.full_hatch import (
     RECOVERY_NO,
     RECOVERY_RECENTER,
     RECOVERY_UNDO,
-    DEFAULT_FULL_HATCH_STAGES,
-    FULL_HATCH_STAGES,
     SCREENING_STAGES,
     SELECT_CHOOSE_BUTTON,
     SELECT_WEAKEST_BUTTON,
@@ -951,7 +951,7 @@ def test_unreadable_cleanup_capacity_blocks_hatch_instead_of_restarting() -> Non
 
 @pytest.mark.parametrize(
     ("capacity_limit", "cull_threshold"),
-    [(0, 1), (350, 0), (350, 350), (350, 351)],
+    [(0, 1), (350, 0), (350, 351)],
 )
 def test_full_hatch_rejects_unsafe_capacity_parameters(
     capacity_limit: int,
@@ -1049,8 +1049,9 @@ def test_custom_full_hatch_stops_hatching_at_safe_population_without_cave() -> N
 
     planner.on_action_success(hatch.CLOSE_BUTTON)
 
-    assert planner.is_hatch_blocked()
-    assert planner._capacity_blocked is True
+    assert not planner.is_hatch_blocked()
+    assert planner._hatch_capacity_check_pending
+    assert planner._stage == "recover_home"
 
 
 def test_full_hatch_repeated_action_failure_enters_safe_home_recovery() -> None:
@@ -3127,7 +3128,7 @@ def test_default_hatch_cycle_skips_mass_placement() -> None:
     assert "mass" in FULL_HATCH_STAGES
     assert "mass" not in DEFAULT_FULL_HATCH_STAGES
     # Nothing else was dropped along with it.
-    assert FULL_HATCH_STAGES - DEFAULT_FULL_HATCH_STAGES == {"mass"}
+    assert {"mass"} == FULL_HATCH_STAGES - DEFAULT_FULL_HATCH_STAGES
 
     planner = make_full_planner()
     assert planner._screening_stages == ("attack", "hp", "top")
@@ -3169,9 +3170,11 @@ def test_incubator_hatches_ready_eggs_and_reads_timer_before_inline_boost(
     assert planner._observed_cooldown_until == 10_600
     assert not planner.boost_visit_active()
     planner.on_action_success(chosen.type)
-    assert planner.choose(screen, [detection(hatch.HATCH_BUTTON, 450, 1185)]).type == hatch.HATCH_BUTTON
+    chosen = planner.choose(screen, [detection(hatch.HATCH_BUTTON, 450, 1185)])
+    assert chosen.type == hatch.HATCH_BUTTON
     planner.on_action_success(hatch.HATCH_BUTTON)
-    assert planner.choose(screen, [detection(hatch.CLAIM_BUTTON, 330, 1242)]).type == hatch.CLAIM_BUTTON
+    chosen = planner.choose(screen, [detection(hatch.CLAIM_BUTTON, 330, 1242)])
+    assert chosen.type == hatch.CLAIM_BUTTON
     planner.on_action_success(hatch.CLAIM_BUTTON)
     assert child.hatched == 1
     if ready:
@@ -3188,3 +3191,115 @@ def test_incubator_hatches_ready_eggs_and_reads_timer_before_inline_boost(
     assert planner._screening_completed == {"attack", "hp", "top"}
     assert planner._observed_cooldown_until == (10_300 if ready else 10_600)
     assert inventory.snapshot().remaining == (99 if ready else 100)
+
+
+@pytest.mark.parametrize("stop_line", [330, 350])
+def test_custom_preflight_at_stop_line_returns_home_before_hunting(monkeypatch, stop_line):
+    _patch_capacity(monkeypatch, stop_line)
+    planner = FullHatchPlanner(
+        DigitReader(GLYPHS), egg_pile_point=(450, 1330),
+        enabled_stages=("collect", "hatch"),
+        capacity_limit=350, cull_threshold=stop_line,
+    )
+    home = [detection(hatch.HOME_ANCHOR, 59, 561)]
+    for _ in range(2):
+        chosen = planner.choose(frame(), home)
+        assert chosen.type == CAVE_SWIPE
+        planner.on_action_success(chosen.type)
+    cave = [detection("hatch_cave", 209, 1150)]
+    assert planner.choose(frame(), cave) is None
+    for _ in range(2):
+        chosen = planner.choose(frame(), cave)
+        assert chosen.type == CAVE_RECENTER
+        assert not planner.is_hatch_blocked()
+        planner.on_action_success(chosen.type)
+    assert planner.choose(frame(), home) is None
+    assert not planner.is_hatch_blocked()
+    assert planner.choose(frame(), home) is None
+    assert planner.is_hatch_blocked()
+    assert planner.population_limit_reached
+    assert not planner.begin_home_collection()
+    assert not planner.begin_interim_collection()
+    assert planner.choose(frame(), [detection(hatch.HATCH_LABEL)]) is None
+
+
+@pytest.mark.parametrize("stop_line", [330, 350])
+@pytest.mark.parametrize("ready_egg", [False, True])
+def test_custom_last_claim_prevents_next_egg_and_boost(tmp_path, stop_line, ready_egg):
+    inventory = HatchBoostInventoryStore(tmp_path / "stats.sqlite3")
+    inventory.set_enabled(True)
+    planner = FullHatchPlanner(
+        DigitReader(GLYPHS), egg_pile_point=(450, 1330),
+        enabled_stages=("collect", "hatch"), boost_inventory=inventory,
+        capacity_limit=350, cull_threshold=stop_line,
+    )
+    planner._capacity_checked = True
+    planner._cave_population = stop_line - 1
+    claim = planner.choose(frame(), [detection(hatch.CLAIM_BUTTON, 330, 1242)])
+    assert claim.type == hatch.CLAIM_BUTTON
+    planner.on_action_success(claim.type)
+    panel = [detection(hatch.INCUBATOR_TITLE), detection(hatch.CLOSE_BUTTON, 800, 1380)]
+    if ready_egg:
+        panel.append(detection(hatch.HATCH_LABEL, 270, 436))
+    chosen = planner.choose(boost_ready_frame(), panel)
+    assert chosen is None or chosen.type not in {hatch.HATCH_LABEL, HATCH_BOOST_BUTTON}
+    assert planner._stage == "recover_home"
+    assert planner._hatch_capacity_check_pending
+    assert not planner._capacity_checked
+    assert not planner.boost_visit_active()
+    assert inventory.snapshot().remaining == 100
+
+
+def test_custom_return_collects_then_hatches_boosts_and_waits_once(tmp_path, monkeypatch):
+    now = [10_000.0]
+    inventory = HatchBoostInventoryStore(tmp_path / "stats.sqlite3", clock=lambda: now[0])
+    inventory.set_enabled(True)
+    planner = FullHatchPlanner(
+        DigitReader(GLYPHS), egg_pile_point=(450, 1330),
+        enabled_stages=("collect", "hatch"), boost_inventory=inventory,
+        clock=lambda: now[0],
+    )
+    planner._capacity_checked = True
+    planner._cave_population = 300
+    planner._start_empty_rescan_wait()
+    now[0] += 601
+    assert planner.begin_home_collection()
+    home = [detection(hatch.HOME_ANCHOR, 59, 561)]
+    chosen = planner.choose(frame(), home)
+    assert chosen.type == OPEN_NEST
+    planner.on_action_success(chosen.type)
+    nest = [detection(NEST_TITLE, 450, 260), detection(nest_filter.TAG_HDR_ALL, 228, 168)]
+    chosen = planner.choose(frame(), nest + [detection(COLLECT_EGGS_BUTTON, 650, 1315)])
+    assert chosen.type == COLLECT_EGGS_BUTTON
+    planner.on_action_success(chosen.type)
+    chosen = planner.choose(frame(), nest)
+    assert chosen.type == NEST_MASK_CLOSE
+    planner.on_action_success(chosen.type)
+    chosen = planner.choose(frame(), home)
+    assert chosen.type == hatch.EGG_PILE
+    planner.on_action_success(chosen.type)
+    panel = [detection(hatch.INCUBATOR_TITLE), detection(hatch.CLOSE_BUTTON, 800, 1380)]
+    chosen = planner.choose(boost_ready_frame(), panel + [detection(hatch.HATCH_LABEL, 270, 436)])
+    assert chosen.type == hatch.HATCH_LABEL
+    assert not planner.boost_visit_active()
+    planner.on_action_success(chosen.type)
+    assert planner.choose(frame(), [detection(hatch.HATCH_BUTTON)]).type == hatch.HATCH_BUTTON
+    planner.on_action_success(hatch.HATCH_BUTTON)
+    assert planner.choose(frame(), [detection(hatch.CLAIM_BUTTON)]).type == hatch.CLAIM_BUTTON
+    planner.on_action_success(hatch.CLAIM_BUTTON)
+    chosen = planner.choose(boost_ready_frame(), panel)
+    assert chosen.type == HATCH_BOOST_BUTTON
+    planner.on_action_success(chosen.type)
+    prompt = panel + [detection(CONFIRM_YES, 365, 850), detection(CONFIRM_NO, 535, 850)]
+    chosen = planner.choose(boost_ready_frame(), prompt)
+    assert chosen.type == HATCH_BOOST_CONFIRM
+    planner.on_action_success(chosen.type)
+    monkeypatch.setattr(hatch, "read_hatch_cooldown_seconds", lambda *a, **kw: 300)
+    chosen = planner.choose(frame(), panel)
+    assert chosen.type == hatch.CLOSE_BUTTON
+    planner.on_action_success(chosen.type)
+    assert inventory.snapshot().remaining == 99
+    assert planner.is_hunt_cooldown_active()
+    assert planner.hunt_cooldown_delay_ms() == 300_000
+    assert planner.choose(frame(), home) is None
+    assert planner._stage == "hatch"  # No second collection before hunting.
