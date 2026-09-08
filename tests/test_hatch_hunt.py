@@ -610,6 +610,25 @@ def test_handoff_leaves_a_map_parked_with_its_centre_egg_centred() -> None:
     assert hunt_planner.recenter_requests == ["hatch cooldown handoff"]
 
 
+def test_handoff_anchor_wait_survives_a_dropped_egg_detection() -> None:
+    combined, hatch_planner, hunt_planner = planner()
+    assert combined.choose(frame(), []) is None
+    hatch_planner.cooldown_ms = 20_000
+    hunt_planner.next_target = target("map_exit_nest_button", 840, 1295)
+    centred = [detection("map_center_egg", 450, 787)]
+    # The map is unchanged; the animated egg merely failed to match this frame.
+    dropped = [detection("dinosaur", 300, 700)]
+
+    assert combined.choose(frame(), centred) is None
+    assert combined.choose(frame(), dropped) is None
+    assert combined.choose(frame(), centred) is None
+    assert combined._anchor_only_frames == 3
+
+    # A fourth frame passes the bound, so the handoff acts on the map instead
+    # of sitting on it until the deadline fires.
+    assert combined.choose(frame(), centred) is not None
+
+
 def test_handoff_anchor_wait_resets_when_the_egg_leaves_the_centre() -> None:
     """The bounded wait is for consecutive frames, not a lifetime budget."""
 

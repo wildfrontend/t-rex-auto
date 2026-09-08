@@ -737,7 +737,16 @@ def is_centered_home_screen(frame: Frame, detections: Sequence[Detection]) -> bo
     """Return whether the normal home map (not the shifted cave view) is ready."""
 
     types = {item.type for item in detections}
-    if any(item.type == CAVE for item in detections) or types & HOME_FOREGROUND_TYPES:
+    # The map exit control is the one foreground type the handoff itself taps
+    # to get home, and the game keeps painting it on the frame that follows.
+    # Letting it veto the centred-home proof makes the target unreachable by
+    # definition: an S9 v0.0.70 trace matched it at 0.957 on all eleven frames
+    # of a handoff, so the test could never pass, the handoff toggled
+    # map_exit -> recenter seven times, and the timeout fused the hatch side
+    # off. The geometric proof below is the reliable signal here, so only
+    # judge this frame by the foreground types that cannot share it.
+    blocking = HOME_FOREGROUND_TYPES - {HUNT_MAP_EXIT}
+    if any(item.type == CAVE for item in detections) or types & blocking:
         return False
     # The home anchor can be clipped after a successful map return even when
     # the stable egg-pile base is exactly centred. The Forest control is a

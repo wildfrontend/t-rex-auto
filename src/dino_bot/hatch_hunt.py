@@ -622,12 +622,21 @@ class HatchHuntPlanner:
         # 152s loop (91s stalled, 61s hunting) while the nest button it needed
         # was visible at 0.957 the entire time.  Wait out a transient miss,
         # then fall through to the map-exit path below.
-        if center_anchor is not None:
+        # A frame that simply failed to match the animated egg is not evidence
+        # the map moved, so it must not restart the wait. Only an egg seen
+        # somewhere else proves the map is being worked.
+        anchor_elsewhere = center_anchor is None and any(
+            item.type == self.hunt.center_anchor_type for item in detections
+        )
+        if anchor_elsewhere:
+            self._anchor_only_frames = 0
+        elif center_anchor is not None or self._anchor_only_frames:
+            # Count a centred egg, and carry the streak across a frame that
+            # merely missed it -- but never start one from a map that has not
+            # shown the egg centred at all.
             self._anchor_only_frames += 1
             if self._anchor_only_frames <= MAX_ANCHOR_ONLY_HANDOFF_FRAMES:
                 return None
-        else:
-            self._anchor_only_frames = 0
 
         hunt_controls = any(
             item.type in self.hunt.hunt_button_types for item in detections

@@ -1812,6 +1812,24 @@ def test_centered_home_accepts_clipped_anchor_with_forest_landmark() -> None:
     assert not is_centered_home_screen(frame(), [])
 
 
+def test_centered_home_survives_a_visible_map_exit_button() -> None:
+    landmarks = [
+        detection("forest_recenter_button", 841, 1296),
+        detection(hatch.HOME_ANCHOR, 59, 561),
+    ]
+    exit_button = detection("map_exit_nest_button", 841, 1295)
+    for landmark in landmarks:
+        assert is_centered_home_screen(frame(), [landmark, exit_button])
+
+    # The exit button alone still proves nothing, and a real hunt sheet must
+    # still be rejected; only the exit control is allowed to share home.
+    assert not is_centered_home_screen(frame(), [exit_button])
+    assert not is_centered_home_screen(
+        frame(),
+        [*landmarks, detection("hunt_confirm_button", 451, 1411)],
+    )
+
+
 def test_centered_home_requires_the_same_pile_proof_as_hatch_child() -> None:
     # A very thin coloured strip is enough for the skin-specific locator to
     # estimate a centred offset, but it is not enough to safely identify the
