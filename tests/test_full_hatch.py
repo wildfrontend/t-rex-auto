@@ -2249,10 +2249,15 @@ def test_full_flow_tracks_shifted_egg_pile_instead_of_tapping_roaming_dinosaur()
     assert target.type != hatch.EGG_PILE
 
 
-def test_full_flow_uses_nest_shortcut_before_tapping_visible_home() -> None:
+def test_full_flow_uses_nest_shortcut_on_dimmed_card_despite_visible_home_anchor() -> None:
+    # The card can leave the HUD anchor template-visible behind it. Its dimmed
+    # outdoor map, not the anchor alone, distinguishes it from the bright-home
+    # false positive covered below.
+    image = frame().image.copy()
+    image[:] = 70
     planner = make_full_planner()
     target = planner.choose(
-        frame(),
+        frame(image),
         [
             detection(hatch.HOME_ANCHOR, 59, 561),
             detection(STARTUP_GROWTH_RESULT, 307, 1265),
@@ -2337,6 +2342,45 @@ def test_full_flow_does_not_tap_false_startup_shortcut_on_nest_screen() -> None:
     )
 
     assert target is None or target.type != STARTUP_NEST_SHORTCUT
+
+
+def test_full_flow_ignores_growth_layout_match_on_bright_home_map() -> None:
+    """S9's snowy home and egg pile can satisfy the broad launch layout."""
+
+    planner = make_full_planner()
+    target = planner.choose(
+        frame(),
+        [
+            detection(hatch.HOME_ANCHOR, 49, 562),
+            detection(
+                STARTUP_GROWTH_RESULT,
+                450,
+                1270,
+                metadata={"shortcut_layout": "centered_nest"},
+            ),
+        ],
+    )
+
+    assert target is None or target.type != STARTUP_NEST_SHORTCUT
+
+
+def test_home_recovery_ignores_growth_layout_match_on_bright_shifted_home() -> None:
+    """A false launch-card match must not consume recovery's escape ladder."""
+
+    image = frame().image.copy()
+    image[1448:1460, 330:573] = 255
+    image[1328:1340, 330:573] = (220, 180, 20)
+    planner = HatchHomeRecoveryPlanner()
+
+    target = planner.choose(
+        frame(image),
+        [
+            detection(hatch.HOME_ANCHOR, 59, 561),
+            detection(STARTUP_GROWTH_RESULT, 450, 1270),
+        ],
+    )
+
+    assert target is not None and target.type == RECOVERY_RECENTER
 
 
 def test_full_flow_prefers_nested_auto_battle_overlay_during_startup() -> None:

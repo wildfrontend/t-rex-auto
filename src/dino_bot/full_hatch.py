@@ -1281,7 +1281,15 @@ class HatchHomeRecoveryPlanner:
         # at 22:50 and spent the next hour hunting only.  The card carries no
         # close button - tapping the dimmed margin beside it dismisses it -
         # so reuse the mask point the nest and auto-place layers already use.
-        if STARTUP_GROWTH_RESULT in by_type:
+        # The growth-result layout detector is intentionally colour-based so
+        # it can support the game's changing artwork.  A snowy S9 home map
+        # with a large egg pile can resemble that layout, though.  A real
+        # growth card dims the outdoor map; a bright map with its home anchor
+        # is stronger evidence that this is a false layout match and must be
+        # allowed to recenter rather than spending the Back ladder.
+        if STARTUP_GROWTH_RESULT in by_type and not is_home_screen(
+            frame, home_detections
+        ):
             self._stage = "close_growth_result_mask"
             return synthetic_target(
                 RECOVERY_MASK_CLOSE,
@@ -3307,6 +3315,11 @@ class FullHatchPlanner:
             # on 2026-08-31 S9 re-tapped the shortcut three times, exhausted
             # the Back ladder and dropped the hatch workflow for the session.
             and self._stage != "recover_home"
+            # A real startup result card darkens the map.  Conversely, the
+            # bright home map is independently proven by its anchor and side
+            # strips, and its egg pile can satisfy this broad colour layout
+            # detector.  Never open My Nest from that false match.
+            and not is_home_screen(frame, detections)
             and (growth_result := best_detection(by_type.get(STARTUP_GROWTH_RESULT))) is not None
         ):
             self._no_target_since = None

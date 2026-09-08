@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Protocol
 
+from .actions import AdbError
 from .events import (
     EventLog,
     NullEventLog,
@@ -119,6 +120,8 @@ class BotContext:
     action_stage: str = ""
     action_failure_episodes: dict[tuple[str, str], int] = field(default_factory=dict)
     recovery_restarts_without_progress: int = 0
+    action_transport_failures: int = 0
+    action_transport_failure_limit: int = 2
 
 
 class StateHandler(Protocol):
@@ -601,7 +604,45 @@ class ActionState:
             target=target_payload(context.target),
             attempt=context.attempt,
         )
-        context.action_driver.execute(context.action, context.frame)
+        try:
+            context.action_driver.execute(context.action, context.frame)
+        except AdbError as exc:
+            # A shell/input failure says nothing about whether the UI changed.
+            # Do not let it take down an unattended run, and do not claim a
+            # successful gesture.  The planner can return to a known-safe
+            # screen after one failure; two consecutive transport failures
+            # stop cleanly instead of endlessly issuing blind commands.
+            context.action_transport_failures += 1
+            failures = context.action_transport_failures
+            context.logger.warning(
+                "Action | ADB failed | target=%s | consecutive=%d/%d | error=%s",
+                context.target.type,
+                failures,
+                context.action_transport_failure_limit,
+                exc,
+            )
+            context.event_log.emit(
+                "action_transport_failure",
+                target=target_payload(context.target),
+                consecutive=failures,
+                limit=context.action_transport_failure_limit,
+                error=str(exc),
+            )
+            on_action_failure = getattr(context.planner, "on_action_failure", None)
+            if callable(on_action_failure):
+                on_action_failure(context.target.type)
+            context.target = None
+            context.action = None
+            context.attempt = 0
+            context.attempt_target_type = None
+            if failures >= max(1, context.action_transport_failure_limit):
+                context.logger.error(
+                    "Action | stopping after consecutive ADB failures | count=%d",
+                    failures,
+                )
+                return BotState.STOPPED
+            return BotState.CAPTURE
+        context.action_transport_failures = 0
         context.action_count += 1
         delay_ms = context.post_action_delays_ms.get(
             context.target.type,

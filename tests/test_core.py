@@ -44,6 +44,7 @@ from dino_bot.detection import (
 from dino_bot.engine import BotContext, BotEngine, BotState
 from dino_bot.models import (
     ActionCommand,
+    ActionKind,
     BoundingBox,
     Detection,
     ExclusionZone,
@@ -2022,6 +2023,89 @@ def test_engine_runs_complete_feedback_loop() -> None:
     assert len(driver.actions) == 1
     assert context.last_result is not None and context.last_result.success
     assert capture.closed
+
+
+def test_engine_recovers_one_adb_action_failure_without_crashing() -> None:
+    class FailingAdbActionDriver:
+        def execute(self, action: ActionCommand, frame: Frame) -> None:
+            del action, frame
+            raise AdbError("ADB exited with 255: swipe transport failed")
+
+    class FailureAwarePlanner(TargetPlanner):
+        def __init__(self) -> None:
+            super().__init__()
+            self.failed: list[str] = []
+
+        def on_action_failure(self, target_type: str) -> None:
+            self.failed.append(target_type)
+
+    target_detection = make_detection()
+    target = Target(
+        target_detection.type,
+        target_detection.x,
+        target_detection.y,
+        target_detection.confidence,
+        target_detection,
+    )
+    planner = FailureAwarePlanner()
+    events = RecordingEventLog()
+    context = BotContext(
+        capture_provider=SequenceCapture([make_frame(0)]),
+        detector=PixelDetector(),
+        planner=planner,
+        action_driver=FailingAdbActionDriver(),  # type: ignore[arg-type]
+        verifier=AlwaysFailsVerifier(),
+        observer=RuntimeMode(),
+        logger=logging.getLogger("test_adb_action_failure"),
+        event_log=events,
+        state=BotState.ACTION,
+        frame=make_frame(0),
+        detections=[target_detection],
+        target=target,
+        action=ActionCommand(ActionKind.SWIPE, 10, 10, 20, 20, 400),
+    )
+
+    assert BotEngine(context).step() == BotState.CAPTURE
+    assert planner.failed == ["resource"]
+    assert context.action_count == 0
+    assert context.target is None and context.action is None
+    assert context.action_transport_failures == 1
+    assert any(record["e"] == "action_transport_failure" for record in events.records)
+
+
+def test_engine_stops_cleanly_after_repeated_adb_action_failures() -> None:
+    class FailingAdbActionDriver:
+        def execute(self, action: ActionCommand, frame: Frame) -> None:
+            del action, frame
+            raise AdbError("ADB exited with 255: swipe transport failed")
+
+    target_detection = make_detection()
+    target = Target(
+        target_detection.type,
+        target_detection.x,
+        target_detection.y,
+        target_detection.confidence,
+        target_detection,
+    )
+    context = BotContext(
+        capture_provider=SequenceCapture([make_frame(0)]),
+        detector=PixelDetector(),
+        planner=TargetPlanner(),
+        action_driver=FailingAdbActionDriver(),  # type: ignore[arg-type]
+        verifier=AlwaysFailsVerifier(),
+        observer=RuntimeMode(),
+        logger=logging.getLogger("test_adb_action_failure_limit"),
+        state=BotState.ACTION,
+        frame=make_frame(0),
+        detections=[target_detection],
+        target=target,
+        action=ActionCommand(ActionKind.SWIPE, 10, 10, 20, 20, 400),
+        action_transport_failures=1,
+    )
+
+    assert BotEngine(context).step() == BotState.STOPPED
+    assert context.action_count == 0
+    assert context.action_transport_failures == 2
 
 
 def test_engine_stops_when_bounded_planner_reports_complete() -> None:
