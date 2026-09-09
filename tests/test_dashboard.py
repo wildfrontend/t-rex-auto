@@ -970,3 +970,14 @@ def test_dashboard_keeps_population_stop_status_while_hunting(tmp_path: Path):
     state = _workflow_status(tmp_path, "custom-workflow")
     assert state["stage"] == "population_limit_hunt"
     assert state["cooldown_remaining_seconds"] is None
+
+
+def test_dashboard_preserves_capacity_retry_status_during_hunt(tmp_path: Path):
+    (tmp_path / '20260908.log').write_text(
+        '12:29:55 | INFO | Hatch+Hunt | capacity recheck in 600s | switching to hunt\n'
+        '12:30:00 | INFO | Planning | dinosaur at (300,700) confidence=1.000\n',
+        encoding='utf-8',
+    )
+    state = _workflow_status(tmp_path, 'custom-workflow')
+    assert state['stage'] == 'capacity_retry_hunt'
+    assert state['label'] == '人口讀取失敗，狩獵後重試'

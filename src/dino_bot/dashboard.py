@@ -287,7 +287,10 @@ def _workflow_status(logs_dir: Path, mode: str | None) -> dict[str, Any]:
             stage, label = "hatch_blocked_hunt", "孵蛋已鎖住，僅繼續狩獵"
             cooldown_remaining = None
         elif planned_target in {"dinosaur", "hunt_button", "hunt_confirm_button"}:
-            if stage not in {"hatch_blocked_hunt", "cooldown_hunt", "population_limit_hunt"}:
+            if stage not in {
+                "hatch_blocked_hunt", "cooldown_hunt", "population_limit_hunt",
+                "capacity_retry_hunt",
+            }:
                 stage, label = "hunt", "狩獵"
         elif (
             "Cooldown boost | scheduled visit starting" in message
@@ -352,6 +355,8 @@ def _workflow_status(logs_dir: Path, mode: str | None) -> dict[str, Any]:
         elif "Hatch+Hunt | centered home confirmed" in message:
             stage, label = "hatch", "檢查孵蛋"
             cooldown_remaining = 0
+        elif "Hatch+Hunt | capacity recheck in" in message:
+            stage, label = "capacity_retry_hunt", "人口讀取失敗，狩獵後重試"
         elif "Hatch+Hunt | egg cooldown" in message and "switching to hunt" in message:
             stage, label = "cooldown_hunt", "冷卻期間狩獵"
         elif "interim nest collection during hunt idle" in message:

@@ -22,6 +22,10 @@ class CaptureError(RuntimeError):
     pass
 
 
+class AdbCaptureError(CaptureError):
+    """A screenshot failed because its configured ADB transport failed."""
+
+
 class EmulatorWindowFinder:
     def __init__(
         self,
@@ -188,7 +192,7 @@ class AdbScreencapCapture:
             try:
                 payload = self.client.screencap_png()
             except AdbError as exc:
-                raise CaptureError(str(exc)) from exc
+                raise AdbCaptureError(str(exc)) from exc
             image = cv2.imdecode(np.frombuffer(payload, dtype=np.uint8), cv2.IMREAD_COLOR)
             if image is None:
                 raise CaptureError("ADB returned an invalid PNG screenshot")

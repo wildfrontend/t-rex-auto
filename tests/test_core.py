@@ -3834,3 +3834,134 @@ def test_half_resolution_templates_keep_their_margin_on_a_real_screen() -> None:
             assert found[name] >= thresholds[name] + 0.03, (
                 f"{name} has no margin left at half resolution"
             )
+
+
+def test_missing_configured_device_reconnects_only_that_serial(monkeypatch):
+    client = _timeout_client(monkeypatch, [
+        _completed(255, b"error: device '127.0.0.1:16416' not found"),
+        _completed(), _completed(), _completed(),
+    ])
+    client.run(['exec-out', 'screencap', '-p'], binary=True)
+    assert client._test_calls == [
+        ['adb', '-s', '127.0.0.1:16416', 'exec-out', 'screencap', '-p'],
+        ['adb', '-s', '127.0.0.1:16416', 'reconnect'],
+        ['adb', 'connect', '127.0.0.1:16416'],
+        ['adb', '-s', '127.0.0.1:16416', 'exec-out', 'screencap', '-p'],
+    ]
+
+
+@pytest.mark.parametrize('message', [
+    b"error: device '127.0.0.1:5555' not found",
+    b'error: device unauthorized', b'error: more than one device/emulator',
+])
+def test_unrelated_adb_errors_do_not_select_or_reconnect_devices(monkeypatch, message):
+    client = _timeout_client(monkeypatch, [_completed(255, message)])
+    with pytest.raises(AdbError):
+        client.run(['exec-out', 'screencap', '-p'], binary=True)
+    assert len(client._test_calls) == 1
+
+
+@pytest.mark.parametrize('initial_state', [BotState.CAPTURE, BotState.VERIFY])
+def test_capture_disconnect_discards_old_action_and_recovers_from_a_new_frame(initial_state):
+    from dino_bot.capture import AdbCaptureError
+
+    class IntermittentCapture(SequenceCapture):
+        def capture(self):
+            if self.index == 0:
+                self.index += 1
+                raise AdbCaptureError("device '127.0.0.1:5555' not found")
+            return super().capture()
+
+    item = make_detection()
+    events = RecordingEventLog()
+    context = BotContext(
+        capture_provider=IntermittentCapture([make_frame(0)]),
+        detector=PixelDetector(), planner=TargetPlanner(['resource']),
+        action_driver=RecordingActionDriver(), verifier=AlwaysFailsVerifier(),
+        observer=RuntimeMode(), logger=logging.getLogger('capture_retry_test'),
+        event_log=events, state=initial_state, frame=make_frame(0),
+        before_frame=make_frame(0), before_detections=[item], detections=[item],
+        target=Target(item.type, item.x, item.y, item.confidence, item),
+        action=ActionCommand(ActionKind.TAP, item.x, item.y),
+        reuse_verified_detections=True, capture_transport_retry_delay_ms=0,
+    )
+    engine = BotEngine(context)
+    assert engine.step() == BotState.CAPTURE
+    assert context.capture_transport_failures == 1
+    assert context.frame is None and context.before_frame is None
+    assert context.target is None and context.action is None
+    assert context.detections == [] and not context.reuse_verified_detections
+    assert context.action_count == 0
+    assert engine.step() == BotState.DETECT
+    assert context.capture_transport_failures == 0
+    assert context.frame is not None
+    assert any(row['e'] == 'capture_transport_failure' for row in events.records)
+    assert any(row['e'] == 'capture_transport_recovered' for row in events.records)
+
+
+@pytest.mark.parametrize('cancel', [False, True])
+def test_persistent_capture_disconnect_stops_cleanly_or_obeys_stop(cancel):
+    from dino_bot.capture import AdbCaptureError
+
+    class MissingDeviceCapture(SequenceCapture):
+        def capture(self):
+            raise AdbCaptureError('device offline')
+
+    capture = MissingDeviceCapture([make_frame(0)])
+    context = BotContext(
+        capture_provider=capture, detector=PixelDetector(),
+        planner=TargetPlanner(['resource']), action_driver=RecordingActionDriver(),
+        verifier=AlwaysFailsVerifier(), observer=RuntimeMode(),
+        logger=logging.getLogger('capture_retry_exhausted_test'),
+        state=BotState.CAPTURE, capture_transport_failure_limit=2,
+        capture_transport_retry_delay_ms=0,
+    )
+    if cancel:
+        context.stop_event.set()
+    engine = BotEngine(context)
+    engine.run()
+    assert context.state == BotState.STOPPED
+    assert context.capture_transport_failures == (1 if cancel else 2)
+    assert context.action_count == 0 and capture.closed
+
+
+def test_non_transport_capture_errors_are_not_hidden_by_retries():
+    from dino_bot.capture import CaptureError
+
+    class InvalidCapture(SequenceCapture):
+        def capture(self):
+            raise CaptureError('invalid PNG screenshot')
+
+    context = BotContext(
+        capture_provider=InvalidCapture([make_frame(0)]), detector=PixelDetector(),
+        planner=TargetPlanner(['resource']), action_driver=RecordingActionDriver(),
+        verifier=AlwaysFailsVerifier(), observer=RuntimeMode(),
+        logger=logging.getLogger('invalid_capture_test'), state=BotState.CAPTURE,
+    )
+    with pytest.raises(CaptureError, match='invalid PNG'):
+        BotEngine(context).step()
+    assert context.capture_transport_failures == 0
+
+
+def test_screencap_reports_transport_failure_separately_from_bad_image():
+    from dino_bot.capture import AdbCaptureError, AdbScreencapCapture, CaptureError
+
+    class MissingDevice:
+        def screencap_png(self):
+            raise AdbError("error: device '127.0.0.1:5555' not found")
+
+    capture = AdbScreencapCapture(MissingDevice())
+    capture._raw_supported = False
+    with pytest.raises(AdbCaptureError) as raised:
+        capture.capture()
+    assert isinstance(raised.value.__cause__, AdbError)
+
+    class BadImage:
+        def screencap_png(self):
+            return b'not a PNG'
+
+    capture = AdbScreencapCapture(BadImage())
+    capture._raw_supported = False
+    with pytest.raises(CaptureError) as raised:
+        capture.capture()
+    assert not isinstance(raised.value, AdbCaptureError)

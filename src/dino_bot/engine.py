@@ -11,6 +11,7 @@ from enum import StrEnum
 from typing import Protocol
 
 from .actions import AdbError
+from .capture import AdbCaptureError
 from .events import (
     EventLog,
     NullEventLog,
@@ -122,6 +123,9 @@ class BotContext:
     recovery_restarts_without_progress: int = 0
     action_transport_failures: int = 0
     action_transport_failure_limit: int = 2
+    capture_transport_failures: int = 0
+    capture_transport_failure_limit: int = 6
+    capture_transport_retry_delay_ms: int = 5_000
 
 
 class StateHandler(Protocol):
@@ -367,6 +371,10 @@ class CaptureState:
     def execute(self, context: BotContext) -> BotState:
         started = time.perf_counter()
         frame = context.capture_provider.capture()
+        if context.capture_transport_failures:
+            context.logger.info("Capture | ADB screenshot recovered; resuming fresh planning")
+            context.event_log.emit("capture_transport_recovered")
+            context.capture_transport_failures = 0
         capture_ms = round((time.perf_counter() - started) * 1000)
         context.observer.on_frame(frame)
         context.frame = frame
@@ -1160,8 +1168,40 @@ class BotEngine:
         if self._game_restart_requested.is_set():
             return self._handle_game_restart()
         handler = self.states[self.context.state]
-        self.context.state = handler.execute(self.context)
+        try:
+            self.context.state = handler.execute(self.context)
+        except AdbCaptureError as exc:
+            self.context.state = self._handle_capture_transport_failure(exc)
         return self.context.state
+
+    def _handle_capture_transport_failure(self, error: AdbCaptureError) -> BotState:
+        """Retry screenshots, never a click whose result is now unknown.
+
+        AdbClient reconnects only the configured serial. Clearing transient
+        state also covers a disconnect during action verification: the next
+        successful screenshot must be planned afresh, not replay the old tap.
+        """
+        context = self.context
+        context.capture_transport_failures += 1
+        failures = context.capture_transport_failures
+        limit = max(1, context.capture_transport_failure_limit)
+        context.logger.warning(
+            "Capture | ADB failed | state=%s | consecutive=%d/%d | error=%s",
+            context.state, failures, limit, error,
+        )
+        context.event_log.emit(
+            "capture_transport_failure", state=str(context.state),
+            consecutive=failures, limit=limit, error=str(error),
+        )
+        _reset_after_runtime_recovery(context)
+        if failures >= limit:
+            context.logger.error(
+                "Capture | stopping after consecutive ADB failures | count=%d", failures,
+            )
+            return BotState.STOPPED
+        if _wait_for_delay(context, context.capture_transport_retry_delay_ms):
+            return BotState.STOPPED
+        return BotState.CAPTURE
 
     def _handle_game_restart(self) -> BotState:
         try:

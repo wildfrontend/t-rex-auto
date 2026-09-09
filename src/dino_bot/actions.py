@@ -191,14 +191,14 @@ class AdbClient:
         {"error: closed", "error: device offline"}
     )
 
-    @classmethod
     def _is_closed_transport(
-        cls,
+        self,
         completed: subprocess.CompletedProcess[bytes],
     ) -> bool:
-        return (
-            cls._error_message(completed).lower()
-            in cls._RECOVERABLE_TRANSPORT_ERRORS
+        message = self._error_message(completed).lower()
+        return message in self._RECOVERABLE_TRANSPORT_ERRORS or (
+            bool(self.config.serial)
+            and message == f"error: device '{self.config.serial}' not found".lower()
         )
 
     def _recover_closed_transport(self) -> None:

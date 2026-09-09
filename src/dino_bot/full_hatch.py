@@ -2458,9 +2458,11 @@ class FullHatchPlanner:
         self._capacity_blocked = False
         # A combined Hatch+Hunt run may make one bounded map round-trip after
         # a failed capacity preflight. The hunt map recentres a HUD that can be
-        # obscured by home-map scenery; a second failure still fuses hatching.
+        # obscured by home-map scenery. Custom runs without culling can then
+        # spend a retry interval hunting; other runs retain the capacity fuse.
         self._capacity_camera_refresh_used = False
         self.population_limit_reached = False
+        self.capacity_retry_pending = False
         self._screening_recovery_failures: dict[str, int] = {}
         self.completed_management_cycles = 0
         self._start_hatch_cycle()
@@ -2511,6 +2513,7 @@ class FullHatchPlanner:
 
         if (
             self._capacity_camera_refresh_used
+            or self.population_limit_reached
             or not self._capacity_blocked
             or self._stage != "capacity_blocked"
         ):
@@ -2571,6 +2574,8 @@ class FullHatchPlanner:
         return delay
 
     def boost_ready_delay_ms(self) -> int | None:
+        if self.capacity_retry_pending:
+            return None
         if self.boost_inventory is None or self.standalone_stage is not None:
             return None
         delay = self.boost_inventory.ready_delay_seconds()
@@ -2685,7 +2690,10 @@ class FullHatchPlanner:
         沒有 observed 值時退回整段設定時間)。
         """
 
-        if not self._collect_enabled or not self.is_hunt_cooldown_active():
+        if (
+            self.capacity_retry_pending or not self._collect_enabled
+            or not self.is_hunt_cooldown_active()
+        ):
             return False
         if self._observed_cooldown_until is None:
             self._observed_cooldown_until = (
@@ -2732,6 +2740,7 @@ class FullHatchPlanner:
 
     def reset_workflow(self) -> None:
         self.population_limit_reached = False
+        self.capacity_retry_pending = False
         self._collect_before_hatch = False
         if self._custom_cycle and not self._cave_enabled:
             self._capacity_checked = False
@@ -3358,6 +3367,12 @@ class FullHatchPlanner:
                 *_scaled(frame, shortcut_point, self.reference_width),
             )
 
+        # No egg-pile tap is due while waiting. A shifted home frame must not
+        # discard the countdown and start recovery before Hunt can take over.
+        # Foreground panels/startup overlays still follow their own handling.
+        if self.is_hunt_cooldown_active() and is_home_screen(frame, detections):
+            return None
+
         # The redesigned incubator's real bottom-right close button also
         # matches the hunt-dialog close template (S9: 0.998 hatch vs 0.910
         # hunt). The exact incubator title is stronger screen identity, so it
@@ -3504,6 +3519,8 @@ class FullHatchPlanner:
             return target
         if self._stage == "recover_home":
             return self.choose(frame, detections)
+        if self.is_complete():
+            return None
         if self.next_ready_delay_ms() > 0:
             self._no_target_since = None
             return None
@@ -3535,6 +3552,15 @@ class FullHatchPlanner:
     ) -> Target | None:
         by_type = _group(detections)
         if self._stage == "hatch":
+            if self.capacity_retry_pending:
+                if self.is_hunt_cooldown_active():
+                    return None
+                if is_centered_home_screen(frame, detections):
+                    self._begin_capacity_preflight("scheduled capacity recheck")
+                    return self._choose_current(frame, detections)
+                self._hatch_capacity_check_pending = True
+                self._begin_home_recovery("return home before scheduled capacity recheck")
+                return None
             if _home_pile_click_blocked(frame, detections):
                 if not self._capacity_checked:
                     # The pile is temporarily in the chat band. Capacity
@@ -3583,14 +3609,21 @@ class FullHatchPlanner:
                 if not self._capacity_child.capacity_readable:
                     self._egg_pile_capacity_check_pending = False
                     self._hatch_capacity_check_pending = False
+                    self._capacity_checked = False
+                    if (
+                        self._custom_cycle and not self._cave_enabled
+                        and self._capacity_camera_refresh_used
+                    ):
+                        self._start_capacity_retry_wait()
+                        return None
                     self.logger.error(
                         "Hatch capacity | preflight failed; configured capacity unreadable; "
                         "hatching stopped safely"
                     )
-                    self._capacity_checked = False
                     self._capacity_blocked = True
                     self._stage = "capacity_blocked"
                     return None
+                self.capacity_retry_pending = False
                 if self._capacity_child.cull_required:
                     self._egg_pile_capacity_check_pending = False
                     self._hatch_capacity_check_pending = False
@@ -4093,6 +4126,31 @@ class FullHatchPlanner:
             target_label="所有",
             target_option_type=nest_filter_feature.TAG_ALL,
             target_header_type=nest_filter_feature.TAG_HDR_ALL,
+        )
+
+    def _start_capacity_retry_wait(self) -> None:
+        """Pause hatching after a failed read and proven return home.
+
+        Reuse the normal hunting/handoff window, but keep collection and boost
+        visits disabled until a fresh capacity preflight succeeds. Never use
+        the old estimate to permit another hatch.
+        """
+        seconds = max(60.0, float(self._hatch_kwargs["rescan_interval_seconds"]))
+        self.capacity_retry_pending = True
+        self._stage = "hatch"
+        self._child = self._new_hatch()
+        self._hatch_baseline = 0
+        self._start_hatch_cycle()
+        self._collect_only_after_empty = False
+        self._collect_before_hatch = False
+        self._empty_rescan_wait = True
+        self._observed_cooldown_until = None
+        self._hatch_child.begin_rescan_wait(
+            "capacity unreadable; recheck before hatching", seconds=seconds,
+        )
+        self.logger.warning(
+            "Hatch capacity | unreadable after repositioning; hunt before recheck"
+            " | retry_in=%.0fs", seconds,
         )
 
     def _start_empty_rescan_wait(self) -> None:
