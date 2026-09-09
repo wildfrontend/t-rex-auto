@@ -2943,6 +2943,36 @@ def test_cave_return_history_survives_recovery_and_undo_retries() -> None:
     assert planner._child.is_complete()
 
 
+def test_inherited_cave_swipe_is_not_undone_before_the_home_map_is_proven() -> None:
+    """A frame with only the Forest control is not proof of the home map.
+
+    s9 16:43:48: recovery opened on such a frame, replayed an inherited cave
+    leg backwards anyway, and opened a 400px gap that four measured
+    corrections then failed to close - each was fighting a hole recovery had
+    dug for itself. The cave-return case is still served, because that one
+    shows the home anchor with the pile pushed out of frame.
+    """
+
+    planner = FullHatchPlanner(DigitReader(GLYPHS), egg_pile_point=(450, 1330))
+    cave = CaveCullPlanner(DigitReader(GLYPHS), threshold=340, capacity_limit=370)
+    cave._stage = "recenter"
+    missing_pile = frame(np.full((1600, 900, 3), 255, dtype=np.uint8))
+    home = [detection(hatch.HOME_ANCHOR, 59, 561), detection("forest_recenter_button", 841, 1296)]
+    for _ in range(2):
+        action = cave.choose(missing_pile, home)
+        cave.on_action_success(action.type)
+    planner._stage = "cave"
+    planner._child = cave
+    planner._begin_home_recovery("cave return moved pile below frame")
+    recovery = planner._child
+
+    forest_only = [detection("forest_recenter_button", 841, 1296)]
+    chosen = recovery.choose(missing_pile, forest_only)
+
+    assert chosen is None or chosen.type != RECOVERY_UNDO
+    assert recovery.camera_history() == cave.camera_history()
+
+
 def test_failed_cave_return_swipe_is_not_available_for_undo() -> None:
     cave = CaveCullPlanner(DigitReader(GLYPHS), threshold=340, capacity_limit=370)
     cave._stage = "recenter"

@@ -1124,6 +1124,15 @@ class HatchHomeRecoveryPlanner:
         self._camera_at_limit = False
         self._autoplace_notice_without_no = False
         self._applied_swipes = list(applied_swipes)
+        # Swipes inherited from the cave planner or an earlier episode were
+        # aimed at a screen this planner has not measured. Undoing one is right
+        # when the home map is proven but the pile is missing - that is the
+        # cave return having pushed it out of frame. It is wrong on a frame
+        # that shows neither: on s9 the very first recovery frame carried only
+        # the Forest control, the inherited cave leg was replayed backwards
+        # anyway, and the 400px gap it opened survived all four measured
+        # corrections. Require the home anchor before reaching inherited legs.
+        self._inherited_swipes = len(applied_swipes)
         self._applied_offsets: list[tuple[float, float] | None] = [None] * len(applied_swipes)
         self._pending_swipe: tuple[int, int, int, int] | None = None
         self._pending_measured_offset: tuple[float, float] | None = None
@@ -1398,7 +1407,13 @@ class HatchHomeRecoveryPlanner:
             return recenter
 
         forest = best_detection(by_type.get(FOREST_RECENTER))
-        if forest is not None and self._applied_swipes:
+        own_swipe_pending = len(self._applied_swipes) > self._inherited_swipes
+        home_anchor_seen = bool(by_type.get(hatch_feature.HOME_ANCHOR))
+        if (
+            forest is not None
+            and self._applied_swipes
+            and (own_swipe_pending or home_anchor_seen)
+        ):
             # This control proves we are already on the home map; it is not a
             # recenter command.  If our own last measured drag made the pile
             # disappear, reverse that exact drag without leaving the map.
