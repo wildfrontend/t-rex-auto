@@ -778,3 +778,35 @@ def test_both_locked_parents_finish_the_nest_without_any_tap() -> None:
     assert planner.choose(parents, nest_detections()) is None
     assert planner.choose(parents, nest_detections()) is None
     assert planner.is_complete()
+
+
+def test_purity_repair_skips_parents_cleaner_than_every_candidate() -> None:
+    reader = EncodedReader()
+    planner = hp_planner(reader, prefer_specialization_purity=True)
+
+    # One auto-placed tag pool feeds every nest, so the cleanest candidate the
+    # first side saw is the cleanest any later side can see.
+    planner._cleanest_candidate_counter = 641
+
+    # A pure HP parent cannot be improved on purity: skip without opening.
+    assert planner._parent_is_cleaner_than_any_candidate(Stats(5880, 1, 150)) is True
+    # A mixed parent above the floor still has to be compared in full.
+    assert planner._parent_is_cleaner_than_any_candidate(Stats(5700, 645, 150)) is False
+    # Equal counters are decided by primary strength, so do not short-circuit.
+    assert planner._parent_is_cleaner_than_any_candidate(Stats(5700, 641, 150)) is False
+
+
+def test_purity_early_exit_needs_a_measured_candidate_floor() -> None:
+    reader = EncodedReader()
+    planner = hp_planner(reader, prefer_specialization_purity=True)
+
+    # Before any candidate list has been read there is no floor to compare to.
+    assert planner._parent_is_cleaner_than_any_candidate(Stats(5880, 1, 150)) is False
+
+
+def test_upgrade_mode_never_takes_the_purity_early_exit() -> None:
+    reader = EncodedReader()
+    planner = hp_planner(reader)
+    planner._cleanest_candidate_counter = 641
+
+    assert planner._parent_is_cleaner_than_any_candidate(Stats(5880, 1, 150)) is False

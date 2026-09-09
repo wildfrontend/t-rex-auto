@@ -268,10 +268,15 @@ class SelectSortTestPlanner:
             return True
         if ascending_votes > descending_votes:
             return False
-        if descending_votes or ascending_votes:
-            # Conflicting evidence without a majority is not enough to risk
-            # reversing an otherwise valid list.
-            return None
+        if descending_votes and ascending_votes:
+            # A tie is almost always one misread digit in a list the game had
+            # already sorted (5760 read as 5790 flips exactly one vote). The
+            # only two outcomes here are "accept" and "flip the arrow", and
+            # returning None picks neither: the frame is static, so the next
+            # read repeats the same tie forever until the stall timer fires a
+            # home recovery that walks straight back into it. Trust the game's
+            # ordering and let _monotonic_prefix drop the unreliable tail.
+            return True
         # 全部同值時任何順序都成立;視為降冪通過,避免在同值高原
         # (例如攻擊全 296)上無限重試。空清單仍視為讀取失敗。
         return True if values else None

@@ -178,6 +178,32 @@ def test_single_hp_ocr_inversion_does_not_reverse_descending_list() -> None:
     assert planner.is_complete()
 
 
+def test_tied_direction_vote_accepts_the_list_instead_of_stalling() -> None:
+    # Observed on s9: the second 5760 read as 5790, giving one ascending and
+    # one descending vote. A tie used to return "unknown", and because the
+    # screen is static every later frame reproduced it - the round only
+    # escaped through a 30s stall recovery that re-entered the same nest.
+    planner, frame = hp_planner_for(
+        (5770, 5790, 5790, 5710, 5710, 5710, 5710, 5710, 5710)
+    )
+    planner._tag_ready = True
+    planner._sort_ready = True
+
+    assert planner.choose(frame, select_screen()) is None
+    assert planner.is_complete()
+
+
+def test_genuinely_ascending_list_still_flips_the_arrow() -> None:
+    planner, frame = hp_planner_for((5710, 5760, 5770, 5790))
+    planner._tag_ready = True
+    planner._sort_ready = True
+
+    target = planner.choose(frame, select_screen())
+    assert target is not None
+    assert target.type == select_sort.SORT_DIRECTION
+    assert not planner.is_complete()
+
+
 def test_hp_sort_uses_menu_option_then_proves_result_from_hp_values() -> None:
     planner, frame = hp_planner_for((2300, 2250, 2200))
     option = planner.choose(

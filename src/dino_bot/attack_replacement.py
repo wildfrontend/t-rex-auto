@@ -40,6 +40,8 @@ from .nests import (
     pick_replacement,
     pick_specialization_replacement,
     primary_of,
+    specialization_counter_stat,
+    stat_value_is_valid,
 )
 from .overlays import CONFIRM_YES, NESTED_PARENT_WARNING, SELECT_CONFIRM_PROMPT
 from .parent_open import NEST_TITLE, OPEN_TAG_OPTIONS, SELECT_TITLE
@@ -145,6 +147,13 @@ class AttackReplacementTestPlanner:
         self.logger = logger or logging.getLogger("dino_bot")
         self._stage = "filter_attack"
         self._side = 0
+        # Purity repair only ever swaps in a candidate whose opposing combat
+        # stat is lower than the parent's. Auto-place fills every nest of one
+        # tag from a single shared pool, so the candidate list a later side
+        # sees is the list this side already read. Once the cleanest candidate
+        # is known, any parent already cleaner than it cannot be improved and
+        # its side does not need to be opened at all.
+        self._cleanest_candidate_counter: int | None = None
         # The tag filter can leave several identical nests on screen. Nest 0's
         # coordinates are the anchor; the rest are the same layout shifted by
         # one card pitch. The count is measured from the first nest frame.
@@ -369,6 +378,18 @@ class AttackReplacementTestPlanner:
             )
             self._advance_parent()
             return None
+        if self._parent_is_cleaner_than_any_candidate(self._current_parent):
+            self.logger.info(
+                "Hatch %s | side=%s | parent=%s | decision=keep parent"
+                " | reason=already cleaner than the cleanest candidate (%d)"
+                " | mode=purity repair",
+                self.rule.tag,
+                self._side_name,
+                self._format_stats(self._current_parent),
+                self._cleanest_candidate_counter,
+            )
+            self._advance_parent()
+            return None
 
         target_type = PARENT_LEFT if self._side == 0 else PARENT_RIGHT
         self._stage = self._side_stage("open")
@@ -463,6 +484,14 @@ class AttackReplacementTestPlanner:
             )
             return None
         self._suspicious_ocr_retries = 0
+        if self.prefer_specialization_purity:
+            counters = [
+                specialization_counter_stat(row, self.rule)
+                for row in rows
+                if stat_value_is_valid(row, self.stat_guards)
+            ]
+            if counters:
+                self._cleanest_candidate_counter = min(counters)
         picker = (
             pick_specialization_replacement
             if self.prefer_specialization_purity
@@ -626,6 +655,26 @@ class AttackReplacementTestPlanner:
             self._reuse_direct_parent_panel = False
             self._stage = "replacement_done"
             self._complete = True
+
+    def _parent_is_cleaner_than_any_candidate(self, parent: Stats) -> bool:
+        """Whether opening this parent's list could not possibly swap it out.
+
+        Purity repair requires a candidate whose opposing combat stat is
+        strictly lower than the parent's, or equal with a higher primary. Every
+        nest of one tag draws from the same auto-placed pool, so the first side
+        of the round already saw the cleanest candidate available. A parent
+        below that floor is unbeatable on purity, and the equal case is left to
+        the full comparison because primary strength still decides it.
+        """
+
+        if not self.prefer_specialization_purity:
+            return False
+        floor = self._cleanest_candidate_counter
+        if floor is None:
+            return False
+        if not stat_value_is_valid(parent, self.stat_guards):
+            return False
+        return specialization_counter_stat(parent, self.rule) < floor
 
     def _equal_parent_plateau(self, rows: list[Stats]) -> bool:
         return (
