@@ -9,7 +9,10 @@ from math import hypot
 from typing import Any
 
 from .full_hatch import (
+    HOME_PILE_TOLERANCE,
     STARTUP_DETECTION_TYPES,
+    _is_bright_outdoor_map,
+    home_pile_offset,
     is_centered_home_screen,
     nest_mask_close_target,
 )
@@ -41,6 +44,38 @@ MAX_HANDOFF_PROGRESS_EXTENSIONS = 3
 # home map spans a few frames; anything longer than that is a map that really
 # is stuck, and the deadline still covers it.
 MAX_HOME_ANCHOR_SETTLE_FRAMES = 6
+
+
+def _describe_home_proof(frame: Frame, detections: Sequence[Detection]) -> str:
+    """Say which gate of the centred-home proof rejected the final frame.
+
+    The proof is all-or-nothing, so a timeout alone cannot tell a map parked
+    in the cave apart from one sitting on the home screen a few pixels off.
+    Naming the failing gate is the difference between guessing and knowing.
+    """
+
+    try:
+        bright = _is_bright_outdoor_map(frame)
+        if not bright:
+            return f"proof=not-outdoor-map | mean_brightness={frame.image.mean():.0f}"
+        pile = hatch_feature.has_home_pile_structure(
+            frame,
+            egg_pile_point=(450.0, 1330.0),
+            reference_width=900.0,
+        )
+        if not pile:
+            return "proof=no-home-pile-structure"
+        offset = home_pile_offset(frame)
+        if offset is None:
+            return "proof=pile-offset-unmeasurable"
+        scale = frame.width / 900.0
+        worst = max(abs(offset[0]), abs(offset[1]))
+        return (
+            f"proof=pile-off-centre | offset=({offset[0]:.0f},{offset[1]:.0f})"
+            f" | worst={worst:.0f} | tolerance={HOME_PILE_TOLERANCE * scale:.0f}"
+        )
+    except Exception as error:  # diagnostics must never break the handoff
+        return f"proof=undiagnosable | {type(error).__name__}: {error}"
 
 
 class HatchHuntPlanner:
@@ -612,9 +647,11 @@ class HatchHuntPlanner:
         reason = self._handoff_reason
         self._handoff_deadline = None
         self.logger.error(
-            "Hatch+Hunt | handoff to centered home timed out after %.0fs | source=%s",
+            "Hatch+Hunt | handoff to centered home timed out after %.0fs | source=%s"
+            " | %s",
             self.handoff_timeout_seconds,
             reason or "unknown",
+            _describe_home_proof(frame, detections),
         )
         if reason == "errand":
             abort = getattr(self.hatch, "abort_interim_collection", None)
