@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+
 from pathlib import Path
 
 import numpy as np
@@ -574,6 +576,117 @@ def test_a_visible_hatch_home_is_given_time_to_settle() -> None:
     for _ in range(MAX_HOME_ANCHOR_SETTLE_FRAMES):
         assert combined.choose(frame(), home_view) is None
     assert recentres == []
+
+
+@contextlib.contextmanager
+def _home_proof(*, bright: bool, pile: bool, offset: tuple[float, float] | None):
+    """Drive the three centred-home gates without rendering a real map."""
+
+    import dino_bot.hatch_hunt as module
+
+    saved = (
+        module._is_bright_outdoor_map,
+        module.hatch_feature.has_home_pile_structure,
+        module.home_pile_offset,
+        module.is_centered_home_screen,
+    )
+    module._is_bright_outdoor_map = lambda _frame: bright
+    module.hatch_feature.has_home_pile_structure = lambda *a, **k: pile
+    module.home_pile_offset = lambda _frame: offset
+    # A home that is off-centre by more than the tolerance is, by definition,
+    # not yet a centred home; without this the handoff completes on the second
+    # frame and the settle path under test is never reached.
+    module.is_centered_home_screen = lambda _frame, _detections: False
+    try:
+        yield
+    finally:
+        (
+            module._is_bright_outdoor_map,
+            module.hatch_feature.has_home_pile_structure,
+            module.home_pile_offset,
+            module.is_centered_home_screen,
+        ) = saved
+
+
+def test_an_off_centre_home_goes_to_recovery_not_another_recentre() -> None:
+    """Recentring cannot close a measured pile offset; the hatch side can.
+
+    s9 logged the identical (-4,146) residue on two separate handoffs after
+    recentring, while hatch recovery's measured drag closes exactly that gap
+    and had already rescued a cooldown handoff the same afternoon.
+    """
+
+    combined, hatch_planner, hunt_planner = planner()
+    combined._handoff_reason = "errand"
+    combined._mode = "handoff"
+    recoveries: list[str] = []
+    hatch_planner.begin_home_recovery = lambda reason: recoveries.append(reason) or True
+
+    with _home_proof(bright=True, pile=True, offset=(-4.0, 146.0)):
+        handed = combined._offer_home_to_recovery(frame(), [])
+
+    assert handed is True
+    assert len(recoveries) == 1
+    assert combined._mode == "hatch"
+    assert combined._handoff_deadline is None
+
+
+def test_a_settled_off_centre_home_reaches_recovery_through_choose() -> None:
+    """The handover must be wired into the handoff, not just callable.
+
+    Covers the path an operator actually hits: the map arrives, the settle
+    wait expires, and the next decision has to be recovery rather than one
+    more recenter.
+    """
+
+    now = [0.0]
+    combined, hatch_planner, hunt_planner = planner()
+    combined.clock = lambda: now[0]
+    assert combined.choose(frame(), []) is None
+    hatch_planner.cooldown_ms = 20_000
+    hunt_planner.next_target = target("forest_recenter_button", 841, 1296)
+    assert combined.choose(frame(), [detection("map_exit_nest_button", 840, 1295)])
+
+    recoveries: list[str] = []
+    hatch_planner.begin_home_recovery = lambda reason: recoveries.append(reason) or True
+    hatch_planner.next_target = target("hatch_recovery_recenter", 452, 727)
+    recentres: list[str] = []
+    hunt_planner.request_external_recenter = lambda reason: recentres.append(reason)
+    home_view = [
+        detection("hatch_home_anchor", 450, 800),
+        detection("forest_recenter_button", 841, 1296),
+    ]
+
+    with _home_proof(bright=True, pile=True, offset=(-4.0, 146.0)):
+        for _ in range(MAX_HOME_ANCHOR_SETTLE_FRAMES):
+            combined.choose(frame(), home_view)
+        chosen = combined.choose(frame(), home_view)
+
+    assert len(recoveries) == 1
+    assert recentres == []
+    assert chosen is not None and chosen.type == "hatch_recovery_recenter"
+
+
+def test_a_cave_frame_is_not_handed_to_recovery() -> None:
+    """No visible pile means the map never left the cave - a different fault.
+
+    Recovery's correction is a drag measured against the pile, so a frame
+    without one gives it nothing to aim at; that case keeps the recenter path.
+    """
+
+    combined, hatch_planner, hunt_planner = planner()
+    combined._handoff_reason = "errand"
+    combined._mode = "handoff"
+    recoveries: list[str] = []
+    hatch_planner.begin_home_recovery = lambda reason: recoveries.append(reason) or True
+
+    with _home_proof(bright=False, pile=False, offset=None):
+        assert combined._offer_home_to_recovery(frame(), []) is False
+    with _home_proof(bright=True, pile=False, offset=None):
+        assert combined._offer_home_to_recovery(frame(), []) is False
+
+    assert recoveries == []
+    assert combined._mode == "handoff"
 
 
 def test_alternating_exit_and_recentre_buys_no_extension() -> None:

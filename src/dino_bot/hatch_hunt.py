@@ -786,6 +786,13 @@ class HatchHuntPlanner:
             self._home_anchor_waits += 1
             if self._home_anchor_waits <= MAX_HOME_ANCHOR_SETTLE_FRAMES:
                 return None
+            # The map settled and the home is here, just not centred well
+            # enough. Recentring cannot close that gap - it resets the camera,
+            # and s9 measured the identical (-4,146) residue afterwards on two
+            # separate handoffs. The hatch side owns the measured drag that
+            # does close it, and its docstring names this caller.
+            if self._offer_home_to_recovery(frame, detections):
+                return self.choose(frame, detections)
         else:
             self._home_anchor_waits = 0
         if map_evidence and not hunt_controls:
@@ -796,6 +803,52 @@ class HatchHuntPlanner:
             )
             self.hunt.request_external_recenter(recenter_reason)
         return self._choose_owned(self.hunt, frame, detections)
+
+    def _offer_home_to_recovery(
+        self,
+        frame: Frame,
+        detections: Sequence[Detection],
+    ) -> bool:
+        """Hand a measurably off-centre home to the hatch recovery planner.
+
+        Only when the pile is visible and merely off-centre. A frame with no
+        pile at all is a different fault - the map never left the cave - and
+        recovery's measured drag would have nothing to aim at, so that case
+        keeps the existing recenter path.
+        """
+
+        if self._handoff_reason == "capacity camera refresh":
+            return False
+        try:
+            if not _is_bright_outdoor_map(frame):
+                return False
+            if not hatch_feature.has_home_pile_structure(
+                frame,
+                egg_pile_point=(450.0, 1330.0),
+                reference_width=900.0,
+            ):
+                return False
+            offset = home_pile_offset(frame)
+        except Exception:  # this path must never break the handoff
+            return False
+        if offset is None:
+            return False
+        recover = getattr(self.hatch, "begin_home_recovery", None)
+        if not callable(recover):
+            return False
+        self.logger.info(
+            "Hatch+Hunt | home visible but off-centre by (%.0f,%.0f)px"
+            " | handing to hatch recovery",
+            offset[0],
+            offset[1],
+        )
+        self.hunt.reset_workflow()
+        self._mode = "hatch"
+        self._centered_frames = 0
+        self._home_anchor_waits = 0
+        self._handoff_deadline = None
+        recover("hatch+hunt handoff found an off-centre home")
+        return True
 
     def _begin_capacity_camera_refresh(self) -> bool:
         method = getattr(self.hatch, "begin_hunt_map_capacity_refresh", None)
