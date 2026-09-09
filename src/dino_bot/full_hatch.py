@@ -4209,12 +4209,7 @@ class FullHatchPlanner:
             return
         self._start_manual_replacement(kind)
 
-    def _start_manual_replacement(
-        self,
-        kind: str,
-        *,
-        prefer_specialization_purity: bool = False,
-    ) -> None:
+    def _start_manual_replacement(self, kind: str) -> None:
         if kind == "attack":
             self._stage = "attack"
             self._child = AttackReplacementTestPlanner(
@@ -4223,7 +4218,6 @@ class FullHatchPlanner:
                 rule=ATTACK_RULE,
                 stat_guards=self.stat_upgrade_guards,
                 allow_extreme_specialization_parent=self.allow_extreme_specialization_parent,
-                prefer_specialization_purity=prefer_specialization_purity,
                 minimum_consistent_stat_reads=self.minimum_consistent_stat_reads,
                 stat_read_retries=self.stat_read_retries,
                 parent_stats_snapshots=self.parent_stats_snapshots,
@@ -4242,7 +4236,6 @@ class FullHatchPlanner:
             select_sort_menu_point=(650.0, 501.0),
             stat_guards=self.stat_upgrade_guards,
             allow_extreme_specialization_parent=self.allow_extreme_specialization_parent,
-            prefer_specialization_purity=prefer_specialization_purity,
             minimum_consistent_stat_reads=self.minimum_consistent_stat_reads,
             stat_read_retries=self.stat_read_retries,
             parent_stats_snapshots=self.parent_stats_snapshots,
@@ -4326,18 +4319,6 @@ class FullHatchPlanner:
     def _advance_autoplace_if_done(self) -> None:
         child = self._autoplace_child
         if not child.is_complete():
-            return
-        if self._stage in {"attack", "hp"} and self.auto_place_specializations:
-            stage = self._stage
-            self.logger.info(
-                "Hatch full | specialization auto-place completed"
-                " | stage=%s | action=manual purity repair | speed=ignored",
-                stage,
-            )
-            self._start_manual_replacement(
-                stage,
-                prefer_specialization_purity=True,
-            )
             return
         if self.standalone_stage == self._stage:
             self._begin_home_recovery(

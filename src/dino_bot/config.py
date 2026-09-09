@@ -232,9 +232,15 @@ class HatchConfig:
     # Some HP/attack breeding lines intentionally start from a 10/1/1 parent.
     # Keep this opt-in because the same values can otherwise hide OCR errors.
     allow_extreme_specialization_parent: bool = False
-    # Seed Attack/HP nests with the game's tag-scoped primary-stat auto-place,
-    # then manually repair mixed HP+attack mutations. The repair ignores speed
-    # and prefers a lower opposing combat stat before primary-stat strength.
+    # Fill Attack/HP nests with the game's tag-scoped primary-stat auto-place
+    # and stop there, the same way Top and Mass already work.
+    #
+    # A manual purity-repair pass used to follow. It cost ~12s per side across
+    # six sides and returned 20 keeps for 1 swap, because auto-place had just
+    # ordered the pool by the very stat the repair then sorted by. Worse, the
+    # one real swap left a highlight animation over the sibling's stats, the
+    # digits binarised to black, and the stage aborted into home recovery - so
+    # the pass was most likely to break right after it did something useful.
     auto_place_specializations: bool = False
     # OCR values must repeat across complete frames before any parent or
     # candidate tap is allowed. Retries include the initial observations.

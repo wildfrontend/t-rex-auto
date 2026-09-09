@@ -980,7 +980,7 @@ def test_full_hatch_rejects_unsafe_capacity_parameters(
         )
 
 
-def test_specialization_switch_runs_autoplace_then_manual_purity_repair() -> None:
+def test_attack_autoplace_completes_the_stage_without_manual_screening() -> None:
     planner = FullHatchPlanner(
         DigitReader(GLYPHS),
         egg_pile_point=(450, 1330),
@@ -996,13 +996,13 @@ def test_specialization_switch_runs_autoplace_then_manual_purity_repair() -> Non
     planner._autoplace_child._complete = True
     planner._advance_autoplace_if_done()
 
-    assert planner._stage == "attack"
-    assert isinstance(planner._child, AttackReplacementTestPlanner)
-    assert planner._replacement_child.prefer_specialization_purity is True
-    assert "hatch_parent_left" in planner.planning_detection_types()
+    # Auto-place already ordered the tag pool by attack, so no per-side
+    # re-check follows: the stage is done and screening moves on.
+    assert "attack" in planner._screening_completed
+    assert not isinstance(planner._child, AttackReplacementTestPlanner)
 
 
-def test_specialization_switch_runs_hp_autoplace_then_manual_purity_repair() -> None:
+def test_hp_autoplace_completes_the_stage_without_manual_screening() -> None:
     planner = FullHatchPlanner(
         DigitReader(GLYPHS),
         egg_pile_point=(450, 1330),
@@ -1016,9 +1016,8 @@ def test_specialization_switch_runs_hp_autoplace_then_manual_purity_repair() -> 
     planner._autoplace_child._complete = True
     planner._advance_autoplace_if_done()
 
-    assert planner._stage == "hp"
-    assert planner._replacement_child.rule.tag == "HP特化"
-    assert planner._replacement_child.prefer_specialization_purity is True
+    assert "hp" in planner._screening_completed
+    assert not isinstance(planner._child, AttackReplacementTestPlanner)
 
 
 def test_custom_full_hatch_runs_only_selected_management_stages() -> None:
