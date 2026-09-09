@@ -14,6 +14,7 @@ from dino_bot.full_hatch import (
 from dino_bot.hatch_hunt import (
     MAX_ANCHOR_ONLY_HANDOFF_FRAMES,
     MAX_HANDOFF_PROGRESS_EXTENSIONS,
+    MAX_HOME_ANCHOR_SETTLE_FRAMES,
     HatchHuntPlanner,
 )
 from dino_bot.models import BoundingBox, Detection, Frame, Target, VerificationResult
@@ -543,6 +544,36 @@ def test_verified_step_towards_home_extends_the_handoff_deadline() -> None:
     # 期限只是延後,不是取消。
     now[0] = 119.0
     assert combined._handoff_expired()
+
+
+def test_a_visible_hatch_home_is_given_time_to_settle() -> None:
+    """Seeing the home anchor must not trigger another camera move.
+
+    The cloud wipe between the cave and the home map covers the frame for a
+    few cycles. Tapping Forest again during it restarts the wipe, so the
+    geometric proof never gets a clean frame: on s9 this lost all seven
+    handoffs and eventually fused the hatch side off.
+    """
+
+    now = [0.0]
+    combined, hatch_planner, hunt_planner = planner()
+    combined.clock = lambda: now[0]
+    assert combined.choose(frame(), []) is None
+    hatch_planner.cooldown_ms = 20_000
+    hunt_planner.next_target = target("forest_recenter_button", 841, 1296)
+    assert combined.choose(frame(), [detection("map_exit_nest_button", 840, 1295)])
+
+    home_view = [
+        detection("hatch_home_anchor", 450, 800),
+        detection("forest_recenter_button", 841, 1296),
+    ]
+    recentres: list[str] = []
+    hunt_planner.request_external_recenter = lambda reason: recentres.append(reason)
+
+    # While the anchor is visible the handoff waits instead of tapping.
+    for _ in range(MAX_HOME_ANCHOR_SETTLE_FRAMES):
+        assert combined.choose(frame(), home_view) is None
+    assert recentres == []
 
 
 def test_alternating_exit_and_recentre_buys_no_extension() -> None:

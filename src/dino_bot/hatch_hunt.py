@@ -13,6 +13,7 @@ from .full_hatch import (
     is_centered_home_screen,
     nest_mask_close_target,
 )
+from . import hatch as hatch_feature
 from .models import Detection, Frame, Target, VerificationResult
 from .parent_open import NEST_TITLE
 from .planning import HuntPlanner
@@ -35,6 +36,11 @@ HANDOFF_PROGRESS_EXTENSION_SECONDS = 30.0
 # and recentre taps forever would keep renewing its own deadline, which is the
 # exact silent burn the deadline exists to stop.
 MAX_HANDOFF_PROGRESS_EXTENSIONS = 3
+# How many frames the handoff waits for a visible hatch home to stop moving
+# before it touches the camera again. The cloud wipe between the cave and the
+# home map spans a few frames; anything longer than that is a map that really
+# is stuck, and the deadline still covers it.
+MAX_HOME_ANCHOR_SETTLE_FRAMES = 6
 
 
 class HatchHuntPlanner:
@@ -81,6 +87,7 @@ class HatchHuntPlanner:
         self._handoff_reason = ""
         self._handoff_extensions = 0
         self._last_handoff_progress: str | None = None
+        self._home_anchor_waits = 0
         # 狩獵閒置差事:狩獵側全目標冷卻時,把空窗拿去收巢蛋。
         self.errand_min_idle_ms = 15_000
         self.errand_margin_ms = 90_000
@@ -174,6 +181,7 @@ class HatchHuntPlanner:
             self._anchor_only_frames = 0
             self._handoff_extensions = 0
             self._last_handoff_progress = None
+            self._home_anchor_waits = 0
             self._handoff_reason = "capacity camera refresh"
             self._handoff_deadline = (
                 self.clock() + self.handoff_timeout_seconds
@@ -511,6 +519,7 @@ class HatchHuntPlanner:
         self._anchor_only_frames = 0
         self._handoff_extensions = 0
         self._last_handoff_progress = None
+        self._home_anchor_waits = 0
         self._handoff_reason = reason
         self._handoff_deadline = (
             self.clock() + self.handoff_timeout_seconds
@@ -725,6 +734,23 @@ class HatchHuntPlanner:
             }
             for item in detections
         )
+        # The hatch home anchor is already on screen: the map arrived, and the
+        # only thing left is for the transition to settle so the geometric
+        # proof can run. Asking for another recenter here taps the Forest
+        # control, which starts a fresh camera move whose cloud wipe covers the
+        # frame - the proof then fails, the anchor is seen again, and the tap
+        # repeats. On s9 that loop lost every one of seven handoffs, and when
+        # the cooldown handoff hit it the hatch side fused off entirely. Let
+        # the settled frame come to us instead.
+        home_anchor_visible = any(
+            item.type == hatch_feature.HOME_ANCHOR for item in detections
+        )
+        if home_anchor_visible:
+            self._home_anchor_waits += 1
+            if self._home_anchor_waits <= MAX_HOME_ANCHOR_SETTLE_FRAMES:
+                return None
+        else:
+            self._home_anchor_waits = 0
         if map_evidence and not hunt_controls:
             recenter_reason = (
                 "capacity camera refresh"
