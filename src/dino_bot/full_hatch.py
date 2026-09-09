@@ -2307,6 +2307,9 @@ class FullHatchPlanner:
         rescan_interval_seconds: float = 600.0,
         stat_upgrade_guards: Mapping[str, StatUpgradeGuard] = DEFAULT_STAT_UPGRADE_GUARDS,
         allow_extreme_specialization_parent: bool = False,
+        expel_below_hp: int = 0,
+        expel_below_attack: int = 0,
+        expel_dry_run: bool = True,
         auto_place_specializations: bool = False,
         minimum_consistent_stat_reads: int = 1,
         stat_read_retries: int = 1,
@@ -2399,6 +2402,10 @@ class FullHatchPlanner:
             require_home_anchor=require_home_anchor,
             home_failure_limit=home_failure_limit,
             home_backoff_seconds=home_backoff_seconds,
+            reader=reader,
+            expel_below_hp=expel_below_hp,
+            expel_below_attack=expel_below_attack,
+            expel_dry_run=expel_dry_run,
             logger=self.logger,
         )
         if clock is not None:

@@ -232,6 +232,16 @@ class HatchConfig:
     # Some HP/attack breeding lines intentionally start from a 10/1/1 parent.
     # Keep this opt-in because the same values can otherwise hide OCR errors.
     allow_extreme_specialization_parent: bool = False
+    # Expel a newborn on the hatch-result screen when it reaches neither
+    # breeding target. A specialized line deliberately floors the opposing
+    # stat, so clearing either floor is enough to be kept: 5880/1 and 10/854
+    # are successes, while 1000/20 and 20/444 are lines that drifted. Both
+    # floors must be set for any expelling to happen, and an unreadable screen
+    # is always claimed. Keep the dry run on until the logged verdicts have
+    # been checked - expelling cannot be undone.
+    expel_below_hp: int = 0
+    expel_below_attack: int = 0
+    expel_dry_run: bool = True
     # Fill Attack/HP nests with the game's tag-scoped primary-stat auto-place
     # and stop there, the same way Top and Mass already work.
     #
@@ -769,6 +779,9 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
             auto_place_specializations=bool(
                 hatch_data.get("auto_place_specializations", False)
             ),
+            expel_below_hp=int(hatch_data.get("expel_below_hp", 0)),
+            expel_below_attack=int(hatch_data.get("expel_below_attack", 0)),
+            expel_dry_run=bool(hatch_data.get("expel_dry_run", True)),
             stat_consistent_reads=int(hatch_data.get("stat_consistent_reads", 2)),
             stat_read_retries=int(hatch_data.get("stat_read_retries", 3)),
             require_home_anchor=bool(hatch_data.get("require_home_anchor", True)),

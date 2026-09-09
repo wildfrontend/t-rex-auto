@@ -16,7 +16,9 @@ import cv2
 import numpy as np
 
 from .digits import DigitReader
+from .hatch_result import HatchVerdict, judge_newborn, read_hatch_result_stats
 from .models import Detection, Frame, Image, Target
+from .nest_readout import Stats
 from .targeting import best_detection, detection_target, swipe_target, synthetic_target
 
 # Target types. The hatch_ prefix keeps the vocabulary disjoint from hunt so
@@ -36,6 +38,7 @@ DEFAULT_TARGET_ACTIONS: dict[str, str] = {
     HATCH_LABEL: "tap",
     HATCH_BUTTON: "tap",
     CLAIM_BUTTON: "tap",
+    EXPEL_BUTTON: "tap",
     CLOSE_BUTTON: "tap",
     SCROLL: "swipe",
 }
@@ -331,6 +334,10 @@ class HatchPlanner:
         require_home_anchor: bool = True,
         home_failure_limit: int = 3,
         home_backoff_seconds: float = 30.0,
+        reader: DigitReader | None = None,
+        expel_below_hp: int = 0,
+        expel_below_attack: int = 0,
+        expel_dry_run: bool = True,
         logger: logging.Logger | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -345,6 +352,12 @@ class HatchPlanner:
         self.require_home_anchor = require_home_anchor
         self.home_failure_limit = max(1, home_failure_limit)
         self.home_backoff_seconds = max(0.0, home_backoff_seconds)
+        self.reader = reader
+        # Both floors must be set for the judgement to run at all: a zero floor
+        # would expel everything that fails the other one.
+        self.expel_below_hp = max(0, expel_below_hp)
+        self.expel_below_attack = max(0, expel_below_attack)
+        self.expel_dry_run = bool(expel_dry_run)
         self.logger = logger or logging.getLogger("dino_bot")
         self.clock = clock
         self._wait_until: float | None = None
@@ -352,6 +365,35 @@ class HatchPlanner:
         self._home_failures = 0
         self._stage = "start"
         self.hatched = 0
+
+    def _judge_newborn(self, frame: Frame) -> HatchVerdict | None:
+        """Judge the newborn on screen, or None when judging is switched off.
+
+        Both floors and a reader are required. Without them the screen is
+        claimed exactly as before, so an unconfigured instance cannot start
+        expelling by accident.
+        """
+
+        if self.reader is None:
+            return None
+        if not self.expel_below_hp or not self.expel_below_attack:
+            return None
+        stats = read_hatch_result_stats(
+            frame,
+            self.reader,
+            reference_width=self.reference_width,
+        )
+        return judge_newborn(
+            stats,
+            hp_floor=self.expel_below_hp,
+            attack_floor=self.expel_below_attack,
+        )
+
+    @staticmethod
+    def _format_stats(stats: Stats | None) -> str:
+        if stats is None:
+            return "unreadable"
+        return f"{stats.hp}/{stats.attack}/{stats.speed}"
 
     # -- engine hooks ------------------------------------------------------
 
@@ -408,6 +450,30 @@ class HatchPlanner:
 
         claim = best_detection(by_type.get(CLAIM_BUTTON))
         if claim is not None:
+            expel = best_detection(by_type.get(EXPEL_BUTTON))
+            verdict = self._judge_newborn(frame)
+            if verdict is not None and verdict.expel and expel is not None:
+                if self.expel_dry_run:
+                    self.logger.info(
+                        "Hatch expel | %s | WOULD EXPEL (dry run) | %s"
+                        " | claiming instead",
+                        self._format_stats(verdict.stats),
+                        verdict.reason,
+                    )
+                else:
+                    self.logger.info(
+                        "Hatch expel | %s | expelling | %s",
+                        self._format_stats(verdict.stats),
+                        verdict.reason,
+                    )
+                    self._stage = "expel"
+                    return detection_target(expel)
+            elif verdict is not None:
+                self.logger.info(
+                    "Hatch expel | %s | keeping | %s",
+                    self._format_stats(verdict.stats),
+                    verdict.reason,
+                )
             self._stage = "claim"
             return detection_target(claim)
         hatch_button = best_detection(by_type.get(HATCH_BUTTON))
