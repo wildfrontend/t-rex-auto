@@ -80,6 +80,7 @@ class HatchHuntPlanner:
         self._handoff_deadline: float | None = None
         self._handoff_reason = ""
         self._handoff_extensions = 0
+        self._last_handoff_progress: str | None = None
         # 狩獵閒置差事:狩獵側全目標冷卻時,把空窗拿去收巢蛋。
         self.errand_min_idle_ms = 15_000
         self.errand_margin_ms = 90_000
@@ -172,6 +173,7 @@ class HatchHuntPlanner:
             self._centered_frames = 0
             self._anchor_only_frames = 0
             self._handoff_extensions = 0
+            self._last_handoff_progress = None
             self._handoff_reason = "capacity camera refresh"
             self._handoff_deadline = (
                 self.clock() + self.handoff_timeout_seconds
@@ -508,6 +510,7 @@ class HatchHuntPlanner:
         self._centered_frames = 0
         self._anchor_only_frames = 0
         self._handoff_extensions = 0
+        self._last_handoff_progress = None
         self._handoff_reason = reason
         self._handoff_deadline = (
             self.clock() + self.handoff_timeout_seconds
@@ -540,6 +543,25 @@ class HatchHuntPlanner:
             return
         if target_type not in self._handoff_progress_types():
             return
+        # Exit and recentre sit on the same map corner and each brings the
+        # other back: tapping exit reveals recentre, tapping recentre reveals
+        # exit. Verified alternation therefore looks exactly like progress and
+        # used to buy a fresh window every time, spending all three extensions
+        # on a map that never moved. Only a step that differs from the last one
+        # counts; repeating the same target still does, since that is a retry
+        # of one real step rather than a loop between two.
+        if (
+            self._last_handoff_progress is not None
+            and target_type != self._last_handoff_progress
+        ):
+            self.logger.info(
+                "Hatch+Hunt | handoff alternating %s <-> %s | not progress",
+                self._last_handoff_progress,
+                target_type,
+            )
+            self._last_handoff_progress = target_type
+            return
+        self._last_handoff_progress = target_type
         if self._handoff_extensions >= MAX_HANDOFF_PROGRESS_EXTENSIONS:
             return
         extended = max(

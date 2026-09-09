@@ -545,6 +545,52 @@ def test_verified_step_towards_home_extends_the_handoff_deadline() -> None:
     assert combined._handoff_expired()
 
 
+def test_alternating_exit_and_recentre_buys_no_extension() -> None:
+    """Two buttons that summon each other are not progress towards home.
+
+    Exit and recentre share the map corner: tapping one reveals the other. On
+    s9 that alternation was verified nine times in 90s, spent all three
+    extensions, and kept the handoff alive on a map that never moved.
+    """
+
+    now = [0.0]
+    combined, hatch_planner, hunt_planner = planner()
+    combined.clock = lambda: now[0]
+    assert combined.choose(frame(), []) is None
+    hatch_planner.cooldown_ms = 20_000
+    hunt_planner.next_target = target("map_exit_nest_button", 840, 1295)
+    map_view = [detection("map_exit_nest_button", 840, 1295)]
+    assert combined.choose(frame(), map_view) is not None
+
+    for step in range(8):
+        now[0] = 10.0 + step * 5.0
+        combined.on_action_success(
+            "map_exit_nest_button" if step % 2 else "forest_recenter_button"
+        )
+
+    assert combined._handoff_extensions == 0
+
+
+def test_repeating_one_step_still_counts_as_progress() -> None:
+    """Retrying a single real step is not the ping-pong this guards against."""
+
+    now = [0.0]
+    combined, hatch_planner, hunt_planner = planner()
+    combined.clock = lambda: now[0]
+    assert combined.choose(frame(), []) is None
+    hatch_planner.cooldown_ms = 20_000
+    hunt_planner.next_target = target("map_exit_nest_button", 840, 1295)
+    map_view = [detection("map_exit_nest_button", 840, 1295)]
+    assert combined.choose(frame(), map_view) is not None
+
+    now[0] = 80.0
+    combined.on_action_success("map_exit_nest_button")
+    now[0] = 100.0
+    combined.on_action_success("map_exit_nest_button")
+
+    assert combined._handoff_extensions == 2
+
+
 def test_handoff_extension_is_capped_so_a_toggling_map_still_gives_up() -> None:
     """A map that keeps tapping without ever centring is still a stall."""
 
