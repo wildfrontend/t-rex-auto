@@ -9,10 +9,13 @@ import pytest
 
 from dino_bot import hatch, nest_filter
 from dino_bot.attack_replacement import AttackReplacementTestPlanner
-from dino_bot.cull import CAPACITY_REGION, CapacityRead
+from dino_bot.cull import CAPACITY_REGION, PANEL_CAPACITY_REGION, CapacityRead
 from dino_bot.detection import OpenCvDetector
 from dino_bot.digits import DigitReader
 from dino_bot.full_hatch import (
+    PANEL_CLOSE,
+    PANEL_OPEN,
+    PANEL_TITLE,
     AUTOPLACE_BUTTON,
     AUTOPLACE_MASK_CLOSE,
     AUTOPLACE_NOTICE,
@@ -118,6 +121,17 @@ def detection(
     )
 
 
+def capacity_panel_frame() -> Frame:
+    """A frame whose My Dinosaurs panel region carries a readable count."""
+
+    image = frame().image.copy()
+    crop = cv2.imread(str(FIXTURES / "hud_282_350.png"))
+    assert crop is not None
+    x0, y0 = int(PANEL_CAPACITY_REGION[0]), int(PANEL_CAPACITY_REGION[1])
+    image[y0 : y0 + crop.shape[0], x0 : x0 + crop.shape[1]] = crop
+    return frame(image)
+
+
 def capacity_frame() -> Frame:
     image = frame().image.copy()
     crop = cv2.imread(str(FIXTURES / "hud_282_350.png"))
@@ -148,6 +162,22 @@ def occluded_capacity_frame() -> Frame:
     image = frame().image.copy()
     image[239:258, 10:110] = crop
     return frame(image)
+
+
+def _run_panel_preflight(planner, home) -> None:
+    """Walk preflight through the My Dinosaurs panel: open, read, close.
+
+    Preflight no longer drives the camera to the cave HUD, so tests that only
+    need capacity known can use this instead of a navigation sequence.
+    """
+
+    chosen = planner.choose(frame(), home)
+    assert chosen is not None and chosen.type == PANEL_OPEN
+    planner.on_action_success(chosen.type)
+    panel = [detection(PANEL_TITLE, 452, 317)]
+    chosen = planner.choose(capacity_panel_frame(), panel)
+    assert chosen is not None and chosen.type == PANEL_CLOSE
+    planner.on_action_success(chosen.type)
 
 
 def _patch_capacity(monkeypatch, count: int | None) -> None:
@@ -1290,26 +1320,18 @@ def test_full_hatch_preflight_starts_initial_screening_before_first_egg_pile_tap
     home = [detection(hatch.HOME_ANCHOR, 59, 561)]
 
     target = planner.choose(frame(), home)
-    assert target is not None and target.type == CAVE_SWIPE
+    assert target is not None and target.type == PANEL_OPEN
     assert planner._stage == "capacity_preflight"
-    assert "hatch_cave" in planner.planning_detection_types()
+    assert PANEL_TITLE in planner.planning_detection_types()
     planner.on_action_success(target.type)
 
+    panel = [detection(PANEL_TITLE, 452, 317)]
+    target = planner.choose(capacity_panel_frame(), panel)
+    assert target is not None and target.type == PANEL_CLOSE
+    planner.on_action_success(target.type)
+
+    # Closing the panel completes the read, so preflight hands straight back.
     target = planner.choose(frame(), home)
-    assert target is not None and target.type == CAVE_SWIPE
-    planner.on_action_success(target.type)
-
-    cave = [detection("hatch_cave", 209, 1150)]
-    assert planner.choose(capacity_frame(), cave) is None
-    target = planner.choose(capacity_frame(), cave)
-    assert target is not None and target.type == CAVE_RECENTER
-    planner.on_action_success(target.type)
-    target = planner.choose(capacity_frame(), cave)
-    assert target is not None and target.type == CAVE_RECENTER
-    planner.on_action_success(target.type)
-
-    assert planner.choose(capacity_frame(), home) is None
-    target = planner.choose(capacity_frame(), home)
     assert target is not None and target.type == OPEN_NEST
     assert planner._capacity_checked
     assert planner._management_pending
@@ -2566,7 +2588,7 @@ def test_failed_hatch_tap_checks_capacity_before_any_retry() -> None:
     assert planner.choose(frame(), home) is None
     target = planner.choose(frame(), home)
 
-    assert target is not None and target.type == CAVE_SWIPE
+    assert target is not None and target.type == PANEL_OPEN
     assert planner._stage == "capacity_preflight"
 
 
@@ -2591,21 +2613,14 @@ def test_failed_egg_pile_tap_checks_full_capacity_before_retry(monkeypatch) -> N
     assert not planner.is_hatch_blocked()
     assert planner.choose(frame(), home) is None
     target = planner.choose(frame(), home)
-    assert target is not None and target.type == CAVE_SWIPE
-
-    planner.on_action_success(target.type)
-    target = planner.choose(frame(), home)
-    assert target is not None and target.type == CAVE_SWIPE
+    assert target is not None and target.type == PANEL_OPEN
     planner.on_action_success(target.type)
 
-    cave = [detection("hatch_cave", 209, 1150)]
-    assert planner.choose(frame(), cave) is None
-    for _ in range(2):
-        target = planner.choose(frame(), cave)
-        assert target is not None and target.type == CAVE_RECENTER
-        planner.on_action_success(target.type)
+    panel = [detection(PANEL_TITLE, 452, 317)]
+    target = planner.choose(frame(), panel)
+    assert target is not None and target.type == PANEL_CLOSE
+    planner.on_action_success(target.type)
 
-    assert planner.choose(frame(), home) is None
     target = planner.choose(frame(), home)
     assert target is not None and target.type == OPEN_NEST
     assert planner._management_pending
@@ -2630,20 +2645,13 @@ def test_failed_egg_pile_tap_retries_when_capacity_is_below_limit(monkeypatch) -
     planner.on_action_failure(hatch.EGG_PILE)
     assert planner.choose(frame(), home) is None
     target = planner.choose(frame(), home)
-    assert target is not None and target.type == CAVE_SWIPE
+    assert target is not None and target.type == PANEL_OPEN
     planner.on_action_success(target.type)
-    target = planner.choose(frame(), home)
-    assert target is not None and target.type == CAVE_SWIPE
+    panel = [detection(PANEL_TITLE, 452, 317)]
+    target = planner.choose(frame(), panel)
+    assert target is not None and target.type == PANEL_CLOSE
     planner.on_action_success(target.type)
 
-    cave = [detection("hatch_cave", 209, 1150)]
-    assert planner.choose(frame(), cave) is None
-    for _ in range(2):
-        target = planner.choose(frame(), cave)
-        assert target is not None and target.type == CAVE_RECENTER
-        planner.on_action_success(target.type)
-
-    assert planner.choose(frame(), home) is None
     target = planner.choose(frame(), home)
     assert target is not None and target.type == hatch.EGG_PILE
     assert planner._capacity_checked
@@ -3386,19 +3394,15 @@ def test_custom_preflight_at_stop_line_returns_home_before_hunting(monkeypatch, 
         capacity_limit=350, cull_threshold=stop_line,
     )
     home = [detection(hatch.HOME_ANCHOR, 59, 561)]
-    for _ in range(2):
-        chosen = planner.choose(frame(), home)
-        assert chosen.type == CAVE_SWIPE
-        planner.on_action_success(chosen.type)
-    cave = [detection("hatch_cave", 209, 1150)]
-    assert planner.choose(frame(), cave) is None
-    for _ in range(2):
-        chosen = planner.choose(frame(), cave)
-        assert chosen.type == CAVE_RECENTER
-        assert not planner.is_hatch_blocked()
-        planner.on_action_success(chosen.type)
-    assert planner.choose(frame(), home) is None
+    # Preflight reads the panel, which needs no camera position at all.
+    chosen = planner.choose(frame(), home)
+    assert chosen.type == PANEL_OPEN
+    planner.on_action_success(chosen.type)
+    panel = [detection(PANEL_TITLE, 452, 317)]
+    chosen = planner.choose(frame(), panel)
+    assert chosen.type == PANEL_CLOSE
     assert not planner.is_hatch_blocked()
+    planner.on_action_success(chosen.type)
     assert planner.choose(frame(), home) is None
     assert planner.is_hatch_blocked()
     assert planner.population_limit_reached

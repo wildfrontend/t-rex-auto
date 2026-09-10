@@ -49,7 +49,16 @@ from .cooldown_boost import (
     BOOST_OPEN,
     CooldownBoostVisit,
 )
-from .cull import EXPECTED_CAPACITY, CapacityRead, probe_dino_count, should_cull
+from .cull import (
+    EXPECTED_CAPACITY,
+    PANEL_CAPACITY_REGION,
+    PANEL_CLOSE_POINT,
+    PANEL_OPEN_POINT,
+    PANEL_TITLE,
+    CapacityRead,
+    probe_dino_count,
+    should_cull,
+)
 from .digits import DigitReader
 from .hatch_inventory import HatchBoostInventoryStore
 from .models import Detection, Frame, Target, VerificationResult
@@ -79,6 +88,8 @@ from .targeting import best_detection, detection_target, swipe_target, synthetic
 # Full-workflow synthetic actions and newly cropped screen anchors.
 OPEN_NEST = "hatch_full_open_nest"
 NEST_GEAR = "hatch_nest_gear"
+PANEL_OPEN = "hatch_my_dino_open"
+PANEL_CLOSE = "hatch_my_dino_close"
 AUTOPLACE_TITLE = "hatch_autoplace_title"
 AUTOPLACE_PROMPT = "hatch_autoplace_prompt"
 AUTOPLACE_SORT_HEADER = "hatch_autoplace_sort_header"
@@ -218,6 +229,8 @@ DEFAULT_TARGET_ACTIONS: dict[str, str] = {
     CAVE_SWIPE: "swipe",
     CAVE_RECENTER: "swipe",
     CAVE: "tap",
+    PANEL_OPEN: "tap",
+    PANEL_CLOSE: "tap",
     CAVE_SELECT_BUTTON: "tap",
     SELECT_TAG_HEADER: "tap",
     nest_filter_feature.TAG_ALL: "tap",
@@ -265,6 +278,8 @@ DEFAULT_POST_ACTION_DELAYS_MS: dict[str, int] = {
     CAVE_SWIPE: 3000,
     CAVE_RECENTER: 3500,
     CAVE: 4000,
+    PANEL_OPEN: 3000,
+    PANEL_CLOSE: 2500,
     CAVE_SELECT_BUTTON: 3500,
     SELECT_TAG_HEADER: 2500,
     SELECT_WEAKEST_BUTTON: 3500,
@@ -624,6 +639,9 @@ CAVE_DETECTION_TYPES: frozenset[str] = frozenset(
     {
         *STARTUP_DETECTION_TYPES,
         hatch_feature.HOME_ANCHOR,
+        # Preflight reads capacity off the My Dinosaurs panel, so its title
+        # has to be visible to the scan that drives that stage.
+        PANEL_TITLE,
         NEST_TITLE,
         SELECT_TITLE,
         CAVE,
@@ -1861,6 +1879,148 @@ class CapacitySnapshot(Protocol):
     ) -> Path | None: ...
 
 
+class PanelCapacityPlanner:
+    """Read the population off the My Dinosaurs panel and close it again.
+
+    Interface-compatible with the slice of CaveCullPlanner that preflight
+    uses, so it can stand in wherever capacity only needs reading. It never
+    culls: the panel is a measurement, and deleting dinosaurs stays with the
+    cave planner that was built for it.
+
+    Preflight used to reach this figure through the cave HUD, which meant
+    driving the camera to the hatch home first. That is the position s9's
+    146px pile offset keeps missing, so a reading that needs no camera at all
+    removes the dependency rather than fighting it.
+    """
+
+    def __init__(
+        self,
+        reader: DigitReader,
+        *,
+        threshold: int,
+        capacity_limit: int = EXPECTED_CAPACITY,
+        reference_width: float = 900.0,
+        capacity_read_retries: int = 2,
+        capacity_snapshots: CapacitySnapshot | None = None,
+        logger: logging.Logger | None = None,
+    ) -> None:
+        self.reader = reader
+        self.threshold = threshold
+        self.capacity_limit = capacity_limit
+        self.reference_width = reference_width
+        self.capacity_read_retries = max(1, capacity_read_retries)
+        self.capacity_snapshots = capacity_snapshots
+        self.logger = logger or logging.getLogger("dino_bot")
+        self._stage = "open_panel"
+        self._complete = False
+        self._capacity_readable: bool | None = None
+        self._cull_required = False
+        self._last_capacity: int | None = None
+        self._failures = 0
+
+    def last_stage(self) -> str:
+        return f"panel_capacity_{self._stage}"
+
+    def is_complete(self) -> bool:
+        return self._complete
+
+    def camera_history(self) -> tuple[tuple[int, int, int, int], ...]:
+        # This planner never moves the camera, so it has nothing to hand on.
+        return ()
+
+    @property
+    def capacity_readable(self) -> bool:
+        return self._capacity_readable is True
+
+    @property
+    def cull_required(self) -> bool:
+        return self._cull_required
+
+    @property
+    def last_capacity(self) -> int | None:
+        return self._last_capacity
+
+    def planning_detection_types(self) -> frozenset[str] | None:
+        return frozenset({PANEL_TITLE})
+
+    def on_action_success(self, target_type: str) -> None:
+        return None
+
+    def on_action_failure(self, target_type: str) -> None:
+        return None
+
+    def choose(
+        self,
+        frame: Frame,
+        detections: Sequence[Detection],
+    ) -> Target | None:
+        if self._complete:
+            return None
+        by_type = _group(detections)
+        panel_open = bool(by_type.get(PANEL_TITLE))
+        if not panel_open:
+            if self._stage == "close_panel":
+                # The close tap landed; the reading is already banked.
+                self._complete = True
+                return None
+            self._stage = "open_panel"
+            return synthetic_target(
+                PANEL_OPEN,
+                *_scaled(frame, PANEL_OPEN_POINT, self.reference_width),
+            )
+        read = probe_dino_count(
+            frame.image,
+            self.reader,
+            reference_width=self.reference_width,
+            expected_capacity=self.capacity_limit,
+            capacity_region=PANEL_CAPACITY_REGION,
+        )
+        if read.reason != "ok" or read.count is None:
+            self._failures += 1
+            if self.capacity_snapshots is not None:
+                self.capacity_snapshots.capture(
+                    frame,
+                    read,
+                    stage=self.last_stage(),
+                    attempts=self._failures,
+                )
+            if self._failures < self.capacity_read_retries:
+                self._stage = "reading"
+                self.logger.warning(
+                    "Hatch capacity | panel unreadable | retry=%d/%d | reason=%s",
+                    self._failures,
+                    self.capacity_read_retries,
+                    read.reason,
+                )
+                return None
+            self._capacity_readable = False
+            self._stage = "close_panel"
+            self.logger.error(
+                "Hatch capacity | panel unreadable after %d reads | reason=%s",
+                self._failures,
+                read.reason,
+            )
+            return synthetic_target(
+                PANEL_CLOSE,
+                *_scaled(frame, PANEL_CLOSE_POINT, self.reference_width),
+            )
+        self._capacity_readable = True
+        self._last_capacity = read.count
+        self._cull_required = should_cull(read.count, self.threshold)
+        self.logger.info(
+            "Hatch capacity | panel=%d/%d | threshold=%d | cull=%s",
+            read.count,
+            self.capacity_limit,
+            self.threshold,
+            self._cull_required,
+        )
+        self._stage = "close_panel"
+        return synthetic_target(
+            PANEL_CLOSE,
+            *_scaled(frame, PANEL_CLOSE_POINT, self.reference_width),
+        )
+
+
 class CaveCullPlanner:
     """Navigate, make the threshold decision, and run one bounded cull."""
 
@@ -1927,6 +2087,21 @@ class CaveCullPlanner:
         return self._complete
 
     def _read_capacity(self, frame: Frame) -> CapacityRead:
+        # The My Dinosaurs panel carries the same figure on a white card that
+        # nothing overlaps, so when it happens to be open it is strictly the
+        # better source: the cave HUD prints its digits over the map, where s9
+        # lost the slash to the terrain ("32110" for 321/370) and read nothing
+        # at all over dark forest. Fall through to the HUD when the panel is
+        # not up, which is the ordinary case.
+        panel = probe_dino_count(
+            frame.image,
+            self.reader,
+            reference_width=self.reference_width,
+            expected_capacity=self.capacity_limit,
+            capacity_region=PANEL_CAPACITY_REGION,
+        )
+        if panel.reason == "ok":
+            return panel
         return probe_dino_count(
             frame.image,
             self.reader,
@@ -3944,19 +4119,17 @@ class FullHatchPlanner:
             reason,
         )
         self._stage = "capacity_preflight"
-        self._child = CaveCullPlanner(
+        # Preflight only reads; it must never delete dinosaurs before the
+        # required screening stages have run. The panel is a pure measurement
+        # and needs no camera position, which is what the cave route kept
+        # failing to reach.
+        self._child = PanelCapacityPlanner(
             self.reader,
             threshold=self.cull_threshold,
-            reference_width=self.reference_width,
-            safe_margin=self.cave_safe_margin,
-            bottom_exclusion_px=self.cave_bottom_exclusion_px,
             capacity_limit=self.capacity_limit,
+            reference_width=self.reference_width,
             capacity_read_retries=self.capacity_read_retries,
-            cave_recenter_checks=self.cave_recenter_checks,
             capacity_snapshots=self.capacity_snapshots,
-            # Preflight may read capacity, but it must never delete dinosaurs
-            # before the required parent-screening stages have completed.
-            allow_cull=False,
             logger=self.logger,
         )
         self._no_target_since = None
@@ -4376,8 +4549,10 @@ class FullHatchPlanner:
         return self._child
 
     @property
-    def _capacity_child(self) -> CaveCullPlanner:
-        assert isinstance(self._child, CaveCullPlanner)
+    def _capacity_child(self) -> CaveCullPlanner | PanelCapacityPlanner:
+        # Preflight reads through the panel; the cave planner still owns the
+        # reads that accompany an actual cull.
+        assert isinstance(self._child, (CaveCullPlanner, PanelCapacityPlanner))
         return self._child
 
     @property
