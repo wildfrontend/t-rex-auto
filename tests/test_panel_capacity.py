@@ -13,6 +13,7 @@ sys.path.insert(0, str(REPO / "src"))
 
 from dino_bot.cull import (  # noqa: E402
     CAPACITY_REGION,
+    locate_panel_capacity,
     PANEL_CAPACITY_REGION,
     probe_dino_count,
 )
@@ -53,11 +54,24 @@ def test_the_cave_hud_region_cannot_read_this_frame() -> None:
     assert result.reason != "ok"
 
 
-def test_the_panel_title_template_separates_open_from_closed() -> None:
+def test_the_locator_finds_the_panel_and_reads_it() -> None:
+    """Locating by ink is what makes this work at all.
+
+    The title renders slightly differently between openings (188x43 in one
+    live capture, 183x40 in another), so a grayscale match tops out near 0.6
+    and cannot be told from a miss.
+    """
+
     if not TEMPLATE.exists():
         pytest.skip("panel template not built")
     template = cv2.imread(str(TEMPLATE), cv2.IMREAD_GRAYSCALE)
-    score = cv2.matchTemplate(
-        panel_frame(), template, cv2.TM_CCOEFF_NORMED
-    ).max()
-    assert score > 0.9
+    region = locate_panel_capacity(panel_frame(), template)
+
+    assert region is not None
+    result = probe_dino_count(
+        panel_frame(),
+        DigitReader(GLYPHS),
+        expected_capacity=370,
+        capacity_region=region,
+    )
+    assert result.fraction == (237, 370)

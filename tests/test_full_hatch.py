@@ -184,6 +184,19 @@ def _run_panel_preflight(planner, home) -> None:
 PANEL_MARK = (5, 5)
 
 
+def panel_frame_unreadable() -> Frame:
+    """The panel is open but its digits cannot be parsed.
+
+    Built from the real capture with the fraction painted out, so the locator
+    still finds the title while the read fails - which is the case the
+    capacity fuse exists for.
+    """
+
+    image = cv2.imread(str(REPO / "tests" / "data" / "my-dino-panel.png")).copy()
+    image[350:410, 360:540] = (255, 255, 255)
+    return frame(image)
+
+
 def _frame_is_panel(image) -> bool:
     """Whether a test frame was marked as showing the open panel."""
 
@@ -1346,7 +1359,14 @@ def test_attack_filter_header_survives_into_next_scoped_planning_frame() -> None
 
 
 def test_full_hatch_preflight_starts_initial_screening_before_first_egg_pile_tap() -> None:
-    planner = make_full_planner()
+    # 370 to match the real panel capture this test reads (237/370).
+    planner = FullHatchPlanner(
+        DigitReader(GLYPHS),
+        egg_pile_point=(450, 1330),
+        max_scrolls=0,
+        capacity_limit=370,
+        cull_threshold=340,
+    )
     home = [detection(hatch.HOME_ANCHOR, 59, 561)]
 
     target = planner.choose(frame(), home)
@@ -1355,8 +1375,9 @@ def test_full_hatch_preflight_starts_initial_screening_before_first_egg_pile_tap
     assert PANEL_TITLE in planner.planning_detection_types()
     planner.on_action_success(target.type)
 
+    # A real capture: the planner finds the panel in the frame itself.
     panel = [detection(PANEL_TITLE, 452, 317)]
-    target = planner.choose(panel_frame(), panel)
+    target = planner.choose(capacity_panel_frame(), panel)
     assert target is not None and target.type == PANEL_CLOSE
     planner.on_action_success(target.type)
 
@@ -1376,29 +1397,22 @@ def test_custom_preflight_recovers_occluded_hud_or_keeps_capacity_fuse(
         DigitReader(GLYPHS), egg_pile_point=(450, 1330),
         enabled_stages=("attack", "top", "collect", "cave", "hatch"),
         capacity_read_retries=1,
+        capacity_limit=370,
+        cull_threshold=340,
     )
     home = [detection(hatch.HOME_ANCHOR, 59, 561)]
     target = planner.choose(frame(), home)
-    assert target is not None and target.type == CAVE_SWIPE
-    planner.on_action_success(target.type)
-    cave = [detection("hatch_cave", 100, 1100)]
-    blocked = occluded_capacity_frame()
-    assert planner.choose(blocked, cave) is None
-    target = planner.choose(blocked, cave)
-    assert target is not None and target.type == CAVE_SWIPE
-    assert (target.x, target.y) == (350, 800)
+    assert target is not None and target.type == PANEL_OPEN
     planner.on_action_success(target.type)
 
-    after = capacity_frame() if readable_after_move else blocked
-    assert planner.choose(after, cave) is None
-    target = planner.choose(after, cave)
-    assert target is not None and target.type == CAVE_RECENTER
+    # The panel is up but its digits are unreadable. One retry is configured,
+    # so the second look gives up and closes rather than reading a guess.
+    panel = [detection(PANEL_TITLE, 452, 317)]
+    first = capacity_panel_frame() if readable_after_move else panel_frame_unreadable()
+    target = planner.choose(first, panel)
+    assert target is not None and target.type == PANEL_CLOSE
     planner.on_action_success(target.type)
-    target = planner.choose(after, cave)
-    assert target is not None and target.type == CAVE_RECENTER
-    planner.on_action_success(target.type)
-    assert planner.choose(after, home) is None
-    target = planner.choose(after, home)
+    target = planner.choose(frame(), home)
 
     if readable_after_move:
         assert target is not None and target.type == OPEN_NEST
