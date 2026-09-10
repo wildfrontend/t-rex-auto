@@ -197,6 +197,11 @@
       "threshold": 0.9
     },
     {
+      "type": "hatch_my_dino_title",
+      "file": "templates/hatch-my-dino-title.png",
+      "threshold": 0.9
+    },
+    {
       "type": "hatch_select_title",
       "file": "templates/hatch-select-title.png",
       "threshold": 0.9

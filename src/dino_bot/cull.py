@@ -25,6 +25,18 @@ from .models import Image
 # otherwise valid read into ``280/350?``. The digits themselves remain fully
 # connected from y=239 onward at 900-wide reference scale.
 CAPACITY_REGION = (10.0, 239.0, 110.0, 258.0)
+# The My Dinosaurs panel prints the same N/M as plain black digits on the
+# panel's white card. Nothing overlaps it, it does not animate, and the panel
+# is a fixed overlay rather than part of the map - so unlike the cave HUD it
+# needs no camera position at all. The cave HUD misread 321/370 as "32110" by
+# losing the slash to the scenery behind it, and returned nothing at all over
+# dark forest; this region reads first time.
+PANEL_CAPACITY_REGION = (370.0, 355.0, 530.0, 405.0)
+PANEL_TITLE = "hatch_my_dino_title"
+# Opens the panel from the home map: the second control down the left edge.
+PANEL_OPEN_POINT = (60.0, 288.0)
+# Any point outside the card dismisses it.
+PANEL_CLOSE_POINT = (450.0, 1500.0)
 EXPECTED_CAPACITY = 350
 # The capacity HUD is drawn over the map.  Coloured particles and dinosaurs
 # can touch the final digit and make the grayscale connected-component reader
@@ -150,15 +162,21 @@ def probe_dino_count(
     *,
     reference_width: float = 900.0,
     expected_capacity: int = EXPECTED_CAPACITY,
+    capacity_region: tuple[float, float, float, float] = CAPACITY_REGION,
 ) -> CapacityRead:
-    """Read the cave-view dino count and report what happened either way."""
+    """Read a dino count from the given region and report what happened.
+
+    The default region is the cave-view HUD. Pass ``PANEL_CAPACITY_REGION`` to
+    read the same figure off the My Dinosaurs panel instead, where the digits
+    sit on a white card that nothing overlaps.
+    """
 
     if expected_capacity <= 0:
         raise ValueError("expected_capacity must be greater than zero")
 
     height, width = image.shape[0], image.shape[1]
     scale = width / reference_width
-    x0, y0, x1, y1 = (int(value * scale) for value in CAPACITY_REGION)
+    x0, y0, x1, y1 = (int(value * scale) for value in capacity_region)
     region = (x0, y0, x1, y1)
     # A frame smaller than the calibrated HUD (a portrait/landscape flip, or a
     # capture that lost the emulator chrome insets) would otherwise crop to an
