@@ -608,6 +608,39 @@ def _home_proof(*, bright: bool, pile: bool, offset: tuple[float, float] | None)
         ) = saved
 
 
+def test_a_centred_hunt_egg_does_not_hide_the_recovery_handover() -> None:
+    """Order matters: the hunt-egg wait must not mask an off-centre home.
+
+    The wait returns on every frame that shows a centred hunt egg, so with the
+    handover placed after it the branch was unreachable - s9 burned a whole
+    90s deadline at (-4,146) without recovery ever being offered.
+    """
+
+    now = [0.0]
+    combined, hatch_planner, hunt_planner = planner()
+    combined.clock = lambda: now[0]
+    assert combined.choose(frame(), []) is None
+    hatch_planner.cooldown_ms = 20_000
+    hunt_planner.next_target = target("forest_recenter_button", 841, 1296)
+    assert combined.choose(frame(), [detection("map_exit_nest_button", 840, 1295)])
+
+    # Both the hatch home anchor and a centred hunt egg are on screen.
+    mixed = [
+        detection("hatch_home_anchor", 450, 800),
+        detection(hunt_planner.center_anchor_type, 450, 800),
+        detection("forest_recenter_button", 841, 1296),
+    ]
+    recoveries: list[str] = []
+    hatch_planner.begin_home_recovery = lambda reason: recoveries.append(reason) or True
+    hatch_planner.next_target = target("hatch_recovery_recenter", 452, 727)
+
+    with _home_proof(bright=True, pile=True, offset=(-4.0, 146.0)):
+        for _ in range(MAX_HOME_ANCHOR_SETTLE_FRAMES + 2):
+            combined.choose(frame(), mixed)
+
+    assert len(recoveries) == 1
+
+
 def test_an_off_centre_home_goes_to_recovery_not_another_recentre() -> None:
     """Recentring cannot close a measured pile offset; the hatch side can.
 

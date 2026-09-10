@@ -730,6 +730,20 @@ class HatchHuntPlanner:
             return self._choose_owned(self.hatch, frame, detections)
 
         self._centered_frames = 0
+        # The hatch home is on screen and merely off-centre: that is recovery's
+        # job, and it has to be offered before the hunt-egg wait below, which
+        # returns on every frame a centred hunt egg is visible and so kept this
+        # branch unreachable for a whole 90s deadline on s9.
+        home_anchor_visible = any(
+            item.type == hatch_feature.HOME_ANCHOR for item in detections
+        )
+        if home_anchor_visible:
+            self._home_anchor_waits += 1
+            if self._home_anchor_waits > MAX_HOME_ANCHOR_SETTLE_FRAMES:
+                if self._offer_home_to_recovery(frame, detections):
+                    return self.choose(frame, detections)
+        else:
+            self._home_anchor_waits = 0
         # A centred hunt egg with a temporarily missed hatch HUD anchor is
         # already safe; wait for the second proof instead of leaving the map.
         #
@@ -779,22 +793,12 @@ class HatchHuntPlanner:
         # repeats. On s9 that loop lost every one of seven handoffs, and when
         # the cooldown handoff hit it the hatch side fused off entirely. Let
         # the settled frame come to us instead.
-        home_anchor_visible = any(
-            item.type == hatch_feature.HOME_ANCHOR for item in detections
-        )
-        if home_anchor_visible:
-            self._home_anchor_waits += 1
-            if self._home_anchor_waits <= MAX_HOME_ANCHOR_SETTLE_FRAMES:
-                return None
-            # The map settled and the home is here, just not centred well
-            # enough. Recentring cannot close that gap - it resets the camera,
-            # and s9 measured the identical (-4,146) residue afterwards on two
-            # separate handoffs. The hatch side owns the measured drag that
-            # does close it, and its docstring names this caller.
-            if self._offer_home_to_recovery(frame, detections):
-                return self.choose(frame, detections)
-        else:
-            self._home_anchor_waits = 0
+        # The settle wait and the recovery handover both ran earlier, before
+        # the hunt-egg wait that used to hide them.
+        if home_anchor_visible and self._home_anchor_waits <= (
+            MAX_HOME_ANCHOR_SETTLE_FRAMES
+        ):
+            return None
         if map_evidence and not hunt_controls:
             recenter_reason = (
                 "capacity camera refresh"
