@@ -1436,20 +1436,15 @@ def test_full_capacity_preflight_screens_before_required_cull(monkeypatch) -> No
     )
     home = [detection(hatch.HOME_ANCHOR, 59, 561)]
 
-    for _ in range(2):
-        target = planner.choose(frame(), home)
-        assert target is not None and target.type == CAVE_SWIPE
-        planner.on_action_success(target.type)
+    target = planner.choose(frame(), home)
+    assert target is not None and target.type == PANEL_OPEN
+    planner.on_action_success(target.type)
 
-    cave = [detection("hatch_cave", 209, 1150)]
-    assert planner.choose(frame(), cave) is None
-    for _ in range(2):
-        target = planner.choose(frame(), cave)
-        assert target is not None and target.type == CAVE_RECENTER
-        assert target.type != "hatch_cave"
-        planner.on_action_success(target.type)
+    panel = [detection(PANEL_TITLE, 452, 317)]
+    target = planner.choose(panel_frame(), panel)
+    assert target is not None and target.type == PANEL_CLOSE
+    planner.on_action_success(target.type)
 
-    assert planner.choose(frame(), home) is None
     target = planner.choose(frame(), home)
 
     assert target is not None and target.type == OPEN_NEST
@@ -1469,16 +1464,15 @@ def test_capacity_preflight_keeps_cull_reading_when_recenter_needs_recovery(
     )
     home = [detection(hatch.HOME_ANCHOR, 59, 561)]
 
-    for _ in range(2):
-        target = planner.choose(frame(), home)
-        assert target is not None and target.type == CAVE_SWIPE
-        planner.on_action_success(target.type)
+    target = planner.choose(frame(), home)
+    assert target is not None and target.type == PANEL_OPEN
+    planner.on_action_success(target.type)
 
-    # Capacity remains readable even when the cave template is clipped. The
-    # result must be committed before the return-to-home proof can fail.
-    assert planner.choose(frame(), []) is None
-    target = planner.choose(frame(), [])
-    assert target is not None and target.type == CAVE_RECENTER
+    # The reading must be committed as soon as it is taken, before anything
+    # that follows can fail and lose it.
+    panel = [detection(PANEL_TITLE, 452, 317)]
+    target = planner.choose(panel_frame(), panel)
+    assert target is not None and target.type == PANEL_CLOSE
     assert planner._capacity_child.last_capacity == 324
     assert planner._cave_population == 324
     assert planner._management_pending
@@ -2254,7 +2248,8 @@ def test_full_flow_recovers_shifted_cave_view_before_tapping_egg_pile() -> None:
     centered_home = [detection(hatch.HOME_ANCHOR, 59, 561)]
     assert planner.choose(frame(), centered_home) is None
     target = planner.choose(frame(), centered_home)
-    assert target is not None and target.type == CAVE_SWIPE
+    # Preflight runs first and reads the panel; the egg pile is not tapped yet.
+    assert target is not None and target.type == PANEL_OPEN
     assert target.type != hatch.EGG_PILE
 
 
@@ -2390,7 +2385,8 @@ def test_full_flow_tracks_shifted_egg_pile_instead_of_tapping_roaming_dinosaur()
         [detection(hatch.HOME_ANCHOR, 59, 561)],
     )
 
-    assert target is not None and target.type == CAVE_SWIPE
+    # Preflight reads the panel before any egg-pile tap is considered.
+    assert target is not None and target.type == PANEL_OPEN
     assert target.type != hatch.EGG_PILE
 
 
@@ -3206,7 +3202,7 @@ def test_full_flow_blind_screen_uses_bounded_back_then_requires_home_proof() -> 
     home = [detection(hatch.HOME_ANCHOR, 59, 561)]
     assert planner.choose(frame(), home) is None
     target = planner.choose(frame(), home)
-    assert target is not None and target.type == CAVE_SWIPE
+    assert target is not None and target.type == PANEL_OPEN
 
 
 def test_growth_interval_triggers_screening_before_cull_threshold() -> None:
@@ -3587,24 +3583,31 @@ def test_custom_unreadable_population_retries_after_wait_and_rechecks_limit(
         enabled_stages=('collect', 'hatch'), capacity_limit=370, cull_threshold=370,
         capacity_read_retries=1, clock=lambda: now[0], boost_inventory=inventory,
     )
+    # This test drives the panel with marked frames rather than a real capture.
+    monkeypatch.setattr(
+        'dino_bot.full_hatch.locate_panel_capacity',
+        lambda image, template: (
+            (370.0, 355.0, 530.0, 405.0) if _frame_is_panel(image) else None
+        ),
+    )
     planner._cave_population = 308  # Cached count must not allow a hatch.
     # The immediate map refresh is exhausted; subsequent failures must use
     # the periodic retry window instead of permanently fusing hatching.
     planner._capacity_camera_refresh_used = True
     planner._screening_baseline_population = 298
     home = [detection(hatch.HOME_ANCHOR, 59, 561)]
-    cave = [detection('hatch_cave', 100, 1100)]
-    for _ in range(2):
-        move = planner.choose(frame(), home)
-        assert move.type == CAVE_SWIPE
-        planner.on_action_success(move.type)
-    blocked = obscured_s9_capacity_frame()
-    assert planner.choose(blocked, cave) is None
-    for _ in range(2):
-        back = planner.choose(blocked, cave)
-        assert back.type == CAVE_RECENTER
-        planner.on_action_success(back.type)
-    assert planner.choose(frame(), home) is None
+    panel = [detection(PANEL_TITLE, 452, 317)]
+    move = planner.choose(frame(), home)
+    assert move.type == PANEL_OPEN
+    planner.on_action_success(move.type)
+    # One retry configured, so an unreadable panel gives up on the first look.
+    monkeypatch.setattr(
+        'dino_bot.full_hatch.probe_dino_count',
+        lambda *a, **kw: CapacityRead(None, '', None, (0, 0, 1, 1), 'unparsed'),
+    )
+    back = planner.choose(panel_frame(), panel)
+    assert back.type == PANEL_CLOSE
+    planner.on_action_success(back.type)
     assert planner.choose(frame(), home) is None
     assert planner.capacity_retry_pending and not planner.is_hatch_blocked()
     assert not planner._capacity_checked
@@ -3616,11 +3619,7 @@ def test_custom_unreadable_population_retries_after_wait_and_rechecks_limit(
     assert planner.choose(boost_ready_frame(), [detection(hatch.HATCH_LABEL)]) is None
     assert inventory.snapshot().remaining == 100
     now[0] += 601
-    # Fresh navigation comes before any egg/claim/boost.
-    for _ in range(2):
-        move = planner.choose(frame(), home)
-        assert move.type == CAVE_SWIPE
-        planner.on_action_success(move.type)
+    # A fresh read comes before any egg/claim/boost.
     monkeypatch.setattr(
         'dino_bot.full_hatch.probe_dino_count',
         lambda *a, **kw: CapacityRead(
@@ -3629,12 +3628,12 @@ def test_custom_unreadable_population_retries_after_wait_and_rechecks_limit(
             (10, 239, 110, 258), 'unparsed' if next_count is None else 'ok',
         ),
     )
-    assert planner.choose(frame(), cave) is None
-    for _ in range(2):
-        back = planner.choose(frame(), cave)
-        assert back.type == CAVE_RECENTER
-        planner.on_action_success(back.type)
-    assert planner.choose(frame(), home) is None
+    move = planner.choose(frame(), home)
+    assert move.type == PANEL_OPEN
+    planner.on_action_success(move.type)
+    back = planner.choose(panel_frame(), panel)
+    assert back.type == PANEL_CLOSE
+    planner.on_action_success(back.type)
     chosen = planner.choose(frame(), home)
     if next_count == 308:
         assert chosen.type == hatch.EGG_PILE

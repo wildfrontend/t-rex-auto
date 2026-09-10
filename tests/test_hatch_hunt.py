@@ -920,7 +920,7 @@ def test_population_stop_keeps_hunting_without_cooldown_handoff():
 
 def test_failed_capacity_read_hunts_then_hands_back_for_a_fresh_preflight():
     from dino_bot.digits import DigitReader
-    from dino_bot.full_hatch import CAVE_SWIPE, FullHatchPlanner
+    from dino_bot.full_hatch import PANEL_OPEN, FullHatchPlanner
 
     now = [1000.0]
     full = FullHatchPlanner(
@@ -949,14 +949,14 @@ def test_failed_capacity_read_hunts_then_hands_back_for_a_fresh_preflight():
     now[0] += 601
     assert combined.choose(frame(), home) is None
     chosen = combined.choose(frame(), home)
-    assert chosen.type == CAVE_SWIPE
+    assert chosen.type == PANEL_OPEN
     assert full._stage == 'capacity_preflight'
     assert not full._capacity_checked
 
 
 def test_custom_camera_refresh_failure_to_read_flows_into_periodic_hunting_retry():
     from dino_bot.digits import DigitReader
-    from dino_bot.full_hatch import CAVE_SWIPE, FullHatchPlanner
+    from dino_bot.full_hatch import PANEL_OPEN, FullHatchPlanner
 
     full = FullHatchPlanner(
         DigitReader(Path(__file__).parents[1] / 'assets/hatch/digits'),
@@ -980,7 +980,7 @@ def test_custom_camera_refresh_failure_to_read_flows_into_periodic_hunting_retry
     )
     combined.on_action_success('map_exit_nest_button')
     assert combined.choose(frame(), home) is None
-    assert combined.choose(frame(), home).type == CAVE_SWIPE
+    assert combined.choose(frame(), home).type == PANEL_OPEN
     full._capacity_child._complete = True
     full._capacity_child._capacity_readable = False
     hunt.next_target = target('dinosaur', 300, 700)
