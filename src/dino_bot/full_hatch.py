@@ -2108,6 +2108,7 @@ class CaveCullPlanner:
         bottom_exclusion_px: int = 180,
         selection_size: int = DEFAULT_CULL_BATCH_SIZE,
         allow_cull: bool = True,
+        known_capacity: int | None = None,
         capacity_limit: int = EXPECTED_CAPACITY,
         capacity_read_retries: int = 2,
         capacity_consistent_reads: int = DEFAULT_CAPACITY_CONSISTENT_READS,
@@ -2121,6 +2122,13 @@ class CaveCullPlanner:
         self.bottom_exclusion_px = max(0, bottom_exclusion_px)
         self.selection_size = max(1, selection_size)
         self.allow_cull = bool(allow_cull)
+        # Preflight already read the population off the My Dinosaurs panel, a
+        # measurement that needs no camera position at all. Re-reading it from
+        # the cave HUD costs a full navigation there and back: on s9 that was
+        # four swipes to learn 302/370, under the threshold, followed by two
+        # corrections to undo the 177px the return leg had introduced. Carry
+        # the number in instead.
+        self.known_capacity = known_capacity
         if capacity_limit <= 0:
             raise ValueError("capacity_limit must be greater than zero")
         if threshold <= 0:
@@ -2161,6 +2169,16 @@ class CaveCullPlanner:
         return self._complete
 
     def _read_capacity(self, frame: Frame) -> CapacityRead:
+        if self.known_capacity is not None:
+            # Preflight measured this off the panel moments ago; reading it
+            # again from the map would only pay for a navigation.
+            return CapacityRead(
+                self.known_capacity,
+                f"{self.known_capacity}/{self.capacity_limit}",
+                (self.known_capacity, self.capacity_limit),
+                (0, 0, 0, 0),
+                "ok",
+            )
         # The My Dinosaurs panel carries the same figure on a white card that
         # nothing overlaps, so when it happens to be open it is strictly the
         # better source: the cave HUD prints its digits over the map, where s9
@@ -4231,6 +4249,7 @@ class FullHatchPlanner:
             safe_margin=self.cave_safe_margin,
             bottom_exclusion_px=self.cave_bottom_exclusion_px,
             capacity_limit=self.capacity_limit,
+            known_capacity=self._cave_population,
             capacity_read_retries=self.capacity_read_retries,
             cave_recenter_checks=self.cave_recenter_checks,
             capacity_snapshots=self.capacity_snapshots,

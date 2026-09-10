@@ -9,7 +9,7 @@ import pytest
 
 from dino_bot import hatch, nest_filter
 from dino_bot.attack_replacement import AttackReplacementTestPlanner
-from dino_bot.cull import CAPACITY_REGION, PANEL_CAPACITY_REGION, CapacityRead
+from dino_bot.cull import CAPACITY_REGION, PANEL_CAPACITY_REGION, CapacityRead, should_cull
 from dino_bot.detection import OpenCvDetector
 from dino_bot.digits import DigitReader
 from dino_bot.full_hatch import (
@@ -597,6 +597,37 @@ def test_cave_below_threshold_recenters_without_entering() -> None:
         capacity_frame(), [detection(hatch.HOME_ANCHOR, 59, 561)]
     ) is None
     assert planner.is_complete()
+
+
+def test_a_known_capacity_needs_no_navigation_to_read() -> None:
+    """Preflight already measured it; the cave trip is pure cost.
+
+    s9 swiped four times to learn 302/370 - under the threshold, so nothing to
+    cull - and the return leg left a 177px offset that took two corrections to
+    undo. Six gestures, no outcome.
+    """
+
+    planner = CaveCullPlanner(
+        DigitReader(GLYPHS),
+        threshold=340,
+        capacity_limit=370,
+        known_capacity=302,
+    )
+
+    read = planner._read_capacity(frame())
+
+    assert read.reason == "ok"
+    assert read.count == 302
+    assert not should_cull(302, 340)
+
+
+def test_without_a_known_capacity_the_hud_is_still_read() -> None:
+    planner = CaveCullPlanner(DigitReader(GLYPHS), threshold=340)
+
+    # No number carried in: the planner falls back to reading the screen.
+    assert planner.known_capacity is None
+    read = planner._read_capacity(capacity_frame())
+    assert read.region != (0, 0, 0, 0)
 
 
 def test_cave_below_threshold_can_use_hud_when_cave_is_clipped() -> None:
