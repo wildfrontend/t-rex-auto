@@ -132,3 +132,43 @@ def test_unconfigured_floors_never_expel() -> None:
     target = planner.choose(hatch_result_frame(), result_detections())
     assert target is not None
     assert target.type == CLAIM_BUTTON
+
+
+def test_best_stats_are_logged_only_when_a_record_improves(caplog) -> None:
+    """One line per record, not one per hatch.
+
+    Manual screening used to print every nest parent's stats; that pass is
+    gone, so the hatch-result screen is the only full stat block the bot still
+    sees. Logging every hatch would bury it.
+    """
+
+    import logging
+
+    from dino_bot.hatch_result import HatchVerdict
+
+    planner = planner_with(expel_below_hp=5000, expel_below_attack=600)
+
+    def verdict(hp: int, attack: int) -> HatchVerdict:
+        return HatchVerdict(stats(hp, attack), False, "keeping")
+
+    with caplog.at_level(logging.INFO, logger="dino_bot"):
+        planner._record_best_stats(verdict(5800, 640))
+        planner._record_best_stats(verdict(5700, 630))  # neither improves
+        planner._record_best_stats(verdict(5900, 620))  # hp only
+
+    records = [r for r in caplog.records if "Hatch best" in r.getMessage()]
+    assert len(records) == 2
+    assert planner._best_hp == 5900
+    assert planner._best_attack == 640
+
+
+def test_an_unreadable_hatch_never_moves_the_record() -> None:
+    planner = planner_with(expel_below_hp=5000, expel_below_attack=600)
+    planner._best_hp = 5900
+
+    from dino_bot.hatch_result import HatchVerdict
+
+    planner._record_best_stats(HatchVerdict(None, False, "stats unreadable"))
+    planner._record_best_stats(None)
+
+    assert planner._best_hp == 5900

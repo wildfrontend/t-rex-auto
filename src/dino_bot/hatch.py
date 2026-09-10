@@ -358,6 +358,8 @@ class HatchPlanner:
         self.expel_below_hp = max(0, expel_below_hp)
         self.expel_below_attack = max(0, expel_below_attack)
         self.expel_dry_run = bool(expel_dry_run)
+        self._best_hp = 0
+        self._best_attack = 0
         self.logger = logger or logging.getLogger("dino_bot")
         self.clock = clock
         self._wait_until: float | None = None
@@ -365,6 +367,35 @@ class HatchPlanner:
         self._home_failures = 0
         self._stage = "start"
         self.hatched = 0
+
+    def _record_best_stats(self, verdict: HatchVerdict | None) -> None:
+        """Log the breeding line's best HP and attack when either improves.
+
+        Only on a new record, so the line's progress is visible without a
+        line per hatch. Manual screening used to print every nest parent; that
+        pass is gone, and the hatch-result screen is now the only place the
+        bot sees a full stat block.
+        """
+
+        if verdict is None or verdict.stats is None:
+            return
+        stats = verdict.stats
+        improved = []
+        if stats.hp > self._best_hp:
+            self._best_hp = stats.hp
+            improved.append("hp")
+        if stats.attack > self._best_attack:
+            self._best_attack = stats.attack
+            improved.append("attack")
+        if not improved:
+            return
+        self.logger.info(
+            "Hatch best | new %s record | hp=%d | attack=%d | this hatch=%s",
+            "+".join(improved),
+            self._best_hp,
+            self._best_attack,
+            self._format_stats(stats),
+        )
 
     def _judge_newborn(self, frame: Frame) -> HatchVerdict | None:
         """Judge the newborn on screen, or None when judging is switched off.
@@ -474,6 +505,7 @@ class HatchPlanner:
                     self._format_stats(verdict.stats),
                     verdict.reason,
                 )
+            self._record_best_stats(verdict)
             self._stage = "claim"
             return detection_target(claim)
         hatch_button = best_detection(by_type.get(HATCH_BUTTON))
