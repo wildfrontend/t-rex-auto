@@ -91,6 +91,8 @@ from .targeting import best_detection, detection_target, swipe_target, synthetic
 # Full-workflow synthetic actions and newly cropped screen anchors.
 OPEN_NEST = "hatch_full_open_nest"
 NEST_GEAR = "hatch_nest_gear"
+NEST_BUBBLE = "hatch_nest_bubble"
+RECOVERY_BUBBLE_DISMISS = "hatch_recovery_bubble_dismiss"
 PANEL_OPEN = "hatch_my_dino_open"
 PANEL_CLOSE = "hatch_my_dino_close"
 AUTOPLACE_TITLE = "hatch_autoplace_title"
@@ -146,6 +148,8 @@ RECOVERY_HUNT_DIALOG_DISMISS = "hatch_recovery_hunt_dialog_dismiss"
 # 收掉狩獵氣泡框用的地圖空點,900 寬座標。左側中下最不容易壓到 HUD;真的
 # 壓到別隻恐龍也只是換一個氣泡,下一輪再收,代價與現況相同。
 HUNT_DIALOG_DISMISS_POINT = (110.0, 1200.0)
+# Empty map well clear of the bubble, the home anchor and the egg pile.
+BUBBLE_DISMISS_POINT = (700.0, 1180.0)
 HUNT_DIALOG_CLOSE = "hunt_dialog_close_button"
 HUNT_MAP_EXIT = "map_exit_nest_button"
 FOREST_RECENTER = "forest_recenter_button"
@@ -232,6 +236,7 @@ DEFAULT_TARGET_ACTIONS: dict[str, str] = {
     CAVE_SWIPE: "swipe",
     CAVE_RECENTER: "swipe",
     CAVE: "tap",
+    RECOVERY_BUBBLE_DISMISS: "tap",
     PANEL_OPEN: "tap",
     PANEL_CLOSE: "tap",
     CAVE_SELECT_BUTTON: "tap",
@@ -281,6 +286,7 @@ DEFAULT_POST_ACTION_DELAYS_MS: dict[str, int] = {
     CAVE_SWIPE: 3000,
     CAVE_RECENTER: 3500,
     CAVE: 4000,
+    RECOVERY_BUBBLE_DISMISS: 2500,
     PANEL_OPEN: 3000,
     PANEL_CLOSE: 2500,
     CAVE_SELECT_BUTTON: 3500,
@@ -677,6 +683,8 @@ CAVE_DETECTION_TYPES: frozenset[str] = frozenset(
 # controls, which is especially expensive on slower devices.
 RECOVERY_DETECTION_TYPES: frozenset[str] = frozenset(
     {
+        # Parks over the home anchor, so recovery has to see it to clear it.
+        NEST_BUBBLE,
         *STARTUP_DETECTION_TYPES,
         *HOME_FOREGROUND_TYPES,
         hatch_feature.HOME_ANCHOR,
@@ -1120,6 +1128,7 @@ class HatchHomeRecoveryPlanner:
         # still stops immediately below rather than spending the extra budget.
         max_measured_corrections: int = 4,
         max_hunt_dialog_dismissals: int = 3,
+        max_bubble_dismissals: int = 3,
         applied_swipes: Sequence[tuple[int, int, int, int]] = (),
     ) -> None:
         self.reference_width = reference_width
@@ -1131,6 +1140,7 @@ class HatchHomeRecoveryPlanner:
         # must stay on one measurable map instead.
         self.max_forest_trips = 0
         self.max_hunt_dialog_dismissals = max(0, max_hunt_dialog_dismissals)
+        self.max_bubble_dismissals = max(0, max_bubble_dismissals)
         self.max_measured_corrections = max(0, max_measured_corrections)
         self._stage = "inspect"
         self._back_attempts = 0
@@ -1140,6 +1150,7 @@ class HatchHomeRecoveryPlanner:
         self._recenter_end = 0
         self._forest_trips = 0
         self._hunt_dialog_dismissals = 0
+        self._bubble_dismissals = 0
         self._measured_corrections = 0
         self._last_offset: tuple[float, float] | None = None
         self._camera_limit_hits = 0
@@ -1430,6 +1441,23 @@ class HatchHomeRecoveryPlanner:
         )
         if recenter is not None:
             return recenter
+
+        # A nest bubble (管理 / 升級) parks over the top-left corner, which is
+        # exactly where the home anchor sits: s9 read the anchor at 0.675
+        # instead of 0.990 and recovery could not prove centered home on a
+        # frame that was otherwise perfect - offset 95px, well inside
+        # tolerance. Dismiss it before spending the escape ladder on Back.
+        bubble = best_detection(by_type.get(NEST_BUBBLE))
+        if bubble is not None and self._bubble_dismissals < self.max_bubble_dismissals:
+            self._bubble_dismissals += 1
+            self._stage = (
+                f"dismiss_nest_bubble_{self._bubble_dismissals}"
+                f"/{self.max_bubble_dismissals}"
+            )
+            return synthetic_target(
+                RECOVERY_BUBBLE_DISMISS,
+                *_scaled(frame, BUBBLE_DISMISS_POINT, self.reference_width),
+            )
 
         forest = best_detection(by_type.get(FOREST_RECENTER))
         own_swipe_pending = len(self._applied_swipes) > self._inherited_swipes

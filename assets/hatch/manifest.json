@@ -197,6 +197,11 @@
       "threshold": 0.9
     },
     {
+      "type": "hatch_nest_bubble",
+      "file": "templates/hatch-nest-bubble-upgrade.png",
+      "threshold": 0.85
+    },
+    {
       "type": "hatch_my_dino_title",
       "file": "templates/hatch-my-dino-title.png",
       "threshold": 0.85,

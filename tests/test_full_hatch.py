@@ -13,6 +13,8 @@ from dino_bot.cull import CAPACITY_REGION, PANEL_CAPACITY_REGION, CapacityRead
 from dino_bot.detection import OpenCvDetector
 from dino_bot.digits import DigitReader
 from dino_bot.full_hatch import (
+    NEST_BUBBLE,
+    RECOVERY_BUBBLE_DISMISS,
     PILE_SETTLE_FRAMES,
     PANEL_CLOSE,
     PANEL_OPEN,
@@ -2864,6 +2866,40 @@ def test_home_recovery_uses_hunt_map_exit_instead_of_android_back() -> None:
 
     assert target is not None and target.type == RECOVERY_MAP_EXIT
     assert (target.x, target.y) == (841, 1295)
+
+
+def test_a_nest_bubble_is_dismissed_before_the_escape_ladder() -> None:
+    """The bubble parks over the home anchor, so it has to go first.
+
+    s9 read the anchor at 0.675 instead of 0.990 with a 管理/升級 bubble on
+    screen. Recovery could not prove centered home on a frame that was
+    otherwise fine - 95px offset, inside tolerance - spent its Back budget and
+    fused hatching off.
+    """
+
+    planner = HatchHomeRecoveryPlanner()
+    blind = frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+
+    target = planner.choose(blind, [detection(NEST_BUBBLE, 150, 930)])
+
+    assert target is not None
+    assert target.type == RECOVERY_BUBBLE_DISMISS
+    assert target.type != RECOVERY_BACK
+
+
+def test_bubble_dismissal_is_capped_so_it_cannot_loop() -> None:
+    planner = HatchHomeRecoveryPlanner(max_bubble_dismissals=2)
+    blind = frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    bubble = [detection(NEST_BUBBLE, 150, 930)]
+
+    for _ in range(2):
+        chosen = planner.choose(blind, bubble)
+        assert chosen.type == RECOVERY_BUBBLE_DISMISS
+        planner.on_action_success(chosen.type)
+
+    # Budget spent: fall through to the ordinary escape rather than tapping on.
+    chosen = planner.choose(blind, bubble)
+    assert chosen is None or chosen.type != RECOVERY_BUBBLE_DISMISS
 
 
 def test_home_recovery_never_enters_forest_to_recenter_home() -> None:
