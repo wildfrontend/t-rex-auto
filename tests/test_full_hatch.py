@@ -13,6 +13,7 @@ from dino_bot.cull import CAPACITY_REGION, PANEL_CAPACITY_REGION, CapacityRead
 from dino_bot.detection import OpenCvDetector
 from dino_bot.digits import DigitReader
 from dino_bot.full_hatch import (
+    PILE_SETTLE_FRAMES,
     PANEL_CLOSE,
     PANEL_OPEN,
     PANEL_TITLE,
@@ -2916,6 +2917,8 @@ def test_home_recovery_undoes_when_task_toast_outlives_a_measured_pile() -> None
         detection("forest_recenter_button", 841, 1296),
     ]
 
+    for _ in range(PILE_SETTLE_FRAMES):
+        assert planner.choose(frame(hidden), obscured) is None
     undo = planner.choose(frame(hidden), obscured)
     assert undo is not None and undo.type == RECOVERY_UNDO
     assert undo.type != RECOVERY_FOREST
@@ -2974,6 +2977,8 @@ def test_cave_return_history_survives_recovery_and_undo_retries() -> None:
     planner._child = cave
     planner._begin_home_recovery("cave return moved pile below frame")
     recovery = planner._child
+    for _ in range(PILE_SETTLE_FRAMES):
+        assert recovery.choose(missing_pile, home) is None
     undo = recovery.choose(missing_pile, home)
     assert undo.type == RECOVERY_UNDO
     x1, y1, x2, y2 = history[-1]
@@ -3031,6 +3036,34 @@ def test_failed_cave_return_swipe_is_not_available_for_undo() -> None:
     assert cave.camera_history() == ()
 
 
+def test_a_gliding_map_does_not_cancel_the_correction_that_is_working() -> None:
+    """A drag hides the pile while the map is still moving; that is not failure.
+
+    s9 measured 146px, issued four corrections, undid every one on its first
+    frame, ended at 160px and fused hatching off. The settle window is what
+    stops a correction being cancelled before it has landed.
+    """
+
+    planner = HatchHomeRecoveryPlanner()
+    shifted = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    shifted[1085:1097, 342:585] = (220, 180, 20)
+
+    nudge = planner.choose(frame(shifted), [detection(hatch.HOME_ANCHOR, 59, 561)])
+    assert nudge is not None and nudge.type == RECOVERY_RECENTER
+    planner.on_action_success(nudge.type)
+
+    blind = frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    home = [detection("forest_recenter_button", 841, 1296)]
+
+    # Within the window the planner waits rather than reversing itself.
+    for _ in range(PILE_SETTLE_FRAMES):
+        assert planner.choose(blind, home) is None
+
+    # If the pile comes back before the window runs out, nothing was undone.
+    recovered = planner.choose(frame(shifted), [detection(hatch.HOME_ANCHOR, 59, 561)])
+    assert recovered is None or recovered.type != RECOVERY_UNDO
+
+
 def test_home_recovery_undoes_its_own_swipe_when_the_landmark_disappears() -> None:
     planner = HatchHomeRecoveryPlanner()
     shifted = np.full((1600, 900, 3), 255, dtype=np.uint8)
@@ -3046,6 +3079,10 @@ def test_home_recovery_undoes_its_own_swipe_when_the_landmark_disappears() -> No
     # on that map instead of leaving it.
     blind = frame(np.zeros((1600, 900, 3), dtype=np.uint8))
     home = [detection("forest_recenter_button", 841, 1296)]
+    # The map is given a few frames to stop gliding before a missing pile is
+    # taken as proof the drag went wrong.
+    for _ in range(PILE_SETTLE_FRAMES):
+        assert planner.choose(blind, home) is None
     undo = planner.choose(blind, home)
     assert undo is not None and undo.type == RECOVERY_UNDO
     assert (undo.x, undo.y) == (swipe["x2"], swipe["y2"])

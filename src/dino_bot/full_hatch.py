@@ -401,6 +401,9 @@ MAX_SCREENING_RECOVERY_FAILURES = 3
 # and the correction that follows it cannot drift apart.
 HOME_PILE_BASE: tuple[float, float] = (450.0, 1455.0)
 HOME_PILE_TOLERANCE = 100.0
+# Frames to let the map glide after a measured drag before treating a missing
+# pile as proof the drag went wrong.
+PILE_SETTLE_FRAMES = 3
 
 # `HOME_PILE_BASE` describes where the pile sits when the camera still has room
 # to travel, but the home map has a hard bottom edge.  An S9 trace measured the
@@ -1154,6 +1157,7 @@ class HatchHomeRecoveryPlanner:
         # anyway, and the 400px gap it opened survived all four measured
         # corrections. Require the home anchor before reaching inherited legs.
         self._inherited_swipes = len(applied_swipes)
+        self._pile_settle_frames = 0
         self._applied_offsets: list[tuple[float, float] | None] = [None] * len(applied_swipes)
         self._pending_swipe: tuple[int, int, int, int] | None = None
         self._pending_measured_offset: tuple[float, float] | None = None
@@ -1430,6 +1434,18 @@ class HatchHomeRecoveryPlanner:
         forest = best_detection(by_type.get(FOREST_RECENTER))
         own_swipe_pending = len(self._applied_swipes) > self._inherited_swipes
         home_anchor_seen = bool(by_type.get(hatch_feature.HOME_ANCHOR))
+        # A drag leaves the pile out of frame while the map is still gliding,
+        # so the first frames after one are not evidence the correction went
+        # wrong. Undoing them immediately cancels the very move that was
+        # working: s9 measured 146px, corrected four times, undid all four, and
+        # ended at 160px - then fused hatching off. Let the map settle first.
+        if (
+            forest is not None
+            and self._applied_swipes
+            and self._pile_settle_frames < PILE_SETTLE_FRAMES
+        ):
+            self._pile_settle_frames += 1
+            return None
         if (
             forest is not None
             and self._applied_swipes
@@ -1588,6 +1604,9 @@ class HatchHomeRecoveryPlanner:
         # in the opposite direction - and once the pile and the anchor leave
         # the viewport, nothing on screen can measure the mistake.
         self._measured_corrections += 1
+        # A fresh drag earns a fresh settle window; without this the wait is
+        # spent once and every later correction is undone on its first frame.
+        self._pile_settle_frames = 0
         self._last_offset = offset
         x1, y1, x2, y2 = self._nudge(frame, offset)
         self._stage = (
