@@ -19,6 +19,8 @@ destructive-looking affirmative action also requires its known prompt.
 from __future__ import annotations
 
 import logging
+import pathlib
+from functools import lru_cache
 import math
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -56,6 +58,7 @@ from .cull import (
     PANEL_OPEN_POINT,
     PANEL_TITLE,
     CapacityRead,
+    locate_panel_capacity,
     probe_dino_count,
     should_cull,
 )
@@ -1879,6 +1882,22 @@ class CapacitySnapshot(Protocol):
     ) -> Path | None: ...
 
 
+@lru_cache(maxsize=1)
+def _load_panel_template() -> Image | None:
+    """Load the My Dinosaurs title art that anchors the capacity crop."""
+
+    path = (
+        pathlib.Path(__file__).resolve().parents[2]
+        / "assets"
+        / "hatch"
+        / "templates"
+        / "hatch-my-dino-title.png"
+    )
+    if not path.exists():
+        return None
+    return cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+
+
 class PanelCapacityPlanner:
     """Read the population off the My Dinosaurs panel and close it again.
 
@@ -1902,6 +1921,7 @@ class PanelCapacityPlanner:
         reference_width: float = 900.0,
         capacity_read_retries: int = 2,
         capacity_snapshots: CapacitySnapshot | None = None,
+        panel_template: Image | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
         self.reader = reader
@@ -1911,6 +1931,12 @@ class PanelCapacityPlanner:
         self.capacity_read_retries = max(1, capacity_read_retries)
         self.capacity_snapshots = capacity_snapshots
         self.logger = logger or logging.getLogger("dino_bot")
+        # Located by ink rather than by the detector: the title renders a
+        # little differently each opening, so a grayscale template match tops
+        # out near 0.6 and cannot be separated from a miss.
+        self.panel_template = (
+            panel_template if panel_template is not None else _load_panel_template()
+        )
         self._stage = "open_panel"
         self._complete = False
         self._capacity_readable: bool | None = None
@@ -1956,8 +1982,8 @@ class PanelCapacityPlanner:
     ) -> Target | None:
         if self._complete:
             return None
-        by_type = _group(detections)
-        panel_open = bool(by_type.get(PANEL_TITLE))
+        region = locate_panel_capacity(frame.image, self.panel_template)
+        panel_open = region is not None
         if not panel_open:
             if self._stage == "close_panel":
                 # The close tap landed; the reading is already banked.
@@ -1968,12 +1994,13 @@ class PanelCapacityPlanner:
                 PANEL_OPEN,
                 *_scaled(frame, PANEL_OPEN_POINT, self.reference_width),
             )
+        assert region is not None
         read = probe_dino_count(
             frame.image,
             self.reader,
             reference_width=self.reference_width,
             expected_capacity=self.capacity_limit,
-            capacity_region=PANEL_CAPACITY_REGION,
+            capacity_region=region,
         )
         if read.reason != "ok" or read.count is None:
             self._failures += 1

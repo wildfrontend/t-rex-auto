@@ -32,7 +32,25 @@ CAPACITY_REGION = (10.0, 239.0, 110.0, 258.0)
 # losing the slash to the scenery behind it, and returned nothing at all over
 # dark forest; this region reads first time.
 PANEL_CAPACITY_REGION = (370.0, 355.0, 530.0, 405.0)
+# The card's height changes with its contents, so the fraction does not sit at
+# a fixed y: two live captures put the title at 292 and at 325. The gap from
+# the title's top edge down to the digits is stable (63 and 60), so anchor the
+# crop on the detected title instead of the screen.
+PANEL_CAPACITY_FROM_TITLE = (
+    25.0,  # left, relative to the title's left edge
+    63.0,  # top, relative to the title's top edge
+    185.0,  # right
+    113.0,  # bottom
+)
 PANEL_TITLE = "hatch_my_dino_title"
+# The title renders slightly differently between openings - live captures
+# measured the same characters at 188x43 and at 183x40 - so a grayscale
+# template match tops out around 0.6 and cannot be told from a miss. Matching
+# the ink alone, across a small scale sweep, separates cleanly: 0.89 with the
+# panel open against 0.20 without it.
+PANEL_TITLE_INK_LEVEL = 120
+PANEL_TITLE_SCALES = tuple(round(1.0 + i * 0.02, 2) for i in range(-4, 5))
+PANEL_TITLE_MIN_SCORE = 0.8
 # Opens the panel from the home map: the second control down the left edge.
 PANEL_OPEN_POINT = (60.0, 288.0)
 # Any point outside the card dismisses it.
@@ -154,6 +172,50 @@ def _capacity_text_candidates(
         cleaned, edge_ink_removed = _clean_capacity_crop(variant)
         candidates.append((reader.read(cleaned), edge_ink_removed))
     return candidates
+
+
+def locate_panel_capacity(
+    image: Image,
+    template: Image,
+) -> tuple[float, float, float, float] | None:
+    """Find the My Dinosaurs panel and return its capacity crop.
+
+    Returns None when the panel is not on screen. The card's height varies
+    with its contents, so the fraction is anchored to the title rather than to
+    the frame: two live captures put the title 33px apart while the gap down
+    to the digits stayed at 63 and 60.
+    """
+
+    if image.size == 0 or template.size == 0:
+        return None
+    grey = image if image.ndim == 2 else cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    tpl = template if template.ndim == 2 else cv2.cvtColor(
+        template, cv2.COLOR_BGR2GRAY
+    )
+    haystack = ((grey < PANEL_TITLE_INK_LEVEL) * 255).astype("uint8")
+    needle = ((tpl < PANEL_TITLE_INK_LEVEL) * 255).astype("uint8")
+    best_score = 0.0
+    best_point: tuple[int, int] | None = None
+    for scale in PANEL_TITLE_SCALES:
+        scaled = (
+            needle
+            if scale == 1.0
+            else cv2.resize(
+                needle, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST
+            )
+        )
+        if scaled.shape[0] > haystack.shape[0] or scaled.shape[1] > haystack.shape[1]:
+            continue
+        _, score, _, point = cv2.minMaxLoc(
+            cv2.matchTemplate(haystack, scaled, cv2.TM_CCOEFF_NORMED)
+        )
+        if score > best_score:
+            best_score, best_point = score, point
+    if best_point is None or best_score < PANEL_TITLE_MIN_SCORE:
+        return None
+    left, top, right, bottom = PANEL_CAPACITY_FROM_TITLE
+    x, y = best_point
+    return (x + left, y + top, x + right, y + bottom)
 
 
 def probe_dino_count(

@@ -199,7 +199,13 @@
     {
       "type": "hatch_my_dino_title",
       "file": "templates/hatch-my-dino-title.png",
-      "threshold": 0.9
+      "threshold": 0.85,
+      "scales": [
+        1.0,
+        0.97,
+        0.94,
+        1.03
+      ]
     },
     {
       "type": "hatch_select_title",

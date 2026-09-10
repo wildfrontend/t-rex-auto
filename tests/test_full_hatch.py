@@ -122,13 +122,14 @@ def detection(
 
 
 def capacity_panel_frame() -> Frame:
-    """A frame whose My Dinosaurs panel region carries a readable count."""
+    """A real capture of the open My Dinosaurs panel (reads 237/370).
 
-    image = frame().image.copy()
-    crop = cv2.imread(str(FIXTURES / "hud_282_350.png"))
-    assert crop is not None
-    x0, y0 = int(PANEL_CAPACITY_REGION[0]), int(PANEL_CAPACITY_REGION[1])
-    image[y0 : y0 + crop.shape[0], x0 : x0 + crop.shape[1]] = crop
+    The planner locates the panel by matching the title's ink in the frame
+    itself, so a synthetic detection cannot stand in for it here.
+    """
+
+    image = cv2.imread(str(REPO / "tests" / "data" / "my-dino-panel.png"))
+    assert image is not None
     return frame(image)
 
 
@@ -175,17 +176,46 @@ def _run_panel_preflight(planner, home) -> None:
     assert chosen is not None and chosen.type == PANEL_OPEN
     planner.on_action_success(chosen.type)
     panel = [detection(PANEL_TITLE, 452, 317)]
-    chosen = planner.choose(capacity_panel_frame(), panel)
+    chosen = planner.choose(panel_frame(), panel)
     assert chosen is not None and chosen.type == PANEL_CLOSE
     planner.on_action_success(chosen.type)
 
 
+PANEL_MARK = (5, 5)
+
+
+def _frame_is_panel(image) -> bool:
+    """Whether a test frame was marked as showing the open panel."""
+
+    return bool(image[PANEL_MARK[1], PANEL_MARK[0]].sum() < 30)
+
+
+def panel_frame() -> Frame:
+    """A white test frame marked as showing the open My Dinosaurs panel."""
+
+    image = frame().image.copy()
+    image[PANEL_MARK[1], PANEL_MARK[0]] = (0, 0, 0)
+    return frame(image)
+
+
 def _patch_capacity(monkeypatch, count: int | None) -> None:
-    """Force the HUD read, bypassing the glyph matcher and its fixture crop."""
+    """Force the capacity read, bypassing the glyph matcher and its crop.
+
+    Also makes the panel locator report a fixed region, so a plain white test
+    frame stands in for an open panel.
+    """
 
     monkeypatch.setattr(
         "dino_bot.full_hatch.probe_dino_count",
         lambda *args, **kwargs: _capacity_read(count),
+    )
+    # The planner reads the panel out of the frame, so a test that wants the
+    # panel "open" marks its frame by painting the title's ink into it.
+    monkeypatch.setattr(
+        "dino_bot.full_hatch.locate_panel_capacity",
+        lambda image, template: (
+            (370.0, 355.0, 530.0, 405.0) if _frame_is_panel(image) else None
+        ),
     )
 
 
@@ -1326,7 +1356,7 @@ def test_full_hatch_preflight_starts_initial_screening_before_first_egg_pile_tap
     planner.on_action_success(target.type)
 
     panel = [detection(PANEL_TITLE, 452, 317)]
-    target = planner.choose(capacity_panel_frame(), panel)
+    target = planner.choose(panel_frame(), panel)
     assert target is not None and target.type == PANEL_CLOSE
     planner.on_action_success(target.type)
 
@@ -1545,7 +1575,7 @@ def test_full_flow_collects_all_nest_eggs_before_empty_rescan_wait() -> None:
     now[0] += 601
     assert not planner.is_hunt_cooldown_active()
     target = planner.choose(frame(), home)
-    assert target is not None and target.type == CAVE_SWIPE
+    assert target is not None and target.type == PANEL_OPEN
 
 
 def test_collect_only_opens_my_nest_even_when_home_collect_button_is_visible() -> None:
@@ -1790,7 +1820,7 @@ def test_scheduled_visit_preserves_child_and_refreshes_egg_wait(tmp_path, monkey
     planner.on_action_success(HATCH_BOOST_BUTTON)
     assert planner.choose(boost_ready_frame(), prompt).type == HATCH_BOOST_CONFIRM
     planner.on_action_success(HATCH_BOOST_CONFIRM)
-    assert planner.choose(frame(), panel).type == "hatch_cooldown_boost_close"
+    assert planner.choose(panel_frame(), panel).type == "hatch_cooldown_boost_close"
     planner.on_action_success("hatch_cooldown_boost_close")
     assert planner.choose(frame(), home) is None
     assert planner._boost_visit is None
@@ -2617,7 +2647,7 @@ def test_failed_egg_pile_tap_checks_full_capacity_before_retry(monkeypatch) -> N
     planner.on_action_success(target.type)
 
     panel = [detection(PANEL_TITLE, 452, 317)]
-    target = planner.choose(frame(), panel)
+    target = planner.choose(panel_frame(), panel)
     assert target is not None and target.type == PANEL_CLOSE
     planner.on_action_success(target.type)
 
@@ -2648,7 +2678,7 @@ def test_failed_egg_pile_tap_retries_when_capacity_is_below_limit(monkeypatch) -
     assert target is not None and target.type == PANEL_OPEN
     planner.on_action_success(target.type)
     panel = [detection(PANEL_TITLE, 452, 317)]
-    target = planner.choose(frame(), panel)
+    target = planner.choose(panel_frame(), panel)
     assert target is not None and target.type == PANEL_CLOSE
     planner.on_action_success(target.type)
 
@@ -3376,7 +3406,7 @@ def test_incubator_hatches_ready_eggs_and_reads_timer_before_inline_boost(
         assert planner.choose(screen, prompt).type == HATCH_BOOST_CONFIRM
         planner.on_action_success(HATCH_BOOST_CONFIRM)
         monkeypatch.setattr(hatch, "read_hatch_cooldown_seconds", lambda *a, **kw: 300)
-    chosen = planner.choose(frame(), panel)
+    chosen = planner.choose(panel_frame(), panel)
     assert chosen.type == hatch.CLOSE_BUTTON
     assert not planner.boost_visit_active()
     assert planner._child is child
@@ -3399,7 +3429,7 @@ def test_custom_preflight_at_stop_line_returns_home_before_hunting(monkeypatch, 
     assert chosen.type == PANEL_OPEN
     planner.on_action_success(chosen.type)
     panel = [detection(PANEL_TITLE, 452, 317)]
-    chosen = planner.choose(frame(), panel)
+    chosen = planner.choose(panel_frame(), panel)
     assert chosen.type == PANEL_CLOSE
     assert not planner.is_hatch_blocked()
     planner.on_action_success(chosen.type)
@@ -3484,7 +3514,7 @@ def test_custom_return_collects_then_hatches_boosts_and_waits_once(tmp_path, mon
     assert chosen.type == HATCH_BOOST_CONFIRM
     planner.on_action_success(chosen.type)
     monkeypatch.setattr(hatch, "read_hatch_cooldown_seconds", lambda *a, **kw: 300)
-    chosen = planner.choose(frame(), panel)
+    chosen = planner.choose(panel_frame(), panel)
     assert chosen.type == hatch.CLOSE_BUTTON
     planner.on_action_success(chosen.type)
     assert inventory.snapshot().remaining == 99
