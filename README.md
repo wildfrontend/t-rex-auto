@@ -1,4 +1,4 @@
-# Dino Mutant Bot
+# 猛龍計畫
 
 以 BlueStacks 5 為執行環境的可擴充 Python Bot Framework。核心採用
 `Sense → Think → Act → Verify` 回饋循環，不依賴錄製 Macro。
@@ -6,16 +6,32 @@
 目前完成 Auto Hunt MVP：辨識恐龍、選擇最大隊伍、發動狩獵並驗證結果。後續功能以
 Feature 方式加入，不需要修改核心狀態機。
 
-目前版本：`v0.2.15`。這一版補上狩獵被信箱容量擋住時的自動恢復流程，
-並保留雙視窗啟動器、可調整狩獵速度及本機 AI 狀態接口：
+目前版本：`v0.0.80`。各操作連續耗盡重試時會依序執行局部處理、階段安全恢復與遊戲
+重啟；重啟三次仍再次失敗時安全停止 Bot，成功狩獵或領取孵化結果則重設自救計數。
+狩獵恐龍的點擊位置已移入身體區域；點擊失敗時直接重用最後一張驗證畫面重新辨識與
+補點，不再重新截圖，也不會在持續找到目標時強制執行昂貴的完整模板掃描。失敗前後
+畫面會限頻保存在 `logs/stalls` 供後續校正。孵蛋流程首次讀到
+總恐龍數時先完成一次巢穴篩選，之後以最近一次篩選的總數為基準，每增加 20 隻才重跑
+篩選；總數達 `330/350` 時，篩選後進洞穴清理。收集所有蛋固定沿用原本的 My Nest
+流程。任何座標連續兩次點擊後畫面完全沒變時，Bot 會改按返回鍵脫困，不再無限重試
+同一點。親代與候選數值
+仍需連續兩幀一致。任何能讀成數字的 HP／攻擊／速度都不會中止親代篩選；不符合
+HP 倍數或升級範圍的數值只會略過替換。速度 OCR 超過 150 時會保守鉗制為 150。
+清除前仍必須依序證明 Attack／HP 親代篩選與頂尖自動放置全部完成（量產預設不在循環內）。
+這一版同時保留多 Bot Dashboard、重複登入自動重啟、CMD 即時日誌與 runtime 修復，
+以及低效能電腦的孵化恢復、
+慢速模式轉場容錯、多世代壓縮日誌、錨點／供給量規劃、
+卡死逃生、半解析度比對，以及可調整狩獵速度及本機 AI 狀態接口：
 
-- 使用者只需雙擊 `start-bot.cmd`；啟動器會先檢查 Python、ADB、素材及畫面擷取。
+- 使用者只需雙擊 `start-dashboard.cmd`；首次啟動會安裝 runtime，Bot 模式由網頁介面選擇。
+- 所有實例仍可使用完整孵蛋流程，也可在 Dashboard 自選 Attack、HP、頂尖、量產、收蛋與洞穴階段；孵蛋與狩獵固定保留，冷卻期間狩獵、到期自動回到孵蛋循環。未選洞穴而達安全人口時會停止孵化，只繼續狩獵。
+- 孵蛋使用獨立的 `start-hatch-bot.cmd`，固定啟動 hatch feature，不會落入狩獵流程。
 - 一個視窗顯示原始即時 LOG，另一個繁體中文互動視窗提供統計、調速、重啟與診斷工具。
-- `127.0.0.1:8765` 提供結構化狀態與白名單停止接口，讓同一台電腦上的 AI 安全操作。
+- `127.0.0.1:8765` 提供結構化狀態與白名單控制接口，讓同一台電腦上的 AI 安全操作。
 - Repository 內附 `.agents/skills/control-dino-bot`，限制 AI 使用固定接口與控制命令。
 - 控制視窗按 `E` 會輸出經過敏感資訊遮蔽的診斷 ZIP，不需要提供遠端控制權。
 - 診斷包包含環境檢查、最新工作階段、近期日誌、有效設定及 Codex 分析指引；截圖必須另外明確選擇。
-- Windows 啟動器預設使用 `fast` 模式，也可互動切換 `safe` 或自訂毫秒數。
+- Windows 啟動器預設使用 `fast` 模式，也可由使用者切換 `safe` 或自訂毫秒數。
 - CLI 可個別覆寫選恐龍、狩獵、確認及空轉掃描延遲。
 - 黑畫面期間暫停 Detect/Verify，畫面恢復後才繼續原操作。
 - 有定義下一個 UI 的重要按鈕，必須真的看到預期 UI 才算成功。
@@ -27,7 +43,7 @@ Feature 方式加入，不需要修改核心狀態機。
 ```text
 WSL /home/louis/github/wildfrontend/t-rex-auto
   ├─ 原始碼、Git、離線測試
-  └─ scripts/deploy-windows.sh
+  └─ scripts/windows/deploy-windows.sh
                │
                ▼
 Windows D:\DinoMutantBot
@@ -134,7 +150,7 @@ C:\Users\Louis\AppData\Local\Android\Sdk\platform-tools\adb.exe
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass `
-  -File scripts\install-windows-runtime.ps1
+  -File scripts\windows\install-windows-runtime.ps1
 ```
 
 ### 3. 從 WSL 部署
@@ -143,11 +159,22 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
 封裝成可直接分享的完整資料夾：
 
 ```bash
-bash scripts/deploy-windows.sh
-bash scripts/deploy-windows.sh /mnt/d/DinoMutantBot-release /mnt/d/DinoMutantBot/python
+bash scripts/windows/deploy-windows.sh
+bash scripts/windows/deploy-windows.sh /mnt/d/DinoMutantBot-release /mnt/d/DinoMutantBot/python
 ```
 
-### 4. 環境檢查
+### 4. 多開 Bot 實例
+
+Dashboard 支援同時管理多個模擬器。每個實例必須使用不同的 ADB serial 與 status Port；
+同一個模擬器不可由兩個 Bot 同時操作。開啟 Dashboard 後按「新增模擬器」，填入名稱、
+例如 `127.0.0.1:16385` 的 ADB serial，以及未使用的 Port。系統會建立獨立設定、素材、
+日誌、統計資料與加速券庫存，之後可在各實例卡片分別啟動、停止、重啟與查看狀態。
+點選實例的「設定」即可直接修改名稱、ADB serial 或 status Port；按下儲存後，執行中的
+實例會先安全停止，再用新設定重新啟動。
+
+實例註冊資料保存在發布資料夾的 `instances.json`；更新程式時部署腳本會保留既有註冊資料。
+
+### 5. 環境檢查
 
 ```bash
 powershell.exe -NoProfile -ExecutionPolicy Bypass \
@@ -215,40 +242,18 @@ PYTHONPATH=/tmp/t-rex-auto-deps:src python3 main.py template \
 
 ## 執行
 
-部署後只需要雙擊：
+發佈包解壓後只需要雙擊：
 
 ```text
-D:\DinoMutantBot\start-bot.cmd
+D:\DinoMutantBot\start-dashboard.cmd
 ```
 
-啟動流程會先做環境檢查，再開啟兩個視窗：
+Dashboard 會在目前 CMD 視窗前景執行並開啟瀏覽器；純狩獵、孵蛋＋狩獵、自訂循環、
+安全停止、重啟與診斷都從網頁操作。關閉 CMD 視窗或按 `Ctrl+C` 即可停止
+Dashboard，不建立登入啟動項或隱藏 watcher。
 
-- `Dino Mutant Bot - Control`：互動控制、統計、調速、診斷與 AI API 資訊。
-- Bot LOG 視窗：保留完整 Capture、Detect、Planning、Action、Verify、Recover 日誌。
-
-互動視窗可使用：
-
-```text
-S  查詢成功狩獵、操作、失敗、黑屏、重啟及最近動作
-T  改用 fast、safe 或自訂時間，並以新參數重啟 Bot
-P  切換本機接口 Port；Port 被占用時會顯示程式與 PID
-D  環境檢查、ADB 截圖、完整 JSON、原始日誌、開啟日誌資料夾
-E  產生不含截圖的 Codex 診斷包並開啟輸出資料夾
-A  顯示本機 AI API 端點
-R  使用目前參數重啟
-Q  停止 Bot 並關閉控制流程
-```
-
-也可在終端預先指定模式：
-
-```bat
-D:\DinoMutantBot\start-bot.cmd fast
-D:\DinoMutantBot\start-bot.cmd safe
-D:\DinoMutantBot\start-bot.cmd fast 8877
-```
-
-`fast` 使用 500/1500/2000 ms 的選恐龍、狩獵、確認延遲；`safe` 則使用
-1500/5000/3000 ms。
+`fast` 是預設值，使用 300/900/1200 ms 的選恐龍、狩獵、確認期限；
+`safe` 使用 1500/5000/3000 ms，適合反應較慢的電腦。
 
 完整日誌保存在 `app\logs\YYYYMMDD.log`。
 Bot 執行期間會阻止 Windows 系統睡眠，但不阻止螢幕依電源設定自動關閉；Bot
@@ -256,7 +261,7 @@ Bot 執行期間會阻止 Windows 系統睡眠，但不阻止螢幕依電源設�
 
 ### 本機 AI 狀態與安全控制接口
 
-Bot 執行時只監聽 `127.0.0.1`。查詢端點為唯讀，控制端只接受固定的安全停止動作：
+Bot 執行時只監聽 `127.0.0.1`。查詢端點為唯讀，控制端只接受固定的安全動作：
 
 ```text
 http://127.0.0.1:8765/health
@@ -264,6 +269,7 @@ http://127.0.0.1:8765/status
 http://127.0.0.1:8765/actions
 http://127.0.0.1:8765/settings
 POST http://127.0.0.1:8765/control/stop
+POST http://127.0.0.1:8765/control/restart-game
 ```
 
 AI 或本機工具可直接讀取 `/status`，取得本次工作階段的成功狩獵數、信箱循環、
@@ -281,12 +287,15 @@ Port。啟動或切換時若 Port 被占用，控制視窗會顯示占用程式�
 $control-dino-bot 幫我查狩獵進度
 $control-dino-bot 用 8877 Port 查詢目前狀態
 $control-dino-bot 請停止 Bot
+$control-dino-bot 請重新啟動 Dino Mutant App
 ```
 
-Skill 只允許 `status/start/stop/restart/doctor/diagnostics/snapshot`。啟動、停止及重啟必須由使用者
-當次明確要求，控制腳本也會強制檢查 `-Confirm`；不允許 AI 自行執行 ADB 點擊、
-掃描 Port 或探索遊戲。控制腳本會先驗證 `/health` 服務身分；停止與重啟還會確認
-API PID、Port 占用者與 Bot 命令列一致，驗證失敗時不會送出控制請求。
+Skill 只允許 `status/start/stop/restart/restart-game/doctor/diagnostics/snapshot`。啟動、停止、
+重啟 Bot 或重啟遊戲 App 都必須由使用者當次明確要求，控制腳本也會強制檢查 `-Confirm`；
+不允許 AI 自行執行 ADB 點擊、掃描 Port 或探索遊戲。`restart-game` 只會重啟設定中固定的
+Dino Mutant package，不接受外部 package、activity 或 ADB 指令。控制腳本會先驗證
+`/health` 服務身分；控制前還會確認 API PID、Port 占用者與 Bot 命令列一致，驗證失敗時
+不會送出控制請求。
 
 不啟動 HTTP 服務也能從 CLI 查詢同一份結構化資料：
 
@@ -297,13 +306,13 @@ D:\DinoMutantBot\python\python.exe D:\DinoMutantBot\app\main.py `
 
 ### Codex 診斷包
 
-控制視窗按 `E` 可直接產生不含截圖的安全診斷包，輸出位置為：
+控制視窗按 `E` 會產生包含目前遊戲畫面的診斷包，輸出位置為：
 
 ```text
 D:\DinoMutantBot\app\diagnostics\dino-diagnostic-YYYYMMDD-HHMMSS.zip
 ```
 
-診斷選單 `D → 7` 才會加入目前遊戲畫面，選擇前會顯示明確提示。ZIP 內含
+診斷選單 `D → 6` 預設加入目前遊戲畫面；`D → 7` 可改為不含截圖。ZIP 內含
 `summary.json`、`status.json`、`doctor.json`、遮蔽後的 `settings.json`、近期日誌及
 `README_FOR_CODEX.md`。可直接把 ZIP 上傳給 Codex，請它說明故障原因、使用者可採取的
 步驟，以及哪些問題需要修改 Bot 程式。診斷包不會建立遠端連線，也不包含任意控制接口。
@@ -315,7 +324,7 @@ D:\DinoMutantBot\python\python.exe D:\DinoMutantBot\app\main.py `
   --config D:\DinoMutantBot\app\config.json diagnostics
 ```
 
-只有在使用者同意分享畫面時才加上 `--include-screenshot`。
+從終端執行時，只有在使用者同意分享畫面才加上 `--include-screenshot`。
 
 先用 Debug 模式限制一次操作：
 
@@ -371,11 +380,54 @@ D:\DinoMutantBot\python\python.exe `
 ## 設定重點
 
 - `capture.backend`: `adb` 不搶 focus；`mss` 較快但會把 BlueStacks 拉到前景。
-- `planner.stalled_recenter_frames`: 連續多少幀沒有安全目標後重置視野，預設 8。
+- `event_log.backup_count` / `log_backup_count`: 事件流與文字日誌各保留幾個舊世代，
+  預設 20 與 12。事件流 16 MB 上限約 97 分鐘寫滿，只留一代等於只保得住約三小時，
+  通宵執行隔天早上要看時前面幾小時已經被覆蓋。第二代以後會 gzip（實測壓到 6.5%
+  與 4.4%），所以 20 代事件只佔約 52 MB。最新的一代刻意不壓縮，診斷包的
+  `events-*.jsonl` 與 `20*.log` 兩個 glob 才能照舊運作，也不會誤把壓縮檔當文字讀。
+  世代編號愈大愈舊（`.1` 最新）。
+- `planner.max_center_distance_px`: 恐龍離畫面中心超過多少像素就不點，預設 600，設 0 停用。
+  點下恐龍會讓地圖置中到牠身上，所以這個距離就是地圖要移動的量；移動愈大，那一下愈常
+  只把地圖拉過去而沒有打開狩獵面板。實測 161 分鐘 1251 次點擊：300 px 內成功率 86%、
+  300–500 px 69%、500 px 外只剩 21%，600 px 外的 31 次點擊只換到 2 次狩獵。調小會更
+  保守（白工更少，但供給不足時會更早觸發重置）。被擋下的候選在 `plan` 事件裡記為
+  `center_distance`。
+- `planner.stalled_recenter_seconds`: 在採集地圖連續多少秒沒有安全目標後重置視野，預設 10。
+  用秒數而非幀數，是因為一次掃描的成本會隨主機負載在 1080–3668 ms 之間浮動，同樣「4 幀」
+  在忙碌的機器上是等 15 秒、在空閒的機器上只有 4.3 秒。
+- `planner.recenter_min_candidates`: 通過所有拒絕規則的恐龍少於幾隻就重置地圖,預設 1。
+  回中是補貨動作——它存在的理由是讓接下來幾次偵查都有足夠的恐龍可選,中央蛋只是
+  「重置完成」的訊號。所以觸發條件看的是供給量,不是「這個 cycle 有沒有挑出目標」。
+  調高會更早重置(地圖更滿,但重置次數變多),`stalled_recenter_seconds` 則控制供給
+  不足要撐多久才真的重置——自己的狩獵路線會隨著隊伍返回而消失,不必一掉就重置。
+- `planner.blind_idle_seconds`: 規劃器連續多少秒既選不出目標、也不在任何有期限的等待中，
+  就強制解除所有卡住的階段，預設 20。其他每個逃生條件都寫成「看到某個控制項才放行」——
+  `stalled_recenter_seconds` 要地圖地標、信箱流程的解除條件也要——而這種卡死的定義正好是
+  那些控制項一個都看不到，所以它們全都不會觸發。實測一輪 42% 的時間卡在這種畫面上。
+  這個計時器不依賴畫面提供任何東西，觸發時同時把當下的畫面存到 `logs/stalls/`。
+- `planner.mail_stage_timeout_seconds`: 收信流程停止推進多少秒後放棄本輪，預設 20。
+  期限從「上一次階段推進」起算而不是從進入信箱起算，所以只會砍掉不動的流程，不會砍掉慢的。
+- `stalls.snapshots_enabled` / `snapshot_limit` / `snapshot_min_interval_seconds`:
+  卡死畫面要不要存、留幾張、最短間隔幾秒，預設 `true` / 10 / 60。一段卡死每 20 秒會重報一次，
+  沒有間隔下限的話一段三分鐘的卡死就會用九張幾乎一樣的圖洗掉全部保留額度。
+- `planner.stage_scoped_scan`: 規劃階段只掃目前階段用得到的素材，程式預設 `true`；目前
+  `config.json` 設為 `false`，使用較慢但每輪完整辨識的 Full Scan 穩定模式。登入／裝置
+  紀錄／開場優惠三個對話框佔一次全掃描的四分之一，而它們跑起來之後不可能再出現；實測地圖
+  階段因此省 42%、信箱流程省 56%。設為 `false` 可回到每個 cycle 都掃全部。
+- `planner.full_scan_after_idle_cycles`: 連續幾個 cycle 規劃不出目標就把下一次掃描放回全部，
+  預設 `2`。窄掃描漏看的東西長得跟空地圖一模一樣，這個計數就是察覺的方式；設 2 表示意外的
+  對話框最多浪費一個 cycle。
+- `planner.full_scan_interval_seconds`: 就算一路順利，最長多久也要全掃一次，預設 30 秒。
+- `assets/manifest.json` 的 `match_scale`: 每個素材要在多少解析度下搜尋，預設 `1.0`。
+  matchTemplate 的成本與搜尋範圍的像素數成正比、與素材大小和命中數無關，所以砍半是接近
+  四倍的加速。實測 17 個素材在半解析度下信心值全部保住（`INTER_AREA` 縮圖等於低通濾波，
+  把干擾比對的高頻雜訊去掉了），只有 18×18 的 `dinosaur` 標籤太小、維持 `1.0`。
 - `capture.viewport`: Android 畫面在 BlueStacks client 內的 `[x,y,width,height]`；
   若含有 BlueStacks 側欄，應設定此值以確保 ADB 座標精準。
-- `click_delay`: 點擊到驗證畫面的等待毫秒數。
-- `post_action_delays`: 可針對確認按鈕等動畫較長的操作設定額外等待時間。
+- `click_delay`: 一般點擊後條件式驗證的最長等待毫秒數；成功時會立即往下執行。
+- `post_action_delays`: 各類操作等待下一個 UI 的最長期限，不是固定睡眠時間。
+- `transition_poll_interval`: 等待期間重新擷取與辨識的間隔。
+- `verify.minimum_checks`: 慢速電腦即使超過時間期限，最少仍會完成的驗證次數。
 - `--speed safe|fast`: 從終端切換保守或快速延遲預設。
 - `--status-port`: 本機狀態與白名單控制 API 連接埠；`0` 代表停用。
 - `--dinosaur-delay-ms`、`--hunt-button-delay-ms`、`--hunt-confirm-delay-ms`、
@@ -392,7 +444,14 @@ D:\DinoMutantBot\python\python.exe `
   `300000` ms（5 分鐘）。
 - `recovery.black_screen_timeout_seconds`: 持續黑畫面多久後重啟遊戲，預設 `45` 秒。
 - `recovery.restart_cooldown_seconds`: 兩次遊戲重啟的最短間隔，預設 `90` 秒。
+- `recovery.action_failure_stage_threshold`: 同一階段／行為耗盡幾輪重試後執行安全階段恢復，預設 `2`。
+- `recovery.action_failure_restart_threshold`: 同一階段／行為耗盡幾輪重試後重啟遊戲，預設 `3`。
+- `recovery.max_restarts_without_progress`: 行為失敗升級鏈在沒有完成狩獵或孵蛋里程碑時最多重啟幾次，預設 `3`；再失敗會安全停止 Bot。
 - `workflow.max_cycles`: 完整「狩獵、信箱收取、關閉」流程次數；`0` 代表持續執行。
+- `workflow.custom_stages`: Dashboard「自訂循環」選取的階段。預設為
+  `collect → hatch → hunt`；`hatch` 與 `hunt` 是冷卻循環必要階段。
+  安全人口可等於上限人口；取消洞穴淘汰後，達安全人口即停止孵蛋並持續狩獵。
+  自訂循環返家先收蛋再孵蛋，孵完可孵蛋後依冷卻加速券開關與庫存檢查加速。
 
 ## 背景執行
 

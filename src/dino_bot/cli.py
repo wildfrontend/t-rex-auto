@@ -15,6 +15,7 @@ from .application import create_engine
 from .assets import AssetToolError, create_template
 from .capture import AdbScreencapCapture, MssEmulatorCapture
 from .config import DEFAULT_SPEED_PROFILES, AppConfig, ConfigError, load_config
+from .dashboard import DashboardServer
 from .diagnostics import create_diagnostic_bundle, default_diagnostic_output
 from .doctor import benchmark_capture, run_checks
 from .status import build_runtime_status
@@ -22,11 +23,33 @@ from .status_server import LocalStatusServer
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="dino-bot", description="Dino Mutant Bot")
+    parser = argparse.ArgumentParser(prog="dino-bot", description="猛龍計畫")
     parser.add_argument("--config", default="config.json", help="path to config.json")
     subcommands = parser.add_subparsers(dest="command", required=True)
 
     run = subcommands.add_parser("run", help="start the bot loop")
+    run.add_argument(
+        "--feature",
+        choices=[
+            "hunt",
+            "hatch",
+            "hatch-full",
+            "hatch-hunt",
+            "custom-workflow",
+            "hatch-filter-test",
+            "hatch-sort-test",
+            "hatch-parent-test",
+            "hatch-attack-test",
+            "hatch-hp-test",
+            "hatch-stage-hatch",
+            "hatch-stage-attack",
+            "hatch-stage-hp",
+            "hatch-stage-collect",
+            "hatch-stage-cave",
+        ],
+        default="hunt",
+        help="which automation to run: hunt (default) or the egg hatch loop",
+    )
     run.add_argument("--mode", choices=["runtime", "debug", "training"])
     run.add_argument("--max-actions", type=int)
     run.add_argument("--max-cycles", type=int)
@@ -43,15 +66,44 @@ def build_parser() -> argparse.ArgumentParser:
         "--status-port",
         type=int,
         default=8765,
-        help="read-only localhost status API port; use 0 to disable",
+        help="localhost status and allowlisted control API port; use 0 to disable",
     )
     run.add_argument("--verbose", action="store_true")
 
     subcommands.add_parser("doctor", help="check configuration and runtime dependencies")
 
+    adb = subcommands.add_parser(
+        "adb",
+        help="scan for emulator ADB ports, and set the one this config uses",
+    )
+    adb.add_argument(
+        "--set",
+        dest="set_serial",
+        metavar="SERIAL",
+        help="write this serial into the config (e.g. 127.0.0.1:5555)",
+    )
+    adb.add_argument(
+        "--auto",
+        action="store_true",
+        help="write the found serial into the config when exactly one answers",
+    )
+    adb.add_argument(
+        "--clear",
+        action="store_true",
+        help="clear the serial so every start picks the only device that answers",
+    )
+    adb.add_argument("--json", action="store_true", help="print machine-readable JSON")
+
     status = subcommands.add_parser("status", help="show the latest Bot session status")
     status.add_argument("--json", action="store_true", help="print machine-readable JSON")
     status.add_argument("--actions", type=int, default=10, help="recent actions to include")
+
+    dashboard = subcommands.add_parser(
+        "dashboard",
+        help="serve the localhost statistics and control dashboard",
+    )
+    dashboard.add_argument("--port", type=int, default=8780)
+    dashboard.add_argument("--open-browser", action="store_true")
 
     diagnostics = subcommands.add_parser(
         "diagnostics",
@@ -93,6 +145,94 @@ def _load(path: str) -> AppConfig:
         return load_config(path)
     except ConfigError as exc:
         raise SystemExit(f"Configuration error: {exc}") from exc
+
+
+def _write_adb_serial(config_path: Path, serial: str | None) -> None:
+    """Set ``adb.serial`` in config.json, leaving every other key untouched."""
+
+    try:
+        raw = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise SystemExit(f"Cannot read {config_path}: {exc}") from exc
+    if not isinstance(raw, dict):
+        raise SystemExit(f"{config_path} must contain a JSON object")
+    adb = raw.setdefault("adb", {})
+    if not isinstance(adb, dict):
+        raise SystemExit(f"{config_path}: the adb section must be an object")
+    adb["serial"] = serial
+    try:
+        config_path.write_text(
+            json.dumps(raw, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        raise SystemExit(f"Cannot write {config_path}: {exc}") from exc
+
+
+def _adb_command(args: argparse.Namespace, config: AppConfig) -> int:
+    config_path = Path(args.config).expanduser().resolve()
+    client = AdbClient(config.adb)
+
+    if args.clear:
+        _write_adb_serial(config_path, None)
+        print(f"adb.serial 已清空:{config_path}")
+        print("之後每次啟動都會自動挑「唯一回應的裝置」。")
+        return 0
+    if args.set_serial:
+        _write_adb_serial(config_path, args.set_serial.strip())
+        print(f"adb.serial 已設為 {args.set_serial.strip()}:{config_path}")
+        return 0
+
+    print(f"ADB 執行檔:{client.executable}")
+    print(f"目前設定:adb.serial = {config.adb.serial or '(空,自動選擇)'}")
+    print("掃描已知模擬器連接埠 ...")
+    devices = client.discover()
+
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "executable": client.executable,
+                    "configured_serial": config.adb.serial,
+                    "devices": [device.as_dict() for device in devices],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+    elif not devices:
+        print("沒有找到任何裝置。請確認模擬器已啟動,且它的設定裡開啟了 ADB。")
+    else:
+        print()
+        for device in devices:
+            mark = "*" if device.serial == config.adb.serial else " "
+            notes = [note for note in (device.hint, device.description) if note]
+            print(
+                f" {mark} {device.serial:<24} {device.state:<12}"
+                f" {' | '.join(notes)}"
+            )
+        print()
+        print("(* = 目前設定使用的裝置)")
+
+    ready = [device for device in devices if device.ready]
+    if args.auto:
+        if len(ready) != 1:
+            print()
+            print(
+                f"--auto 需要剛好一台就緒裝置,現在有 {len(ready)} 台;"
+                " 請改用 --set 指定。"
+            )
+            return 1
+        _write_adb_serial(config_path, ready[0].serial)
+        print()
+        print(f"adb.serial 已設為 {ready[0].serial}:{config_path}")
+    elif ready and config.adb.serial not in {device.serial for device in ready}:
+        print()
+        print(
+            "提醒:設定中的 serial 不在就緒清單裡。"
+            " 用 `--auto` 自動採用,或 `--set <serial>` 指定。"
+        )
+    return 0
 
 
 def _capture_once(config: AppConfig):
@@ -211,12 +351,43 @@ def apply_run_timing(
             if delay is not None
         }
     )
+    # The hatch launchers use the safe profile. On slower machines the
+    # detector can take several seconds per frame, so the normal hatch
+    # transition windows and bounded preflight checks otherwise expire while
+    # the UI is still settling. Keep this scoped to the conservative profile:
+    # fast remains suitable for machines that can sustain the normal cycle.
+    hatch = config.hatch
+    if speed == "safe":
+        slow_hatch_delays = {
+            "hatch_cave_swipe": 6000,
+            "hatch_cave_recenter": 7000,
+            "hatch_recovery_forest_recenter": 7000,
+            "hatch_recovery_recenter": 7000,
+            "hatch_recovery_map_exit": 7000,
+            "hatch_recovery_back": 7000,
+            "map_exit_nest_button": 6000,
+            "forest_recenter_button": 6000,
+            "map_center_egg": 7000,
+        }
+        for target_type, delay in slow_hatch_delays.items():
+            post_action_delays[target_type] = max(
+                post_action_delays.get(target_type, 0),
+                delay,
+            )
+        hatch = replace(
+            hatch,
+            capacity_read_retries=max(hatch.capacity_read_retries, 4),
+            cave_recenter_checks=max(hatch.cave_recenter_checks, 5),
+            recovery_timeout_seconds=max(hatch.recovery_timeout_seconds, 30.0),
+        )
     return replace(
         config,
         click_delay=click_delay,
         idle_delay=idle_delay,
         transition_poll_interval=poll_interval,
         post_action_delays=post_action_delays,
+        timing_profile=speed,
+        hatch=hatch,
     )
 
 
@@ -231,6 +402,8 @@ def main(argv: list[str] | None = None) -> int:
             icon = "PASS" if check.ok else ("WARN" if not check.required else "FAIL")
             print(f"[{icon}] {check.name}: {check.detail}")
         return 1 if any(not item.ok and item.required for item in checks) else 0
+    if args.command == "adb":
+        return _adb_command(args, config)
     if args.command == "status":
         status = build_runtime_status(config.logs_dir, max(0, args.actions))
         if args.json:
@@ -251,6 +424,28 @@ def main(argv: list[str] | None = None) -> int:
                 f" | persisted: {status['black_screen_persisted']}"
                 f" | game restarts: {status['game_restarts']}"
             )
+        return 0
+    if args.command == "dashboard":
+        port = max(1, min(int(args.port), 65535))
+        database = config.root / "data" / "stats.sqlite3"
+        runtime_root = (
+            config.root.parent
+            if (config.root.parent / "app" / "main.py").is_file()
+            else config.root
+        )
+        server = DashboardServer(
+            runtime_root,
+            config.logs_dir,
+            database,
+            port=port,
+            config_path=Path(args.config).resolve(),
+        )
+        print(f"Dino dashboard: http://127.0.0.1:{port}")
+        print(f"Statistics database: {database}")
+        try:
+            server.serve_forever(open_browser=bool(args.open_browser))
+        except KeyboardInterrupt:
+            server.close()
         return 0
     if args.command == "benchmark":
         if args.backend:
@@ -331,13 +526,18 @@ def main(argv: list[str] | None = None) -> int:
             idle_delay_ms=args.idle_delay_ms,
             poll_interval_ms=args.poll_interval_ms,
         )
-        engine = create_engine(config, verbose=args.verbose)
+        engine = create_engine(config, verbose=args.verbose, feature=args.feature)
         status_server = None
         if args.status_port > 0:
+            control_handlers = {"stop": engine.stop}
+            if engine.context.runtime_recovery is not None:
+                control_handlers["restart-game"] = engine.request_game_restart
             status_server = LocalStatusServer(
                 config.logs_dir,
                 args.status_port,
-                control_handlers={"stop": engine.stop},
+                control_handlers=control_handlers,
+                metadata={"feature": args.feature},
+                workflow_provider=getattr(engine.context.planner, "workflow_status", None),
             )
             try:
                 status_server.start()
@@ -346,8 +546,17 @@ def main(argv: list[str] | None = None) -> int:
                     status_server.url,
                 )
             except OSError as exc:
-                engine.context.logger.warning("Status API | unavailable | %s", exc)
+                engine.context.logger.error(
+                    "Status API | unavailable; another Bot may already use port %d | %s",
+                    args.status_port,
+                    exc,
+                )
                 status_server = None
+                engine.close()
+                raise SystemExit(
+                    f"Status API unavailable on localhost:{args.status_port}; "
+                    "another Bot instance may already be running."
+                ) from exc
         try:
             engine.run()
         finally:

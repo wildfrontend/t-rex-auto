@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from collections.abc import Callable, Mapping, Sequence
 from math import atan2, degrees, hypot
 from pathlib import Path
 from typing import Any
 
-from .models import Detection, ExclusionZone, Frame, Target
+from .models import Detection, ExclusionZone, Frame, Target, VerificationResult
+from .targeting import detection_target
 
 
 class TargetPlanner:
@@ -26,7 +28,12 @@ class TargetPlanner:
         retry_exhausted_cooldown_ms: int = 60_000,
         suppression_radius: float = 60.0,
         clock: Callable[[], float] = time.monotonic,
+        logger: logging.Logger | None = None,
     ) -> None:
+        # Every escalation path this planner owns reports what it did before
+        # acting on it; without a logger the repeated-failure recovery raised
+        # AttributeError and took the whole run down with it.
+        self.logger = logger or logging.getLogger("dino_bot")
         self.target_types = tuple(target_types)
         self.strategy = strategy
         self.blocking_types = frozenset(blocking_types)
@@ -139,13 +146,7 @@ class TargetPlanner:
                     -item.confidence,
                 ),
             )
-        target = Target(
-            type=selected.type,
-            x=selected.x,
-            y=selected.y,
-            confidence=selected.confidence,
-            detection=selected,
-        )
+        target = detection_target(selected)
         if selected.type in self.deduplicate_types:
             self._remember(frame, selected)
         return target
@@ -201,6 +202,29 @@ class TargetPlanner:
 class HuntPlanner(TargetPlanner):
     """Feature planner that never chains dinosaur taps while the map is moving."""
 
+    # Stages that plan nothing because they are deliberately waiting out a
+    # deadline they set themselves. Every other empty cycle is the planner
+    # failing to find work, which is what the blind-idle timer measures.
+    #
+    # `mail` is here because it carries its own deadline, not because it never
+    # stalls. A stage with a specific timeout has to own its own release: with
+    # both timers on the default 20 seconds they fired on the same cycle, so a
+    # mail flow that had just handled itself still raised a blind-stall event
+    # and a snapshot - and raising `mail_stage_timeout_seconds` above
+    # `blind_idle_seconds` did nothing at all, because the generic release got
+    # there first and abandoned the flow anyway.
+    _BOUNDED_WAIT_STAGES = frozenset(
+        {
+            "capacity_wait",
+            "action_cooldown",
+            "map_settle",
+            "blocked",
+            "hunt_unavailable",
+            "interrupt",
+            "mail",
+        }
+    )
+
     def __init__(
         self,
         *args: Any,
@@ -221,6 +245,14 @@ class HuntPlanner(TargetPlanner):
             "startup_offer_dismiss",
             "startup_growth_result_back",
             "startup_auto_battle_close",
+            "server_error_restart_button",
+        ),
+        launch_only_types: Sequence[str] = (
+            "duplicate_login_close_button",
+            "device_history_confirm_button",
+            # startup_offer_dismiss is deliberately NOT launch-only: the game
+            # raises timed promotion cards mid-run.  One dimmed the map at
+            # 10:53 on 2026-08-31 and the hatch workflow was dropped an hour.
         ),
         own_path_types: Sequence[str] = ("own_hunt_path",),
         own_path_radius: float = 90.0,
@@ -238,29 +270,48 @@ class HuntPlanner(TargetPlanner):
         no_available_type: str = "no_available_dinosaurs",
         target_too_strong_type: str = "target_too_strong",
         capacity_full_type: str = "hunt_capacity_full",
+        autoplace_cancel_type: str = "hunt_autoplace_cancel_button",
+        autoplace_refused_wait_seconds: float = 180.0,
         capacity_wait_seconds: float = 300.0,
         ring_width: float = 150.0,
         own_path_angle_degrees: float = 7.0,
-        stalled_recenter_frames: int = 8,
+        stalled_recenter_seconds: float = 10.0,
+        recenter_min_candidates: int = 1,
+        empty_supply_recenter_frames: int = 2,
+        blind_idle_seconds: float = 20.0,
+        mail_stage_timeout_seconds: float = 20.0,
         map_settle_frames: int = 2,
         map_settle_tolerance_px: float = 20.0,
         map_settle_max_frames: int = 12,
         safe_margin: int = 80,
+        max_center_distance_px: float = 600.0,
         bottom_exclusion_px: int = 180,
         exclusion_zones: Sequence[ExclusionZone] = (),
         action_cooldowns_ms: dict[str, int] | None = None,
         await_hunt_frames: int = 5,
+        stage_scoped_scan: bool = True,
+        full_scan_interval_seconds: float = 30.0,
+        full_scan_after_idle_cycles: int = 2,
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
         self.dinosaur_type = dinosaur_type
-        self.hunt_button_types = frozenset(hunt_button_types)
+        ordered_hunt_button_types = tuple(hunt_button_types)
+        self.hunt_button_types = frozenset(ordered_hunt_button_types)
+        self.hunt_entry_type = (
+            ordered_hunt_button_types[0] if ordered_hunt_button_types else "hunt_button"
+        )
         self.completion_type = completion_type
         self.map_exit_type = map_exit_type
         self.forest_recenter_type = forest_recenter_type
         self.center_anchor_type = center_anchor_type
         self.recovery_button_types = frozenset(recovery_button_types)
         self.interrupt_button_types = frozenset(interrupt_button_types)
+        # The subset of the interrupts only the launch sequence can raise.
+        # They are template matches and the priciest part of a scan; the
+        # rest are layout checks costing under a millisecond, so those stay
+        # visible to every scan.
+        self.launch_only_types = frozenset(launch_only_types)
         self.own_path_types = frozenset(own_path_types)
         self.own_path_radius = max(0.0, own_path_radius)
         self.anchor_exclusion_radius = max(0.0, anchor_exclusion_radius)
@@ -280,10 +331,25 @@ class HuntPlanner(TargetPlanner):
         self.no_available_type = no_available_type
         self.target_too_strong_type = target_too_strong_type
         self.capacity_full_type = capacity_full_type
+        self.autoplace_cancel_type = autoplace_cancel_type
+        self.autoplace_refused_wait_seconds = max(
+            0.0,
+            autoplace_refused_wait_seconds,
+        )
         self.capacity_wait_seconds = max(0.0, capacity_wait_seconds)
         self.ring_width = max(1.0, ring_width)
         self.own_path_angle_degrees = max(0.0, own_path_angle_degrees)
-        self.stalled_recenter_frames = max(1, stalled_recenter_frames)
+        self.stalled_recenter_seconds = max(0.001, stalled_recenter_seconds)
+        # Recentering is a resupply operation: it exists so the next few scans
+        # have enough dinosaurs to choose from, not to put the egg anywhere in
+        # particular. This is the supply floor that triggers it.
+        self.recenter_min_candidates = max(1, recenter_min_candidates)
+        self.empty_supply_recenter_frames = max(
+            1,
+            empty_supply_recenter_frames,
+        )
+        self.blind_idle_seconds = max(0.001, blind_idle_seconds)
+        self.mail_stage_timeout_seconds = max(0.001, mail_stage_timeout_seconds)
         self.map_settle_frames = max(1, map_settle_frames)
         self.map_settle_tolerance_px = max(0.0, map_settle_tolerance_px)
         self.map_settle_max_frames = max(
@@ -291,13 +357,26 @@ class HuntPlanner(TargetPlanner):
             map_settle_max_frames,
         )
         self.safe_margin = max(0, safe_margin)
+        # Tapping a dinosaur recenters the map on it, and the further the tap
+        # lands from the viewport center the less often the hunt panel opens
+        # at all. A measured 161-minute run: taps within 300 px succeeded 86%
+        # of the time, 300-500 px 69%, and beyond 500 px only 21%. Past 600 px
+        # the whole band produced 2 hunts out of 31 taps, so the candidates it
+        # removes are almost pure waste. 0 disables the limit.
+        self.max_center_distance_px = max(0.0, max_center_distance_px)
         self.bottom_exclusion_px = max(0, bottom_exclusion_px)
         self.exclusion_zones = tuple(exclusion_zones)
         self.action_cooldowns_ms = dict(action_cooldowns_ms or {})
         self.await_hunt_frames = max(1, await_hunt_frames)
+        self.stage_scoped_scan = bool(stage_scoped_scan)
+        self.full_scan_interval_seconds = max(0.0, full_scan_interval_seconds)
+        self.full_scan_after_idle_cycles = max(1, full_scan_after_idle_cycles)
+        self._scoped_idle_cycles = 0
+        self._last_full_scan: float | None = None
         self._awaiting_hunt_button = False
         self._waited_frames = 0
         self._recenter_stage = 0
+        self._recenter_dinosaur_frames = 0
         self._pending_hunt_return = False
         self._hunt_count = 0
         self._total_hunt_count = 0
@@ -305,9 +384,24 @@ class HuntPlanner(TargetPlanner):
         self._mail_stage = 0
         self._mail_failures = 0
         self._mailbox_full_recovery = False
+        # 拒絕過「巢的自動配置」之後,隊伍面板還開著,必須先收掉才能等待。
+        self._autoplace_refused = False
         self._capacity_cooldown_until = 0.0
         self._action_cooldown_until = 0.0
-        self._map_idle_frames = 0
+        self._map_idle_since: float | None = None
+        self._last_map_idle_seconds = 0.0
+        self._recenter_reason: str | None = None
+        # Whether `_last_anchor` came from a detected egg or was inferred from
+        # the last tap. Only a measured anchor is worth rejecting candidates
+        # over; a predicted one accumulates a fresh error every hunt.
+        self._anchor_measured = False
+        self._last_supply = 0
+        self._empty_supply_frames = 0
+        self._no_target_since: float | None = None
+        self._last_blind_seconds = 0.0
+        self._blind_escapes = 0
+        self._pending_blind_escape: dict[str, Any] | None = None
+        self._mail_progress_since: float | None = None
         self._map_settle_active = False
         self._map_settle_observed_frames = 0
         self._map_settle_stable_frames = 0
@@ -321,6 +415,28 @@ class HuntPlanner(TargetPlanner):
     def on_action_success(self, target_type: str) -> None:
         """Commit hunt counters only after the confirmation tap is verified."""
 
+        if target_type == self.autoplace_cancel_type:
+            # The dialog is gone; the sheet underneath still is not. Mark the
+            # refusal so the close rung fires even though Hunt looks pressable.
+            self._autoplace_refused = True
+            self._awaiting_hunt_button = False
+            self._waited_frames = 0
+            return
+        if target_type == self.hunt_dialog_close_type and self._autoplace_refused:
+            # Back on the map with the sheet shut. The only team the game will
+            # field right now is one it refuses to send without reshuffling the
+            # nest, so stop asking until the hunting parties return.
+            self._autoplace_refused = False
+            self._capacity_cooldown_until = (
+                time.monotonic() + self.autoplace_refused_wait_seconds
+            )
+            self._stage = "capacity_wait"
+            self.logger.warning(
+                "Hunt | only nest parents are selectable | refused nest"
+                " auto-arrange and waiting %.0fs",
+                self.autoplace_refused_wait_seconds,
+            )
+            return
         if target_type == self.hunt_dialog_close_type and self._mailbox_full_recovery:
             self._mailbox_full_recovery = False
             self._mail_stage = 1
@@ -392,6 +508,7 @@ class HuntPlanner(TargetPlanner):
             # after a failure parks the planner in the anchor stage, where it
             # ignores every hunt control still on screen.
             self._recenter_stage = 0
+            self._recenter_dinosaur_frames = 0
             return
 
         if self._mail_stage and target_type in self._mail_stage_by_type:
@@ -408,24 +525,129 @@ class HuntPlanner(TargetPlanner):
             # retries it instead of waiting for a screen it never reached.
             self._mail_stage = self._mail_stage_by_type[target_type]
 
+    def on_action_failure_context(
+        self,
+        target: Target,
+        frame: Frame | None,
+        detections: Sequence[Detection],
+        attempts: int,
+    ) -> None:
+        """Abandon an inert hunt entry after two map-confirmed failures.
+
+        A stale hunt-button match can be nearly perfect while sitting on the
+        live collection map. Two failed taps plus stable map landmarks prove
+        that retrying the same coordinate cannot open the hunt sheet. Suppress
+        only that coordinate and let normal map planning choose another target.
+        """
+
+        if (
+            target.type != self.hunt_entry_type
+            or attempts < 2
+            or frame is None
+            or not any(
+                item.type
+                in {
+                    self.center_anchor_type,
+                    self.map_exit_type,
+                    self.mailbox_type,
+                }
+                for item in detections
+            )
+        ):
+            return
+        self.suppress(target.type, target.x, target.y)
+        self._awaiting_hunt_button = False
+        self._waited_frames = 0
+
+    def on_retry_exhausted(self, target: Target) -> None:
+        """Suppress a spent target and release hunt-entry waiting state."""
+
+        super().on_retry_exhausted(target)
+        if target.type == self.hunt_entry_type:
+            self._awaiting_hunt_button = False
+            self._waited_frames = 0
+
+    def recover_from_action_failures(
+        self,
+        target: Target,
+        stage: str,
+        episodes: int,
+        frame: Frame | None,
+        detections: Sequence[Detection],
+    ) -> bool:
+        """Unwind all hunt stages before another failed budget is attempted."""
+
+        del detections
+        if frame is None:
+            return False
+        self.suppress(target.type, target.x, target.y)
+        self._release_stage_machines(frame)
+        self._begin_recenter("repeated_action_failure")
+        self.logger.warning(
+            "Hunt recovery | repeated action failure | stage=%s target=%s"
+            " episodes=%d | recentering map",
+            stage,
+            target.type,
+            episodes,
+        )
+        return True
+
+    def is_recovery_progress(self, target_type: str) -> bool:
+        """Only a verified completed hunt proves the recovery really worked."""
+
+        return target_type == self.completion_type
+
+    def should_finalize_verification_early(
+        self,
+        target: Target,
+        result: VerificationResult,
+        checks: int,
+    ) -> bool:
+        """Fail a hunt-entry tap once two frames prove it changed nothing."""
+
+        return bool(
+            target.type == self.hunt_entry_type
+            and checks >= 2
+            and result.pixel_change is not None
+            and result.pixel_change < 0.001
+        )
+
+    def on_blocked_action_context(
+        self,
+        target: Target,
+        detections: Sequence[Detection],
+        attempt: int,
+    ) -> bool:
+        """Recover once hunt confirmation remains blocked for two attempts.
+
+        The game does not expose a stable machine-readable error flag. The
+        reliable evidence from the real failure screen is the combination of a
+        repeatedly failed hunt-confirm action and the hunt dialog's red close
+        button still being present. One retry remains available for an
+        occasional missed tap; a second failure switches directly to mailbox
+        cleanup instead of spending the full four-attempt budget.
+        """
+
+        if attempt < 2 or target.type != self.completion_type or not any(
+            item.type == self.hunt_dialog_close_type for item in detections
+        ):
+            return False
+        return self._arm_mailbox_full_recovery()
+
     def on_retry_exhausted_context(
         self,
         target: Target,
         detections: Sequence[Detection],
     ) -> bool:
-        """Turn the observed full-mailbox hunt failure into a recovery flow.
-
-        The game does not expose a stable machine-readable error flag. The
-        reliable evidence from the real failure screen is the combination of
-        an exhausted hunt-confirm action and the hunt dialog's red close
-        button still being present. Normal confirmation dialogs are unaffected
-        because recovery is armed only after the retry budget is exhausted.
-        """
+        """Fallback for callers that only report context after all retries."""
 
         if target.type != self.completion_type or not any(
             item.type == self.hunt_dialog_close_type for item in detections
         ):
             return False
+        return self._arm_mailbox_full_recovery()
+
+    def _arm_mailbox_full_recovery(self) -> bool:
         self._mailbox_full_recovery = True
         self._mail_stage = 0
         self._mail_failures = 0
@@ -446,6 +668,7 @@ class HuntPlanner(TargetPlanner):
         self._mail_failures = 0
         self._mailbox_full_recovery = False
         self._total_hunt_count = 0
+        self._mail_progress_since = None
 
     @property
     def _mail_stage_by_type(self) -> dict[str, int]:
@@ -462,17 +685,30 @@ class HuntPlanner(TargetPlanner):
         self._awaiting_hunt_button = False
         self._waited_frames = 0
         self._recenter_stage = 0
+        self._recenter_dinosaur_frames = 0
         self._pending_hunt_return = False
         self._last_anchor = None
+        self._anchor_measured = False
         self._mail_stage = 0
         self._mail_failures = 0
         # A restart invalidates where the workflow stood, and the hunt counter
         # is part of that: leaving it armed sends the bot straight back into
         # the mail flow that caused the restart, restart after restart.
         self._total_hunt_count = 0
+        self._autoplace_refused = False
         self._capacity_cooldown_until = 0.0
         self._action_cooldown_until = 0.0
-        self._map_idle_frames = 0
+        self._map_idle_since = None
+        self._last_map_idle_seconds = 0.0
+        self._recenter_reason = None
+        self._empty_supply_frames = 0
+        self._no_target_since = None
+        self._last_blind_seconds = 0.0
+        self._mail_progress_since = None
+        # A relaunch walks back through the login and startup dialogs, and
+        # those are exactly what a stage-scoped scan leaves out.
+        self._scoped_idle_cycles = 0
+        self._last_full_scan = None
         self._map_settle_active = False
         self._map_settle_observed_frames = 0
         self._map_settle_stable_frames = 0
@@ -677,7 +913,25 @@ class HuntPlanner(TargetPlanner):
             <= self.anchor_exclusion_radius
         ):
             return "screen_center"
-        if not (
+        # The outer counterpart to that guard. Distance from the viewport
+        # center is how far the map has to travel when the tap lands, and the
+        # measured success rate falls off a cliff with it. Rejecting the far
+        # band costs almost nothing because those taps rarely open the panel.
+        if self.max_center_distance_px and (
+            hypot(item.x - frame.width / 2, item.y - frame.height / 2)
+            > self.max_center_distance_px
+        ):
+            return "center_distance"
+        # Would tapping this dinosaur push the egg off screen? That only
+        # disqualifies it while the egg is the thing being protected, and it
+        # is not: recentering exists to restore the supply of reachable
+        # dinosaurs for the next few scans, and the egg is merely how the bot
+        # recognises that the reset finished. Enforcing it against a *predicted*
+        # anchor is worse than useless - the prediction gains a fresh error
+        # every hunt, and a measured run threw away 1344 candidates this way,
+        # emptying 22% of all planning cycles and then paying for a recenter to
+        # refill them.
+        if self._anchor_measured and not (
             self.safe_margin
             <= anchor_x + frame.width / 2 - item.x
             <= frame.width - self.safe_margin
@@ -700,7 +954,12 @@ class HuntPlanner(TargetPlanner):
             if marker.type in self.own_path_types
         ):
             return "own_path_marker"
-        if any(
+        # Same gate, same reason. These angles are measured from the anchor, so
+        # a predicted anchor turns the corridor test into noise. The radius rule
+        # above needs no origin and covers the same ground: the route markers
+        # run 30 to a frame and are present in 95% of scans, already rejecting a
+        # quarter of every dinosaur on screen.
+        if self._anchor_measured and any(
             self._angle_distance(
                 degrees(atan2(item.y - anchor_y, item.x - anchor_x)) % 360.0,
                 path_angle,
@@ -716,6 +975,207 @@ class HuntPlanner(TargetPlanner):
         ):
             return "team_status_panel"
         return None
+
+    def anchor_measured(self) -> bool:
+        """Whether the last anchor came from a detected egg or was inferred."""
+
+        return self._anchor_measured
+
+    def last_supply(self) -> int:
+        """Dinosaurs that survived every rejection rule on the previous cycle.
+
+        This is what recentering is for, so it is what the diagnostic has to
+        show: a run whose supply sits at zero is not slow, it is starving.
+        """
+
+        return self._last_supply
+
+    def last_idle_seconds(self) -> float:
+        """Return how long the map had gone without a target when last planned."""
+
+        return self._last_map_idle_seconds
+
+    def last_recenter_reason(self) -> str | None:
+        """Return why the previous planning decision started recentering."""
+
+        return self._recenter_reason
+
+    def _begin_recenter(self, reason: str) -> None:
+        """Start a fresh recenter cycle and reset its batch budget."""
+
+        self._hunt_count = 0
+        self._map_idle_since = None
+        self._empty_supply_frames = 0
+        self._recenter_stage = 1
+        self._stage = "recenter"
+        self._recenter_reason = reason
+
+    def request_external_recenter(self, reason: str) -> None:
+        """Request a safe map recenter for a feature handoff.
+
+        External workflows use this only after map evidence is visible.  A
+        long per-action cooldown must not delay leaving the hunting map once
+        another feature's deadline has arrived.
+        """
+
+        self._action_cooldown_until = 0.0
+        if self._recenter_stage == 0:
+            self._begin_recenter(reason)
+
+    def planning_detection_types(self) -> frozenset[str] | None:
+        """Name what the next planning decision can act on, or None for everything.
+
+        A full scan prices every template in the manifest, and the launch-only
+        dialogs are a quarter of that bill on screens that cannot appear again
+        once a run is under way. Narrowing the scan to the stage the planner is
+        actually in is safe exactly while the narrow view keeps producing work,
+        so a scan that plans nothing twice running widens the next one back to
+        everything. The timer only accelerates that fallback after an empty
+        scoped cycle; it must not interrupt a productive map every 30 seconds,
+        because a live full scan can cost more than 15 seconds.
+        """
+
+        if not self.stage_scoped_scan:
+            return None
+        now = self.clock()
+        timer_due_after_idle = (
+            self.full_scan_interval_seconds > 0
+            and self._scoped_idle_cycles > 0
+            and self._last_full_scan is not None
+            and now - self._last_full_scan >= self.full_scan_interval_seconds
+        )
+        if (
+            self._last_full_scan is None
+            or self._scoped_idle_cycles >= self.full_scan_after_idle_cycles
+            or timer_due_after_idle
+        ):
+            self._last_full_scan = now
+            self._scoped_idle_cycles = 0
+            return None
+        return self._stage_detection_types()
+
+    def full_detection_types(self) -> frozenset[str]:
+        """Return the complete vocabulary owned by the hunting workflow.
+
+        A standalone hunting detector may interpret ``None`` as its complete
+        manifest. In hatch-hunt mode, however, the shared detector also owns
+        dozens of hatch templates. Naming the hunting vocabulary keeps a
+        hunting fallback complete without paying for the inactive workflow.
+        """
+
+        return frozenset(
+            {
+                *self.target_types,
+                *self.blocking_types,
+                self.dinosaur_type,
+                *self.hunt_button_types,
+                self.completion_type,
+                self.map_exit_type,
+                self.forest_recenter_type,
+                self.center_anchor_type,
+                *self.recovery_button_types,
+                *self.interrupt_button_types,
+                *self.own_path_types,
+                self.mailbox_type,
+                self.mail_collect_all_type,
+                self.mail_reward_collect_type,
+                self.mail_close_type,
+                self.hunt_dialog_close_type,
+                self.no_available_type,
+                self.target_too_strong_type,
+                self.capacity_full_type,
+            }
+        )
+
+    def failure_recovery_detection_types(
+        self,
+        target_type: str,
+    ) -> frozenset[str]:
+        """Return a cheap recovery scan for a map action that missed.
+
+        Verification normally looks only for the expected next control. If it
+        never appears after a dinosaur or hunt-entry tap, scan that same frame
+        for map evidence so recovery can skip an inert coordinate safely.
+        """
+
+        if target_type not in {self.dinosaur_type, self.hunt_entry_type}:
+            return frozenset()
+        return self._stage_detection_types()
+
+    def can_reuse_failed_verification_result(
+        self,
+        target_type: str,
+        detections: Sequence[Detection],
+    ) -> bool:
+        """Reuse a failed dinosaur frame when it still contains map work."""
+
+        if target_type != self.dinosaur_type:
+            return False
+        visible = {item.type for item in detections}
+        return bool(
+            visible
+            & {
+                self.dinosaur_type,
+                *self.hunt_button_types,
+                *self.recovery_button_types,
+                *self.interrupt_button_types,
+            }
+        )
+
+    def _stage_detection_types(self) -> frozenset[str]:
+        """Return the detections the planner's current stage can act on.
+
+        The set stays deliberately wide. Leaving out the launch dialogs and the
+        mail overlay is unambiguous - the game cannot raise a device-history
+        prompt mid-run, and the mail buttons only exist inside the mail flow -
+        and measured 42% off a full scan. Narrowing further, to the point of
+        hiding the hunt sheet while the map is worked, buys another 18% and
+        costs a wasted cycle every time a sheet opens on its own.
+        """
+
+        # Exceptions the game can raise at any point of a hunt cycle. They are
+        # cheap to look for and expensive to miss: an unseen capacity warning
+        # spends the next five minutes tapping a hunt the game keeps refusing.
+        always = {
+            *self.blocking_types,
+            *self.recovery_button_types,
+            *(self.interrupt_button_types - self.launch_only_types),
+            self.no_available_type,
+            self.target_too_strong_type,
+            self.capacity_full_type,
+            # The nest auto-arrange prompt is exactly the case this paragraph
+            # warns about: unseen, it cost 14 minutes of refused hunts.
+            self.autoplace_cancel_type,
+        }
+        map_view = {
+            self.dinosaur_type,
+            *self.own_path_types,
+            self.center_anchor_type,
+            self.map_exit_type,
+            self.forest_recenter_type,
+            self.mailbox_type,
+        }
+        mail_view = {
+            self.mailbox_type,
+            self.mail_collect_all_type,
+            self.mail_reward_collect_type,
+            self.mail_close_type,
+        }
+        if self._mailbox_full_recovery:
+            return frozenset(
+                always | map_view | mail_view | {self.hunt_dialog_close_type}
+            )
+        if self._mail_stage:
+            return frozenset(
+                always | mail_view | {self.map_exit_type, self.center_anchor_type}
+            )
+        # The map, the recenter round trip and the hunt sheet all read the same
+        # screen, and the anchor rides along with them: a scan that drops
+        # `map_center_egg` leaves the planner predicting the anchor instead of
+        # measuring it, which is what starves `anchor_window` of candidates.
+        return frozenset(
+            always | map_view | self.hunt_button_types | {self.hunt_dialog_close_type}
+        )
 
     def last_rejections(self) -> dict[str, int]:
         """Return why the previous ``choose`` discarded each dinosaur."""
@@ -746,6 +1206,44 @@ class HuntPlanner(TargetPlanner):
         ]
 
     def _choose_mail_target(
+        self,
+        frame: Frame,
+        detections: Sequence[Detection],
+    ) -> Target | None:
+        """Advance the mail flow, and give up on it if it stops advancing.
+
+        Each stage waits for one specific button, and the release condition -
+        ``_resume_hunting_after_mail`` - needs a map landmark to fire. On a
+        screen showing neither, the flow waits forever: one run spent 55
+        consecutive cycles in stage 1 with no mailbox in sight. The deadline is
+        measured from the last stage change rather than from entry, so a slow
+        mail flow is never cut short, only a motionless one.
+
+        A returned target is not progress. Stages 2 to 4 deliberately re-offer
+        the *previous* stage's button when their own is missing, and stage 5
+        re-taps close for as long as the overlay is up, so "planned something"
+        describes a retry loop exactly as well as it describes advancing. With
+        the timer reset on every target, a mailbox that never opens its
+        collect-all button kept stage 2 tapping it for 117 measured seconds
+        without the deadline ever being consulted.
+        """
+
+        entry_stage = self._mail_stage
+        started = self.clock()
+        if self._mail_progress_since is None:
+            self._mail_progress_since = started
+        target = self._advance_mail_stage(frame, detections)
+        if self._mail_stage != entry_stage:
+            self._mail_progress_since = None if self._mail_stage == 0 else self.clock()
+            return target
+        if started - self._mail_progress_since >= self.mail_stage_timeout_seconds:
+            self._abandon_mail()
+            # Dropping the target with the flow: it is a mail button, and the
+            # decision just taken was to stop pressing those.
+            return None
+        return target
+
+    def _advance_mail_stage(
         self,
         frame: Frame,
         detections: Sequence[Detection],
@@ -870,7 +1368,8 @@ class HuntPlanner(TargetPlanner):
         self._total_hunt_count = 0
         self._recenter_stage = 0
         self._last_anchor = (frame.width / 2, frame.height / 2)
-        self._map_idle_frames = 0
+        self._anchor_measured = False
+        self._map_idle_since = None
         return True
 
     def _choose_map_exit(
@@ -884,6 +1383,15 @@ class HuntPlanner(TargetPlanner):
         target = super().choose(frame, exit_buttons)
         if target is not None:
             return target
+
+        # The fixed coordinate below is only safe on a clear map. A hunt sheet
+        # leaves the upper third of the map showing - own-path segments and all
+        # - so the landmark evidence still passes while the sheet covers the
+        # very spot this would tap.
+        if any(
+            item.type == self.hunt_dialog_close_type for item in detections
+        ):
+            return None
 
         # The nest is animated and can briefly miss exact template matching.
         # A visible mailbox is a stable map-only landmark, so it safely
@@ -905,17 +1413,130 @@ class HuntPlanner(TargetPlanner):
             # suppression list has to be consulted explicitly.
             if self.is_suppressed(fallback.type, fallback.x, fallback.y):
                 return None
-            return Target(
-                type=fallback.type,
-                x=fallback.x,
-                y=fallback.y,
-                confidence=fallback.confidence,
-                detection=fallback,
-            )
+            return detection_target(fallback)
         return None
 
     def choose(self, frame: Frame, detections: Sequence[Detection]) -> Target | None:
+        target = self._choose_target(frame, detections)
+        # A scoped scan earns the next one by producing work. Counting the
+        # empty ones is what lets `planning_detection_types` widen the view
+        # before something it cannot see turns into a stall.
+        if target is None and self._stage not in self._BOUNDED_WAIT_STAGES:
+            self._scoped_idle_cycles += 1
+        else:
+            self._scoped_idle_cycles = 0
+        self._observe_blind_idle(frame, target)
+        return target
+
+    def _observe_blind_idle(self, frame: Frame, target: Target | None) -> None:
+        """Time the cycles where the planner can neither act nor name a wait.
+
+        Every stage escape is written as "leave once the expected control is
+        visible", so a screen carrying none of them holds all of them at once:
+        the recenter timeout at ``_choose_hunt_target`` only runs while a map
+        landmark is in frame, and ``_resume_hunting_after_mail`` needs the same
+        landmark to release the mail flow. A run measured 699 seconds - 42% of
+        its wall clock - spread over six such episodes, each ended only by the
+        watchdog restarting the game. This timer is deliberately gated on
+        nothing the screen has to supply.
+        """
+
+        if target is not None or self._stage in self._BOUNDED_WAIT_STAGES:
+            self._no_target_since = None
+            self._last_blind_seconds = 0.0
+            self._blind_escapes = 0
+            return
+
+        now = self.clock()
+        if self._no_target_since is None:
+            self._no_target_since = now
+            self._last_blind_seconds = 0.0
+            return
+
+        self._last_blind_seconds = max(0.0, now - self._no_target_since)
+        if self._last_blind_seconds < self.blind_idle_seconds:
+            return
+
+        self._blind_escapes += 1
+        self._pending_blind_escape = {
+            "seconds": round(self._last_blind_seconds, 1),
+            "stage": self._stage,
+            # Consecutive escapes within this episode. A second one means the
+            # release did not reach the cause, which is what the engine uses to
+            # decide the episode is worth a snapshot.
+            "escapes": self._blind_escapes,
+        }
+        self._release_stage_machines(frame)
+        # Re-arm rather than latch: an episode the release does not end has to
+        # keep reporting, both to escalate and to record how long it ran.
+        self._no_target_since = now
+
+    def _release_stage_machines(self, frame: Frame) -> None:
+        """Drop every stage that is parked waiting for a control it cannot see.
+
+        Releasing the stages is not enough on its own, and replaying a measured
+        stall is what showed why. With no anchor the hunting branch reads
+        dinosaurs-without-hunt-controls as "on the collection map, anchor lost"
+        and calls `_begin_recenter("missing_anchor")`; that recenter waits for
+        the nest or forest button; and the fallback which would tap the nest
+        coordinate anyway is itself gated on having an anchor. Releasing the
+        stage just feeds the same loop again - the replay went round it ten
+        times in four minutes.
+
+        Adopting the frame centre breaks it, and is the same move the recenter
+        path already makes after two dinosaur-only frames. It costs no blind
+        tap: the planner still has to find a dinosaur that passes every
+        rejection rule before it acts.
+        """
+
+        if self._last_anchor is None:
+            self._last_anchor = (frame.width / 2, frame.height / 2)
+            self._anchor_measured = False
+        self._abandon_mail()
+        self._mail_progress_since = None
+        self._recenter_stage = 0
+        self._recenter_dinosaur_frames = 0
+        self._awaiting_hunt_button = False
+        self._waited_frames = 0
+        self._pending_hunt_return = False
+        self._map_settle_active = False
+        self._map_settle_observed_frames = 0
+        self._map_settle_stable_frames = 0
+        self._map_settle_anchor = None
+        self._map_settle_dinosaur = None
+        self._map_idle_since = None
+        now = self.clock()
+        self._suppressed = [
+            entry
+            for entry in self._suppressed
+            if entry[0] in self.hunt_button_types and entry[4] > now
+        ]
+
+    def take_blind_escape(self) -> dict[str, Any] | None:
+        """Hand the engine the escape it has not reported yet, once."""
+
+        escape, self._pending_blind_escape = self._pending_blind_escape, None
+        return escape
+
+    def last_blind_seconds(self) -> float:
+        """Seconds the planner has been unable to act or name a wait."""
+
+        return self._last_blind_seconds
+
+    def _choose_target(
+        self,
+        frame: Frame,
+        detections: Sequence[Detection],
+    ) -> Target | None:
+        previous_stage = self._stage
         self._rejections = {}
+        # Cleared per cycle: a stage that returns before counting candidates
+        # would otherwise report the previous cycle's supply as its own.
+        self._last_supply = 0
+        self._last_map_idle_seconds = 0.0
+        self._recenter_reason = None
+        if previous_stage != "hunting":
+            self._map_idle_since = None
         self._stage = "hunting"
         # Login/device-switch prompts and startup offers can interrupt any
         # workflow stage. Always clear them before resuming mail or hunting.
@@ -954,6 +1575,7 @@ class HuntPlanner(TargetPlanner):
                 ),
             )
             self._last_anchor = (float(anchor.x), float(anchor.y))
+            self._anchor_measured = True
 
         if self._observe_map_settle(frame, detections):
             self._stage = "map_settle"
@@ -1018,6 +1640,52 @@ class HuntPlanner(TargetPlanner):
             self._stage = "hunt_unavailable"
             return super().choose(frame, unavailable)
 
+        # Hunting a group that includes a nest parent makes the game ask
+        # whether to auto-arrange the nest and carry on. Saying yes would
+        # reshuffle the parents the hatch side spent its rounds selecting, so
+        # this always answers Cancel. Nothing recognised this dialog before:
+        # the confirm tap looked like it simply failed, which sent the planner
+        # into the "mailbox must be full" recovery - 25 round trips to an empty
+        # mailbox, 14 minutes, zero hunts.
+        autoplace_cancel = self.filter_suppressed(
+            [
+                item
+                for item in detections
+                if item.type == self.autoplace_cancel_type
+            ]
+        )
+        if autoplace_cancel:
+            self._awaiting_hunt_button = False
+            self._waited_frames = 0
+            self._stage = "refuse_nest_autoplace"
+            return super().choose(frame, autoplace_cancel)
+
+        # A team sheet that cannot field anyone greys out its Hunt button, so
+        # no hunt control matches, yet the sheet still covers the map's exit
+        # control in the bottom right. Its own close button is the only thing
+        # left on screen that can be pressed. Without this rung the planner
+        # reached for the exit underneath the sheet instead: s13 spent 100
+        # seconds there, recognising this X on every single frame while
+        # tapping a coordinate the sheet was sitting on top of.
+        #
+        # `_autoplace_refused` forces the same exit after a refusal: the sheet
+        # is still usable, so tapping Hunt again would only raise the dialog
+        # again. Leave the sheet, then wait for dinosaurs to come home.
+        stranded_dialog = self.filter_suppressed(
+            [
+                item
+                for item in detections
+                if item.type == self.hunt_dialog_close_type
+            ]
+        )
+        if stranded_dialog and (
+            self._autoplace_refused or not actionable_hunt_controls
+        ):
+            self._awaiting_hunt_button = False
+            self._waited_frames = 0
+            self._stage = "close_hunt_dialog"
+            return super().choose(frame, stranded_dialog)
+
         team_status_buttons = [
             item for item in detections if item.type in self.recovery_button_types
         ]
@@ -1034,6 +1702,7 @@ class HuntPlanner(TargetPlanner):
                 target = super().choose(frame, forest)
                 if target is not None:
                     self._recenter_stage = 2
+                    self._recenter_dinosaur_frames = 0
                 return target
 
         if self._recenter_stage == 1:
@@ -1045,6 +1714,7 @@ class HuntPlanner(TargetPlanner):
                 target = super().choose(frame, forest)
                 if target is not None:
                     self._recenter_stage = 2
+                    self._recenter_dinosaur_frames = 0
                 return target
             return self._choose_map_exit(frame, detections)
 
@@ -1053,6 +1723,7 @@ class HuntPlanner(TargetPlanner):
         # right now. Release the stage instead of stalling on a missed anchor.
         if self._recenter_stage == 2 and actionable_hunt_controls:
             self._recenter_stage = 0
+            self._recenter_dinosaur_frames = 0
 
         if self._recenter_stage == 2:
             self._stage = "recenter"
@@ -1066,6 +1737,7 @@ class HuntPlanner(TargetPlanner):
             if centered:
                 self.clear_history()
                 self._recenter_stage = 0
+                self._recenter_dinosaur_frames = 0
                 centered_anchor = min(
                     anchors,
                     key=lambda item: hypot(
@@ -1077,6 +1749,7 @@ class HuntPlanner(TargetPlanner):
                     float(centered_anchor.x),
                     float(centered_anchor.y),
                 )
+                self._anchor_measured = True
                 if self._total_hunt_count >= self.mail_after_hunts:
                     self._mail_stage = 1
                     self._mail_failures = 0
@@ -1092,10 +1765,9 @@ class HuntPlanner(TargetPlanner):
                     if item.type == self.forest_recenter_type
                 ]
                 if forest:
+                    self._recenter_dinosaur_frames = 0
                     return super().choose(frame, forest)
-                has_hunt_control = any(
-                    item.type in self.hunt_button_types for item in detections
-                )
+                has_hunt_control = bool(actionable_hunt_controls)
                 has_map_landmark = any(
                     item.type in {self.map_exit_type, self.mailbox_type}
                     for item in detections
@@ -1103,24 +1775,36 @@ class HuntPlanner(TargetPlanner):
                 has_dinosaur = any(
                     item.type == self.dinosaur_type for item in detections
                 )
-                if has_map_landmark and has_dinosaur and not has_hunt_control:
+                if has_dinosaur and not has_hunt_control:
+                    self._recenter_dinosaur_frames += 1
+                else:
+                    self._recenter_dinosaur_frames = 0
+                dinosaur_only_confirmed = (
+                    self._recenter_dinosaur_frames >= self.map_settle_frames
+                )
+                if (
+                    has_dinosaur
+                    and not has_hunt_control
+                    and (has_map_landmark or dinosaur_only_confirmed)
+                ):
                     # The forest transition succeeded, but the animated egg
-                    # anchor can miss template matching. The forest action
-                    # guarantees a centered map, so retain a safe synthetic
-                    # center instead of waiting forever in recenter stage 2.
+                    # anchor and map landmarks can miss template matching. Two
+                    # consecutive dinosaur-only frames prove that the forest
+                    # button disappeared into the collection map. Retain a
+                    # safe synthetic center instead of waiting forever.
                     self.clear_history()
                     self._recenter_stage = 0
+                    self._recenter_dinosaur_frames = 0
                     self._last_anchor = (frame.width / 2, frame.height / 2)
-                    self._map_idle_frames = 0
+                    self._anchor_measured = False
+                    self._map_idle_since = None
                     if self._total_hunt_count >= self.mail_after_hunts:
                         self._mail_stage = 1
                     self._mail_failures = 0
                     return None
             return super().choose(frame, anchors)
 
-        has_hunt_control = any(
-            item.type in self.hunt_button_types for item in detections
-        )
+        has_hunt_control = bool(actionable_hunt_controls)
         on_collect_map = any(
             item.type in {
                 self.map_exit_type,
@@ -1147,9 +1831,7 @@ class HuntPlanner(TargetPlanner):
         if self._pending_hunt_return and on_collect_map and not has_hunt_control:
             self._pending_hunt_return = False
             if self._hunt_count >= self.recenter_every:
-                self._hunt_count = 0
-                self._recenter_stage = 1
-                self._stage = "recenter"
+                self._begin_recenter("batch")
                 return self._choose_map_exit(frame, detections)
 
         now = time.monotonic()
@@ -1162,12 +1844,9 @@ class HuntPlanner(TargetPlanner):
             return None
 
         if has_hunt_control:
-            self._map_idle_frames = 0
+            self._map_idle_since = None
             self._stage = "hunt_control"
-            hunt_controls = [
-                item for item in detections if item.type in self.hunt_button_types
-            ]
-            target = super().choose(frame, hunt_controls)
+            target = super().choose(frame, actionable_hunt_controls)
             return target
 
         if self._awaiting_hunt_button:
@@ -1203,6 +1882,7 @@ class HuntPlanner(TargetPlanner):
                 continue
             actionable.append(item)
         anchor_position = self._last_anchor
+        supply = 0
         self._failed_dinosaur_positions = [
             entry
             for entry in self._failed_dinosaur_positions
@@ -1238,9 +1918,38 @@ class HuntPlanner(TargetPlanner):
             actionable = [
                 item for item in actionable if item.type != self.dinosaur_type
             ]
+            # Supply has to mean "could be tapped right now", which is two
+            # filters further on than "passed the rejection rules". A dinosaur
+            # already hunted this map stays on screen and keeps passing every
+            # rule, but `choose` drops it as a duplicate - so a map whose last
+            # candidates were all spent reported supply and planned nothing,
+            # and the resupply trigger never fired. A measured run sat on
+            # `supply=2` for twenty seconds that way before the blind-stall
+            # timer had to rescue it.
+            safe_dinosaurs = [
+                item
+                for item in self.filter_suppressed(safe_dinosaurs)
+                if not (
+                    self.dinosaur_type in self.deduplicate_types
+                    and self._was_selected(frame, item)
+                )
+            ]
+            supply = len(safe_dinosaurs)
             if safe_dinosaurs:
                 def radial_key(item: Detection) -> tuple[float, float, float, float]:
-                    distance = hypot(item.x - anchor_x, item.y - anchor_y)
+                    # Rank by displacement, which is what a tap actually costs:
+                    # the map re-centres on the dinosaur, so how far it sits
+                    # from the *screen* centre is exactly how far the view - and
+                    # the egg with it - is about to move. Measuring from the
+                    # anchor instead was measuring the wrong thing as soon as
+                    # the anchor stopped being centred, and needs an anchor at
+                    # all. Right after a reset the egg is the screen centre, so
+                    # this is the ring-around-the-egg ordering; several hunts
+                    # later it is still the cheapest tap available.
+                    distance = hypot(
+                        item.x - frame.width / 2,
+                        item.y - frame.height / 2,
+                    )
                     angle = degrees(atan2(item.y - anchor_y, item.x - anchor_x)) % 360.0
                     clearance = min(
                         (
@@ -1262,18 +1971,37 @@ class HuntPlanner(TargetPlanner):
                 )
                 actionable.append(nearest)
         elif on_collect_map:
-            self._recenter_stage = 1
+            self._begin_recenter("missing_anchor")
             return self._choose_map_exit(frame, detections)
         target = super().choose(frame, actionable)
-        if target is None and on_collect_map:
-            self._map_idle_frames += 1
-            if self._map_idle_frames >= self.stalled_recenter_frames:
-                self._map_idle_frames = 0
-                self._recenter_stage = 1
-                self._stage = "recenter"
+        self._last_supply = supply
+        if on_collect_map and supply == 0:
+            self._empty_supply_frames += 1
+        else:
+            self._empty_supply_frames = 0
+        # Recentering is resupply, so run it off the supply rather than off
+        # "did this cycle plan anything". Those differed by a lot: with
+        # `anchor_window` rejecting against a predicted anchor, cycles reported
+        # nothing to do while the map was still full, and 31 of a run's 32
+        # resets were spent refilling a map that had never emptied.
+        #
+        # The grace period stays. A corridor full of the bot's own routes
+        # clears itself as hunts return, and resetting the moment supply dips
+        # would trade a few seconds of waiting for a whole map reload.
+        if supply < self.recenter_min_candidates and on_collect_map:
+            if self._empty_supply_frames >= self.empty_supply_recenter_frames:
+                self._begin_recenter("empty_supply")
                 return self._choose_map_exit(frame, detections)
-        elif target is not None:
-            self._map_idle_frames = 0
+            idle_now = self.clock()
+            if self._map_idle_since is None:
+                self._map_idle_since = idle_now
+            self._last_map_idle_seconds = max(0.0, idle_now - self._map_idle_since)
+            if self._last_map_idle_seconds >= self.stalled_recenter_seconds:
+                self._begin_recenter("low_supply")
+                return self._choose_map_exit(frame, detections)
+        else:
+            self._map_idle_since = None
+            self._empty_supply_frames = 0
         if target is not None and target.type == self.dinosaur_type:
             self._last_selected_dinosaur = (float(target.x), float(target.y))
             self._anchor_before_dinosaur = anchor_position
@@ -1282,6 +2010,8 @@ class HuntPlanner(TargetPlanner):
                     anchor_position[0] + frame.width / 2 - target.x,
                     anchor_position[1] + frame.height / 2 - target.y,
                 )
+                # Inferred from where the map was told to go, not seen.
+                self._anchor_measured = False
             self._awaiting_hunt_button = True
             self._waited_frames = 0
         return target

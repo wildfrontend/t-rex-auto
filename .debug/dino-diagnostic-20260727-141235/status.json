@@ -1,0 +1,435 @@
+{
+  "running": false,
+  "current_stage": "stopped",
+  "session_started": null,
+  "last_log_time": "2026-07-27T14:12:35",
+  "last_successful_hunt": "2026-07-27T14:12:35",
+  "successful_hunts": 632,
+  "mailbox_cycles": 10,
+  "total_actions": 2779,
+  "verification_failures": 461,
+  "retry_exhausted": 4,
+  "black_screen_detections": 0,
+  "black_screen_persisted": 0,
+  "game_restarts": 20,
+  "game_restart_failures": 0,
+  "timing": {},
+  "recent_actions": [
+    {
+      "timestamp": "2026-07-27T14:08:22",
+      "target": "hunt_confirm_button",
+      "action": "tap (451,1412)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-27T14:08:23"
+    },
+    {
+      "timestamp": "2026-07-27T14:08:34",
+      "target": "dinosaur",
+      "action": "tap (791,784)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-27T14:08:35"
+    },
+    {
+      "timestamp": "2026-07-27T14:08:35",
+      "target": "hunt_button",
+      "action": "tap (721,657)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-27T14:08:37"
+    },
+    {
+      "timestamp": "2026-07-27T14:08:37",
+      "target": "hunt_confirm_button",
+      "action": "tap (451,1412)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-27T14:08:38"
+    },
+    {
+      "timestamp": "2026-07-27T14:08:41",
+      "target": "dinosaur",
+      "action": "tap (563,822)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-27T14:08:41"
+    },
+    {
+      "timestamp": "2026-07-27T14:08:41",
+      "target": "hunt_button",
+      "action": "tap (564,695)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-27T14:08:43"
+    },
+    {
+      "timestamp": "2026-07-27T14:08:43",
+      "target": "hunt_confirm_button",
+      "action": "tap (451,1412)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-27T14:08:44"
+    },
+    {
+      "timestamp": "2026-07-27T14:08:47",
+      "target": "dinosaur",
+      "action": "tap (472,916)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-27T14:08:48"
+    },
+    {
+      "timestamp": "2026-07-27T14:08:48",
+      "target": "hunt_button",
+      "action": "tap (475,793)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-27T14:08:49"
+    },
+    {
+      "timestamp": "2026-07-27T14:08:49",
+      "target": "hunt_confirm_button",
+      "action": "tap (451,1412)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-27T14:08:51"
+    },
+    {
+      "timestamp": "2026-07-27T14:09:02",
+      "target": "map_exit_nest_button",
+      "action": "tap (841,1295)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-27T14:09:05"
+    },
+    {
+      "timestamp": "2026-07-27T14:09:08",
+      "target": "forest_recenter_button",
+      "action": "tap (841,1295)",
+      "attempt": 1,
+      "result": "failed",
+      "result_time": "2026-07-27T14:09:13"
+    },
+    {
+      "timestamp": "2026-07-27T14:09:16",
+      "target": "dinosaur",
+      "action": "tap (125,633)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-27T14:09:17"
+    },
+    {
+      "timestamp": "2026-07-27T14:09:17",
+      "target": "hunt_button",
+      "action": "tap (178,516)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-27T14:09:18"
+    },
+    {
+      "timestamp": "2026-07-27T14:09:18",
+      "target": "hunt_confirm_button",
+      "action": "tap (451,1412)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-27T14:09:20"
+    },
+    {
+      "timestamp": "2026-07-27T14:09:25",
+      "target": "dinosaur",
+      "action": "tap (708,391)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-27T14:09:26"
+    },
+    {
+      "timestamp": "2026-07-27T14:09:26",
+      "target": "hunt_button",
+      "action": "tap (709,301)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-27T14:09:28"
+    },
+    {
+      "timestamp": "2026-07-27T14:09:28",
+      "target": "hunt_confirm_button",
+      "action": "tap (451,1412)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-27T14:09:29"
+    },
+    {
+      "timestamp": "2026-07-27T14:09:32",
+      "target": "dinosaur",
+      "action": "tap (569,860)",
+      "attempt": 1,
+      "result": "failed",
+      "result_time": "2026-07-27T14:09:33"
+    },
+    {
+      "timestamp": "2026-07-27T14:09:46",
+      "target": "map_exit_nest_button",
+      "action": "tap (841,1295)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-27T14:09:49"
+    },
+    {
+      "timestamp": "2026-07-27T14:09:52",
+      "target": "forest_recenter_button",
+      "action": "tap (841,1295)",
+      "attempt": 1,
+      "result": "failed",
+      "result_time": "2026-07-27T14:09:57"
+    },
+    {
+      "timestamp": "2026-07-27T14:10:08",
+      "target": "map_exit_nest_button",
+      "action": "tap (841,1295)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-27T14:10:11"
+    },
+    {
+      "timestamp": "2026-07-27T14:10:14",
+      "target": "forest_recenter_button",
+      "action": "tap (841,1295)",
+      "attempt": 1,
+      "result": "failed",
+      "result_time": "2026-07-27T14:10:19"
+    },
+    {
+      "timestamp": "2026-07-27T14:10:31",
+      "target": "map_exit_nest_button",
+      "action": "tap (841,1295)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-27T14:10:35"
+    },
+    {
+      "timestamp": "2026-07-27T14:10:38",
+      "target": "forest_recenter_button",
+      "action": "tap (841,1295)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-27T14:10:42"
+    },
+    {
+      "timestamp": "2026-07-27T14:10:48",
+      "target": "dinosaur",
+      "action": "tap (591,673)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-27T14:10:48"
+    },
+    {
+      "timestamp": "2026-07-27T14:10:48",
+      "target": "hunt_button",
+      "action": "tap (591,543)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-27T14:10:50"
+    },
+    {
+      "timestamp": "2026-07-27T14:10:50",
+      "target": "hunt_confirm_button",
+      "action": "tap (451,1412)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-27T14:10:52"
+    },
+    {
+      "timestamp": "2026-07-27T14:10:55",
+      "target": "dinosaur",
+      "action": "tap (202,741)",
+      "attempt": 1,
+      "result": "failed",
+      "result_time": "2026-07-27T14:10:57"
+    },
+    {
+      "timestamp": "2026-07-27T14:11:00",
+      "target": "dinosaur",
+      "action": "tap (674,767)",
+      "attempt": 2,
+      "result": "success",
+      "result_time": "2026-07-27T14:11:01"
+    },
+    {
+      "timestamp": "2026-07-27T14:11:01",
+      "target": "hunt_button",
+      "action": "tap (676,639)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-27T14:11:02"
+    },
+    {
+      "timestamp": "2026-07-27T14:11:02",
+      "target": "hunt_confirm_button",
+      "action": "tap (451,1412)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-27T14:11:04"
+    },
+    {
+      "timestamp": "2026-07-27T14:11:17",
+      "target": "map_exit_nest_button",
+      "action": "tap (841,1295)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-27T14:11:20"
+    },
+    {
+      "timestamp": "2026-07-27T14:11:23",
+      "target": "forest_recenter_button",
+      "action": "tap (841,1295)",
+      "attempt": 1,
+      "result": "failed",
+      "result_time": "2026-07-27T14:11:27"
+    },
+    {
+      "timestamp": "2026-07-27T14:11:30",
+      "target": "dinosaur",
+      "action": "tap (130,729)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-27T14:11:31"
+    },
+    {
+      "timestamp": "2026-07-27T14:11:31",
+      "target": "hunt_button",
+      "action": "tap (178,596)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-27T14:11:32"
+    },
+    {
+      "timestamp": "2026-07-27T14:11:32",
+      "target": "hunt_confirm_button",
+      "action": "tap (451,1412)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-27T14:11:34"
+    },
+    {
+      "timestamp": "2026-07-27T14:11:37",
+      "target": "dinosaur",
+      "action": "tap (182,755)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-27T14:11:38"
+    },
+    {
+      "timestamp": "2026-07-27T14:11:38",
+      "target": "hunt_button",
+      "action": "tap (186,626)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-27T14:11:40"
+    },
+    {
+      "timestamp": "2026-07-27T14:11:40",
+      "target": "hunt_confirm_button",
+      "action": "tap (451,1412)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-27T14:11:42"
+    },
+    {
+      "timestamp": "2026-07-27T14:11:45",
+      "target": "map_exit_nest_button",
+      "action": "tap (841,1295)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-27T14:11:49"
+    },
+    {
+      "timestamp": "2026-07-27T14:11:53",
+      "target": "forest_recenter_button",
+      "action": "tap (841,1295)",
+      "attempt": 1,
+      "result": "failed",
+      "result_time": "2026-07-27T14:11:58"
+    },
+    {
+      "timestamp": "2026-07-27T14:12:11",
+      "target": "map_exit_nest_button",
+      "action": "tap (841,1295)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-27T14:12:14"
+    },
+    {
+      "timestamp": "2026-07-27T14:12:17",
+      "target": "forest_recenter_button",
+      "action": "tap (841,1295)",
+      "attempt": 1,
+      "result": "failed",
+      "result_time": "2026-07-27T14:12:22"
+    },
+    {
+      "timestamp": "2026-07-27T14:12:24",
+      "target": "dinosaur",
+      "action": "tap (603,676)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-27T14:12:25"
+    },
+    {
+      "timestamp": "2026-07-27T14:12:25",
+      "target": "hunt_button",
+      "action": "tap (603,546)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-27T14:12:27"
+    },
+    {
+      "timestamp": "2026-07-27T14:12:27",
+      "target": "hunt_confirm_button",
+      "action": "tap (451,1412)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-27T14:12:28"
+    },
+    {
+      "timestamp": "2026-07-27T14:12:31",
+      "target": "dinosaur",
+      "action": "tap (681,840)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-27T14:12:32"
+    },
+    {
+      "timestamp": "2026-07-27T14:12:32",
+      "target": "hunt_button",
+      "action": "tap (672,716)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-27T14:12:33"
+    },
+    {
+      "timestamp": "2026-07-27T14:12:33",
+      "target": "hunt_confirm_button",
+      "action": "tap (451,1412)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-27T14:12:35"
+    }
+  ],
+  "log_file": "<app-root>\\logs\\20260727.log",
+  "log_window": {
+    "sessions": 0,
+    "first_log_time": "2026-07-27T13:28:42",
+    "last_log_time": "2026-07-27T14:12:35",
+    "total_actions": 2779,
+    "confirmed_hunts": 632,
+    "longest_stall_seconds": 1457.0,
+    "repeated_target": {
+      "target": "forest_recenter_button",
+      "x": 841,
+      "y": 1295,
+      "count": 10
+    }
+  },
+  "generated_at": "2026-07-27T14:12:36.531108+08:00"
+}

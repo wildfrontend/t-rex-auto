@@ -4,7 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dino-mutant-bot"
-version = "0.2.15"
+# 版號的唯一來源是 src/dino_bot/__init__.py 的 __version__。
+dynamic = ["version"]
 description = "Extensible Sense-Think-Act framework for Android emulator automation"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -28,6 +29,9 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.dynamic]
+version = {attr = "dino_bot.__version__"}
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -90,26 +91,57 @@ def test_local_status_server_exposes_read_only_json(tmp_path: Path) -> None:
 
     assert health["ok"] is True
     assert health["service"] == "dino-mutant-bot-status"
-    assert health["api_version"] == 1
+    assert health["api_version"] == 2
     assert health["process_id"] == os.getpid()
     assert status["successful_hunts"] == 1
     assert len(actions["actions"]) == 3
     assert settings["timing"]["idle_delay_ms"] == 250
 
 
-def test_local_status_server_accepts_only_allowlisted_stop(tmp_path: Path) -> None:
+def test_local_status_server_reports_live_workflow_without_log_history(tmp_path: Path) -> None:
+    current = {"stage": "hatch_blocked_hunt", "label": "孵蛋已鎖住，僅繼續狩獵"}
+    with LocalStatusServer(tmp_path, port=0, workflow_provider=lambda: dict(current)) as server:
+        with urlopen(f"{server.url}/status", timeout=2) as response:  # noqa: S310
+            assert json.load(response)["workflow"]["stage"] == "hatch_blocked_hunt"
+        current.update(stage="cooldown_boost", label="使用冷卻加速券")
+        with urlopen(f"{server.url}/status", timeout=2) as response:  # noqa: S310
+            assert json.load(response)["workflow"]["stage"] == "cooldown_boost"
+
+
+def test_local_status_server_accepts_allowlisted_controls(tmp_path: Path) -> None:
     requested: list[str] = []
     with LocalStatusServer(
         tmp_path,
         port=0,
-        control_handlers={"stop": lambda: requested.append("stop")},
+        control_handlers={
+            "stop": lambda: requested.append("stop"),
+            "restart-game": lambda: requested.append("restart-game"),
+        },
     ) as server:
-        request = Request(f"{server.url}/control/stop", method="POST")
-        with urlopen(request, timeout=2) as response:  # noqa: S310
-            payload = json.load(response)
+        stop_request = Request(f"{server.url}/control/stop", method="POST")
+        with urlopen(stop_request, timeout=2) as response:  # noqa: S310
+            stop_payload = json.load(response)
+        restart_request = Request(f"{server.url}/control/restart-game", method="POST")
+        with urlopen(restart_request, timeout=2) as response:  # noqa: S310
+            restart_payload = json.load(response)
 
-    assert payload == {"accepted": True, "action": "stop"}
-    assert requested == ["stop"]
+    assert stop_payload == {"accepted": True, "action": "stop"}
+    assert restart_payload == {"accepted": True, "action": "restart-game"}
+    assert requested == ["stop", "restart-game"]
+
+
+def test_local_status_server_rejects_declined_control(tmp_path: Path) -> None:
+    with LocalStatusServer(
+        tmp_path,
+        port=0,
+        control_handlers={"restart-game": lambda: False},
+    ) as server:
+        request = Request(f"{server.url}/control/restart-game", method="POST")
+        with pytest.raises(HTTPError) as rejected:
+            urlopen(request, timeout=2)  # noqa: S310
+
+    assert rejected.value.code == 409
+    rejected.value.close()
 
 
 def test_local_status_server_rejects_unknown_control_and_remote_origin(
@@ -128,5 +160,49 @@ def test_local_status_server_rejects_unknown_control_and_remote_origin(
         with pytest.raises(HTTPError) as origin_error:
             urlopen(remote, timeout=2)  # noqa: S310
 
+        lookalike = Request(
+            f"{server.url}/control/stop",
+            method="POST",
+            headers={"Origin": "http://localhost.example.com"},
+        )
+        with pytest.raises(HTTPError) as lookalike_error:
+            urlopen(lookalike, timeout=2)  # noqa: S310
+
     assert unknown_error.value.code == 404
     assert origin_error.value.code == 403
+    assert lookalike_error.value.code == 403
+    unknown_error.value.close()
+    origin_error.value.close()
+    lookalike_error.value.close()
+
+
+def test_client_disconnect_does_not_raise_or_kill_the_server(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A client that hangs up mid-response must stay silent and non-fatal.
+
+    Reproduces the real failure: a status poll that timed out client-side left
+    the server writing into a closed socket, which printed a ConnectionAborted
+    traceback to the Bot's console.
+    """
+
+    write_log(tmp_path, sample_log())
+
+    with LocalStatusServer(tmp_path, port=0) as server:
+        host, port = "127.0.0.1", int(server.url.rsplit(":", 1)[1])
+
+        # Send a request, then close without reading the reply.
+        for _ in range(5):
+            sock = socket.create_connection((host, port), timeout=2)
+            sock.sendall(b"GET /status HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            sock.close()
+
+        # The server must still answer normally afterwards.
+        with urlopen(f"{server.url}/status", timeout=5) as response:  # noqa: S310
+            status = json.load(response)
+
+    assert status["successful_hunts"] == 1
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.err
+    assert "ConnectionAborted" not in captured.err

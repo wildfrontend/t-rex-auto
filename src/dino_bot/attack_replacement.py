@@ -1,0 +1,722 @@
+"""Bounded end-to-end attack-parent replacement workflow.
+
+For each parent, the planner opens Select Dino, converges to all-tags and
+attack-descending, compares visible candidates, and selects a higher-primary
+candidate or an equal-primary candidate with lower secondary stats. Older
+game versions require a known confirmation prompt before the affirmative
+button is allowed; newer versions may apply the selection immediately and
+return directly to the nest. When no upgrade exists, the list closes through
+the outside mask and the current parent is preserved.
+"""
+
+from __future__ import annotations
+
+import logging
+from collections.abc import Mapping, Sequence
+
+from . import nest_filter as nest_filter_feature
+from . import select_sort as select_sort_feature
+from .digits import DigitReader
+from .models import Detection, Frame, Target, VerificationResult
+from .nest_filter import NestTagFilterTestPlanner
+from .nest_readout import (
+    ATTACK_PARENT_REGIONS,
+    NEST_CARD_PITCH,
+    count_visible_nests,
+    shift_parent_regions,
+    SELECT_ROW_PITCH,
+    ConsecutiveReadConsensus,
+    read_attack_parents,
+)
+from .nests import (
+    ATTACK_RULE,
+    DEFAULT_STAT_UPGRADE_GUARDS,
+    ReplacementRule,
+    Stats,
+    StatUpgradeGuard,
+    descending_prefix,
+    find_primary_ocr_conflict,
+    is_intentional_extreme_specialization_parent,
+    pick_replacement,
+    pick_specialization_replacement,
+    primary_of,
+    specialization_counter_stat,
+    stat_value_is_valid,
+)
+from .overlays import CONFIRM_YES, NESTED_PARENT_WARNING, SELECT_CONFIRM_PROMPT
+from .parent_open import NEST_TITLE, OPEN_TAG_OPTIONS, SELECT_TITLE
+from .select_sort import SelectSortTestPlanner
+from .stalls import ParentStatsSnapshot
+from .targeting import best_detection, detection_target, synthetic_target
+
+PARENT_LEFT = "hatch_parent_left"
+PARENT_RIGHT = "hatch_parent_right"
+CANDIDATE_ROW = "hatch_candidate_row"
+NESTED_PARENT_YES = "hatch_nested_parent_yes"
+SELECT_MASK_CLOSE = "hatch_select_mask_close"
+
+DEFAULT_TARGET_ACTIONS: dict[str, str] = {
+    **nest_filter_feature.DEFAULT_TARGET_ACTIONS,
+    **select_sort_feature.DEFAULT_TARGET_ACTIONS,
+    PARENT_LEFT: "tap",
+    PARENT_RIGHT: "tap",
+    CANDIDATE_ROW: "tap",
+    NESTED_PARENT_YES: "tap",
+    CONFIRM_YES: "tap",
+    SELECT_MASK_CLOSE: "tap",
+}
+DEFAULT_POST_ACTION_DELAYS_MS: dict[str, int] = {
+    **nest_filter_feature.DEFAULT_POST_ACTION_DELAYS_MS,
+    **select_sort_feature.DEFAULT_POST_ACTION_DELAYS_MS,
+    PARENT_LEFT: 3000,
+    PARENT_RIGHT: 3000,
+    CANDIDATE_ROW: 2500,
+    NESTED_PARENT_YES: 3000,
+    CONFIRM_YES: 3000,
+    SELECT_MASK_CLOSE: 3000,
+}
+DEFAULT_SUCCESS_TRANSITIONS: dict[str, tuple[str, ...]] = {
+    **nest_filter_feature.DEFAULT_SUCCESS_TRANSITIONS,
+    **select_sort_feature.DEFAULT_SUCCESS_TRANSITIONS,
+    PARENT_LEFT: (SELECT_TITLE,),
+    PARENT_RIGHT: (SELECT_TITLE,),
+    CANDIDATE_ROW: (SELECT_CONFIRM_PROMPT, NESTED_PARENT_WARNING),
+    NESTED_PARENT_YES: (SELECT_CONFIRM_PROMPT, NEST_TITLE),
+    CONFIRM_YES: (NEST_TITLE,),
+    SELECT_MASK_CLOSE: (NEST_TITLE,),
+}
+DEFAULT_SUCCESS_DISAPPEARANCES: dict[str, tuple[str, ...]] = {
+    CANDIDATE_ROW: (SELECT_TITLE,),
+}
+DEFAULT_CYCLE_COMPLETE_TARGETS: tuple[str, ...] = (CONFIRM_YES, SELECT_MASK_CLOSE)
+
+
+class AttackReplacementTestPlanner:
+    """Run the attack replacement rule for left and right parents once."""
+
+    def __init__(
+        self,
+        reader: DigitReader,
+        *,
+        reference_width: float = 900.0,
+        left_parent_point: tuple[float, float] = (264.0, 407.0),
+        right_parent_point: tuple[float, float] = (523.0, 407.0),
+        attack_header_point: tuple[float, float] = (217.0, 166.0),
+        candidate_point: tuple[float, float] = (350.0, 435.0),
+        mask_close_point: tuple[float, float] = (50.0, 800.0),
+        rule: ReplacementRule = ATTACK_RULE,
+        nest_filter_option: str = nest_filter_feature.TAG_ATTACK,
+        nest_filter_header: str = nest_filter_feature.TAG_HDR_ATTACK,
+        select_sort_option: str = select_sort_feature.SORT_ATTACK,
+        select_sort_header: str = select_sort_feature.SORT_HDR_ATTACK,
+        select_sort_menu_point: tuple[float, float] = (649.0, 550.0),
+        stat_guards: Mapping[str, StatUpgradeGuard] = DEFAULT_STAT_UPGRADE_GUARDS,
+        allow_extreme_specialization_parent: bool = False,
+        prefer_specialization_purity: bool = False,
+        minimum_consistent_stat_reads: int = 1,
+        stat_read_retries: int = 1,
+        parent_stats_snapshots: ParentStatsSnapshot | None = None,
+        logger: logging.Logger | None = None,
+    ) -> None:
+        if reference_width <= 0:
+            raise ValueError("reference_width must be greater than zero")
+        if stat_read_retries < minimum_consistent_stat_reads:
+            raise ValueError(
+                "stat_read_retries cannot be less than minimum_consistent_stat_reads"
+            )
+        self.reader = reader
+        self.reference_width = reference_width
+        self.parent_points = (left_parent_point, right_parent_point)
+        self.attack_header_point = attack_header_point
+        self.candidate_point = candidate_point
+        self.mask_close_point = mask_close_point
+        self.rule = rule
+        self.nest_filter_option = nest_filter_option
+        self.nest_filter_header = nest_filter_header
+        self.select_sort_option = select_sort_option
+        self.select_sort_header = select_sort_header
+        self.select_sort_menu_point = select_sort_menu_point
+        self.stat_guards = dict(stat_guards)
+        self.allow_extreme_specialization_parent = bool(
+            allow_extreme_specialization_parent
+        )
+        self.prefer_specialization_purity = bool(prefer_specialization_purity)
+        self.minimum_consistent_stat_reads = minimum_consistent_stat_reads
+        self.stat_read_retries = stat_read_retries
+        self.parent_stats_snapshots = parent_stats_snapshots
+        self.logger = logger or logging.getLogger("dino_bot")
+        self._stage = "filter_attack"
+        self._side = 0
+        # Purity repair only ever swaps in a candidate whose opposing combat
+        # stat is lower than the parent's. Auto-place fills every nest of one
+        # tag from a single shared pool, so the candidate list a later side
+        # sees is the list this side already read. Once the cleanest candidate
+        # is known, any parent already cleaner than it cannot be improved and
+        # its side does not need to be opened at all.
+        self._cleanest_candidate_counter: int | None = None
+        # The tag filter can leave several identical nests on screen. Nest 0's
+        # coordinates are the anchor; the rest are the same layout shifted by
+        # one card pitch. The count is measured from the first nest frame.
+        self._nest_index = 0
+        self._visible_nests: int | None = None
+        self._current_parent: Stats | None = None
+        self._partner_parent: Stats | None = None
+        self._parent_read_failures = 0
+        self._parent_consensus = ConsecutiveReadConsensus[
+            tuple[Stats, Stats]
+        ](minimum_consistent_stat_reads)
+        self._reuse_direct_parent_panel = False
+        self._filter_planner = NestTagFilterTestPlanner(
+            reference_width=reference_width,
+            target_label=rule.tag,
+            target_option_type=nest_filter_option,
+            target_header_type=nest_filter_header,
+        )
+        self._select_planner: SelectSortTestPlanner | None = None
+        self._suspicious_ocr_retries = 0
+        self._complete = False
+
+    def last_stage(self) -> str:
+        return self._stage
+
+    def is_complete(self) -> bool:
+        return self._complete
+
+    def on_action_success(self, target_type: str) -> None:
+        if self._stage.startswith("filter_"):
+            self._filter_planner.on_action_success(target_type)
+            if target_type == self.nest_filter_option:
+                self._stage = "nest_left"
+            return
+        if target_type in (PARENT_LEFT, PARENT_RIGHT):
+            self._stage = self._side_stage("select")
+            self._select_planner = SelectSortTestPlanner(
+                self.reader,
+                reference_width=self.reference_width,
+                sort_option_type=self.select_sort_option,
+                sort_header_type=self.select_sort_header,
+                sort_menu_point=self.select_sort_menu_point,
+                primary_attr=self.rule.primary,
+                sort_label=self.rule.sort_option,
+                stat_guards=self.stat_guards,
+                minimum_consistent_stat_reads=self.minimum_consistent_stat_reads,
+                logger=self.logger,
+            )
+            return
+        if target_type == CANDIDATE_ROW:
+            self._stage = self._side_stage("confirm")
+            return
+        if target_type == NESTED_PARENT_YES:
+            self._stage = self._side_stage("after_nested")
+            return
+        if target_type in (CONFIRM_YES, SELECT_MASK_CLOSE):
+            self._advance_parent()
+            return
+        if self._select_planner is not None:
+            self._select_planner.on_action_success(target_type)
+
+    def on_action_success_context(
+        self,
+        target: Target,
+        frame: Frame,
+        detections: Sequence[Detection],
+        result: VerificationResult,
+    ) -> None:
+        del frame
+        visible = {item.type for item in detections}
+        direct_selection = (
+            target.type == CANDIDATE_ROW
+            and result.reason.startswith("previous UI disappeared:")
+            and SELECT_TITLE not in visible
+            and SELECT_CONFIRM_PROMPT not in visible
+            and NESTED_PARENT_WARNING not in visible
+        )
+        if direct_selection:
+            self.logger.info(
+                "Hatch %s | side=%s | candidate applied directly; continuing",
+                self.rule.tag,
+                self._side_name,
+            )
+            self._advance_parent(reuse_direct_parent_panel=True)
+            return
+        self.on_action_success(target.type)
+
+    def on_action_failure(self, target_type: str) -> None:
+        self._stage = f"failed_{target_type}"
+        self._complete = True
+
+    def choose(self, frame: Frame, detections: Sequence[Detection]) -> Target | None:
+        if self._complete:
+            return None
+        by_type: dict[str, list[Detection]] = {}
+        for item in detections:
+            by_type.setdefault(item.type, []).append(item)
+
+        if self._stage.startswith("filter_"):
+            target = self._filter_planner.choose(frame, detections)
+            if target is None and self._filter_planner.is_complete():
+                # 表頭已是目標標籤(nest_filter 直接判完成):跳過點選,
+                # 立即進入親代讀取。
+                self._stage = "nest_left"
+                return self.choose(frame, detections)
+            return target
+        if self._stage.startswith("nest_"):
+            return self._choose_parent(frame, by_type)
+        if self._stage.startswith("select_"):
+            return self._choose_select(frame, detections, by_type)
+        if self._stage.startswith("confirm_"):
+            return self._choose_confirmation(by_type)
+        if self._stage.startswith("after_nested_"):
+            return self._choose_after_nested_warning(by_type)
+        return None
+
+    def _choose_parent(
+        self,
+        frame: Frame,
+        by_type: dict[str, list[Detection]],
+    ) -> Target | None:
+        if SELECT_TITLE in by_type:
+            self._stage = "unexpected_select_dino"
+            return None
+        if not self._reuse_direct_parent_panel:
+            if NEST_TITLE not in by_type:
+                return None
+            if any(target_type in by_type for target_type in OPEN_TAG_OPTIONS):
+                self._stage = "tag_menu_open"
+                return None
+            if not self._nest_filter_header_is_foreground(
+                frame,
+                by_type.get(self.nest_filter_header),
+            ):
+                self._stage = "target_filter_required"
+                return None
+
+        self._observe_visible_nests(frame)
+        observed_parents = read_attack_parents(
+            frame.image,
+            self.reader,
+            stat_guards=self.stat_guards,
+            nest_index=self._nest_index,
+        )
+        parents = self._parent_consensus.observe(observed_parents)
+        if parents is None:
+            self._parent_read_failures += 1
+            exhausted = self._parent_read_failures >= self.stat_read_retries
+            evidence_stage = (
+                "parent_stats_unreadable" if exhausted else "parent_stats_calibrating"
+            )
+            if self.parent_stats_snapshots is not None and (
+                observed_parents is None or self._parent_read_failures > 1
+            ):
+                self.parent_stats_snapshots.capture(
+                    frame,
+                    self.reader,
+                    shift_parent_regions(ATTACK_PARENT_REGIONS, self._nest_index),
+                    stage=evidence_stage,
+                    side=self._side_name,
+                    attempts=self._parent_read_failures,
+                )
+            if exhausted:
+                self._stage = "parent_stats_unreadable"
+                self.logger.warning(
+                    "Hatch %s | parent stats calibration exhausted %d/%d"
+                    " | refusing tap",
+                    self.rule.tag,
+                    self._parent_read_failures,
+                    self.stat_read_retries,
+                )
+            else:
+                self.logger.info(
+                    "Hatch OCR | parent calibration %d/%d"
+                    " | consistent=%d/%d | side=%s | observed=%s",
+                    self._parent_read_failures,
+                    self.stat_read_retries,
+                    self._parent_consensus.count,
+                    self.minimum_consistent_stat_reads,
+                    self._side_name,
+                    (
+                        [self._format_stats(item) for item in observed_parents]
+                        if observed_parents is not None
+                        else "invalid"
+                    ),
+                )
+            return None
+        self._parent_read_failures = 0
+        self._current_parent = parents[self._side]
+        self._partner_parent = parents[1 - self._side]
+        reused_direct_parent_panel = self._reuse_direct_parent_panel
+        self._reuse_direct_parent_panel = False
+        if reused_direct_parent_panel:
+            self.logger.info(
+                "Hatch %s | side=%s | reusing directly returned parent panel",
+                self.rule.tag,
+                self._side_name,
+            )
+        self.logger.info(
+            "Hatch %s | side=%s | parent=%s | pair=%s,%s",
+            self.rule.tag,
+            self._side_name,
+            self._format_stats(self._current_parent),
+            self._format_stats(parents[0]),
+            self._format_stats(parents[1]),
+        )
+        if is_intentional_extreme_specialization_parent(
+            self._current_parent,
+            self.rule,
+            enabled=self.allow_extreme_specialization_parent,
+        ):
+            # A deliberately floored parent is the seed of a breeding line, not
+            # a slot to upgrade. Skip it before the panel is even opened: the
+            # candidate list cannot replace what it never sees, and a "purity
+            # preserving" swap still takes the seeded dino out of the nest.
+            self.logger.info(
+                "Hatch %s | side=%s | parent=%s | decision=keep parent"
+                " | reason=deliberate extreme specialization parent is locked",
+                self.rule.tag,
+                self._side_name,
+                self._format_stats(self._current_parent),
+            )
+            self._advance_parent()
+            return None
+        if self._parent_is_cleaner_than_any_candidate(self._current_parent):
+            self.logger.info(
+                "Hatch %s | side=%s | parent=%s | decision=keep parent"
+                " | reason=already cleaner than the cleanest candidate (%d)"
+                " | mode=purity repair",
+                self.rule.tag,
+                self._side_name,
+                self._format_stats(self._current_parent),
+                self._cleanest_candidate_counter,
+            )
+            self._advance_parent()
+            return None
+
+        target_type = PARENT_LEFT if self._side == 0 else PARENT_RIGHT
+        self._stage = self._side_stage("open")
+        return synthetic_target(
+            target_type,
+            *self._scaled(frame, self._nest_parent_point(self._side)),
+        )
+
+    def _choose_select(
+        self,
+        frame: Frame,
+        detections: Sequence[Detection],
+        by_type: dict[str, list[Detection]],
+    ) -> Target | None:
+        if SELECT_TITLE not in by_type:
+            return None
+        if self._current_parent is None or self._select_planner is None:
+            self._stage = "missing_parent_context"
+            self._complete = True
+            return None
+
+        target = self._select_planner.choose(frame, detections)
+        if target is not None:
+            return target
+        if not self._select_planner.is_complete():
+            if self._select_planner.last_stage() == "direction_unreadable":
+                plateau_rows = list(self._select_planner.confirmed_rows())
+                if self._equal_parent_plateau(plateau_rows):
+                    self.logger.info(
+                        "Hatch %s | side=%s | equal %s plateau=%s"
+                        " | decision=keep parent without further search",
+                        self.rule.tag,
+                        self._side_name,
+                        self.rule.sort_option,
+                        [primary_of(row, self.rule) for row in plateau_rows],
+                    )
+                    return self._close_list(frame)
+            return None
+
+        raw_rows = list(self._select_planner.confirmed_rows())
+        if not raw_rows:
+            self._stage = "candidate_stats_unreadable"
+            self.logger.warning(
+                "Hatch %s | candidate stats unreadable; stopping",
+                self.rule.tag,
+            )
+            self._complete = True
+            return None
+        rows = descending_prefix(raw_rows, self.rule)
+        if len(rows) < len(raw_rows):
+            self.logger.warning(
+                "Hatch %s | side=%s | ignored non-descending OCR tail"
+                " | raw=%s | trusted=%s",
+                self.rule.tag,
+                self._side_name,
+                [primary_of(row, self.rule) for row in raw_rows],
+                [primary_of(row, self.rule) for row in rows],
+            )
+        conflict = find_primary_ocr_conflict(self._current_parent, rows, self.rule)
+        if conflict is not None:
+            parent_value, candidate_value = conflict
+            if self._suspicious_ocr_retries < 1:
+                self._suspicious_ocr_retries += 1
+                self._select_planner.reset_stat_readings()
+                self._stage = self._side_stage("select")
+                self.logger.warning(
+                    "Hatch OCR | suspicious %s parent/candidate conflict"
+                    " | side=%s | parent=%s | candidates=%s"
+                    " | parent_primary=%d | repeated_candidate_primary=%d"
+                    " | action=reread",
+                    self.rule.sort_option,
+                    self._side_name,
+                    self._format_stats(self._current_parent),
+                    [self._format_stats(row) for row in rows],
+                    parent_value,
+                    candidate_value,
+                )
+                return None
+            self._stage = self._side_stage("suspicious_ocr")
+            self._complete = True
+            self.logger.error(
+                "Hatch OCR | repeated suspicious %s parent/candidate conflict"
+                " | side=%s | parent=%s | candidates=%s"
+                " | parent_primary=%d | repeated_candidate_primary=%d"
+                " | refusing replacement",
+                self.rule.sort_option,
+                self._side_name,
+                self._format_stats(self._current_parent),
+                [self._format_stats(row) for row in rows],
+                parent_value,
+                candidate_value,
+            )
+            return None
+        self._suspicious_ocr_retries = 0
+        if self.prefer_specialization_purity:
+            counters = [
+                specialization_counter_stat(row, self.rule)
+                for row in rows
+                if stat_value_is_valid(row, self.stat_guards)
+            ]
+            if counters:
+                self._cleanest_candidate_counter = min(counters)
+        picker = (
+            pick_specialization_replacement
+            if self.prefer_specialization_purity
+            else pick_replacement
+        )
+        replacement_index = picker(
+            self._current_parent,
+            rows,
+            self.rule,
+            guards=self.stat_guards,
+            partner=self._partner_parent,
+        )
+        if replacement_index is None:
+            self.logger.info(
+                "Hatch %s | side=%s | candidates=%s | decision=keep parent"
+                " | mode=%s",
+                self.rule.tag,
+                self._side_name,
+                [self._format_stats(row) for row in rows],
+                "purity repair" if self.prefer_specialization_purity else "upgrade",
+            )
+            return self._close_list(frame)
+
+        replacement = rows[replacement_index]
+        self.logger.info(
+            "Hatch %s | side=%s | candidates=%s | decision=select row %d (%s)"
+            " | mode=%s",
+            self.rule.tag,
+            self._side_name,
+            [self._format_stats(row) for row in rows],
+            replacement_index + 1,
+            self._format_stats(replacement),
+            "purity repair" if self.prefer_specialization_purity else "upgrade",
+        )
+
+        x, y = self._scaled(frame, self.candidate_point)
+        y += round(
+            replacement_index * SELECT_ROW_PITCH * frame.width / self.reference_width
+        )
+        self._stage = self._side_stage("choose")
+        return synthetic_target(CANDIDATE_ROW, x, y)
+
+    def _choose_confirmation(
+        self,
+        by_type: dict[str, list[Detection]],
+    ) -> Target | None:
+        # Newer nest layouts apply an eligible candidate immediately instead
+        # of showing the legacy confirmation prompt. Reaching the nest title
+        # proves that the Select Dino modal closed and the replacement was
+        # accepted, so continue with the other parent.
+        if NEST_TITLE in by_type:
+            self._advance_parent()
+            return None
+        if NESTED_PARENT_WARNING in by_type:
+            yes = best_detection(by_type.get(CONFIRM_YES))
+            if yes is None:
+                self._stage = "nested_confirmation_yes_missing"
+                self._complete = True
+                return None
+            self._stage = self._side_stage("remove_nested")
+            return synthetic_target(NESTED_PARENT_YES, yes.x, yes.y)
+        if SELECT_CONFIRM_PROMPT not in by_type:
+            self._stage = "confirmation_prompt_missing"
+            self._complete = True
+            return None
+        button = best_detection(by_type.get(CONFIRM_YES))
+        if button is None:
+            self._stage = "confirmation_yes_missing"
+            self._complete = True
+            return None
+        self._stage = self._side_stage("replace")
+        return detection_target(button)
+
+    def _choose_after_nested_warning(
+        self,
+        by_type: dict[str, list[Detection]],
+    ) -> Target | None:
+        if NEST_TITLE in by_type:
+            self._advance_parent()
+            return None
+        if SELECT_CONFIRM_PROMPT not in by_type:
+            return None
+        yes = best_detection(by_type.get(CONFIRM_YES))
+        if yes is None:
+            self._stage = "confirmation_yes_missing_after_nested"
+            self._complete = True
+            return None
+        self._stage = self._side_stage("replace")
+        return detection_target(yes)
+
+    def _close_list(self, frame: Frame) -> Target:
+        self._stage = self._side_stage("close")
+        return synthetic_target(
+            SELECT_MASK_CLOSE,
+            *self._scaled(frame, self.mask_close_point),
+        )
+
+    def _nest_total(self) -> int:
+        """How many nests this round will screen; at least the anchor nest."""
+
+        return max(1, self._visible_nests or 1)
+
+    def _nest_parent_point(self, side: int) -> tuple[float, float]:
+        x, y = self.parent_points[side]
+        return (x, y + self._nest_index * NEST_CARD_PITCH)
+
+    def _observe_visible_nests(self, frame: Frame) -> None:
+        """Measure the nest count once, from the first frame of the round.
+
+        A later frame can be mid-animation or partly covered, so re-measuring
+        could shrink the total after nests have already been screened. Falling
+        back to a single nest keeps the previous behaviour when the bars are
+        not readable rather than tapping a card that may not be there.
+        """
+
+        if self._visible_nests is not None:
+            return
+        count = count_visible_nests(frame.image, reference_width=self.reference_width)
+        self._visible_nests = count if count > 0 else 1
+        if count > 0:
+            self.logger.info(
+                "Hatch %s | %d nest(s) visible; screening each in turn",
+                self.rule.tag,
+                self._visible_nests,
+            )
+        else:
+            self.logger.warning(
+                "Hatch %s | nest markers unreadable; screening the first nest only",
+                self.rule.tag,
+            )
+
+    def _advance_parent(self, *, reuse_direct_parent_panel: bool = False) -> None:
+        self._parent_consensus.reset()
+        self._parent_read_failures = 0
+        if self._side == 0:
+            self._side = 1
+            self._reuse_direct_parent_panel = reuse_direct_parent_panel
+            self._current_parent = None
+            self._partner_parent = None
+            self._select_planner = None
+            self._stage = "nest_right"
+        elif self._nest_index + 1 < self._nest_total():
+            # This nest is done; the next card uses the same flow one pitch
+            # further down. Screening state resets, but the extreme-parent
+            # unlock does not carry over: each nest earns it on its own.
+            self._nest_index += 1
+            self._side = 0
+            self._reuse_direct_parent_panel = False
+            self._current_parent = None
+            self._partner_parent = None
+            self._select_planner = None
+            self._suspicious_ocr_retries = 0
+            self._stage = "nest_left"
+            self.logger.info(
+                "Hatch %s | nest %d/%d done; advancing to the next nest",
+                self.rule.tag,
+                self._nest_index,
+                self._nest_total(),
+            )
+        else:
+            self._reuse_direct_parent_panel = False
+            self._stage = "replacement_done"
+            self._complete = True
+
+    def _parent_is_cleaner_than_any_candidate(self, parent: Stats) -> bool:
+        """Whether opening this parent's list could not possibly swap it out.
+
+        Purity repair requires a candidate whose opposing combat stat is
+        strictly lower than the parent's, or equal with a higher primary. Every
+        nest of one tag draws from the same auto-placed pool, so the first side
+        of the round already saw the cleanest candidate available. A parent
+        below that floor is unbeatable on purity, and the equal case is left to
+        the full comparison because primary strength still decides it.
+        """
+
+        if not self.prefer_specialization_purity:
+            return False
+        floor = self._cleanest_candidate_counter
+        if floor is None:
+            return False
+        if not stat_value_is_valid(parent, self.stat_guards):
+            return False
+        return specialization_counter_stat(parent, self.rule) < floor
+
+    def _equal_parent_plateau(self, rows: list[Stats]) -> bool:
+        return (
+            self._current_parent is not None
+            and len(rows) >= 5
+            and all(
+                primary_of(row, self.rule) == primary_of(self._current_parent, self.rule)
+                for row in rows
+            )
+        )
+
+    def _nest_filter_header_is_foreground(
+        self,
+        frame: Frame,
+        items: list[Detection] | None,
+    ) -> bool:
+        if not items:
+            return False
+        expected = self._scaled(frame, self.attack_header_point)
+        max_distance = 45.0 * frame.width / self.reference_width
+        return any(
+            (item.x - expected[0]) ** 2 + (item.y - expected[1]) ** 2
+            <= max_distance**2
+            for item in items
+        )
+
+    def _scaled(self, frame: Frame, point: tuple[float, float]) -> tuple[int, int]:
+        scale = frame.width / self.reference_width
+        return (round(point[0] * scale), round(point[1] * scale))
+
+    def _side_stage(self, stage: str) -> str:
+        return f"{stage}_{self._side_name}"
+
+    @property
+    def _side_name(self) -> str:
+        side = "left" if self._side == 0 else "right"
+        # Nests screened in one round hold near-identical parents, so logs and
+        # stage names have to say which card a line came from.
+        if self._nest_total() > 1:
+            return f"nest{self._nest_index + 1}_{side}"
+        return side
+
+    @staticmethod
+    def _format_stats(stats: Stats) -> str:
+        return f"{stats.hp}/{stats.attack}/{stats.speed}"
