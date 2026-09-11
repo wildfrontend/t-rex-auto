@@ -4099,3 +4099,46 @@ def test_watchdog_keeps_the_shorter_budget_for_hunt_side_waits() -> None:
     assert fired_at is not None
     # 120s budget then a 90s timeout; must not have waited for the hatch one.
     assert fired_at < 420.0
+
+
+def test_watchdog_does_not_restart_when_the_game_refuses_the_hunt() -> None:
+    """"Too strong" and "none available" are replies, not deadlocks.
+
+    s9 restarted twice in four minutes while every dinosaur was on cooldown,
+    interrupting live work to fix something a restart cannot change.
+    """
+
+    for refusal in ("target_too_strong", "no_available_dinosaurs"):
+        restart = _StubRestart()
+        now = [0.0]
+        watchdog = _watchdog_with_clock(restart, now)
+        refused = [Detection(type=refusal, x=628, y=1409, confidence=0.99)]
+
+        for _ in range(300):  # 600s, far past budget + timeout
+            now[0] += 2.0
+            assert watchdog.observe(refused, None) is False
+
+        assert restart.restarts == [], refusal
+
+
+def test_watchdog_still_fires_once_the_refusals_stop() -> None:
+    """A reset is not immunity: silence after the reply still ages out."""
+
+    restart = _StubRestart()
+    now = [0.0]
+    watchdog = _watchdog_with_clock(restart, now)
+    refused = [Detection(type="target_too_strong", x=628, y=1409, confidence=0.99)]
+    silent = [Detection(type="dinosaur", x=100, y=100, confidence=0.9)]
+
+    for _ in range(10):
+        now[0] += 2.0
+        watchdog.observe(refused, None)
+
+    fired = False
+    for _ in range(300):
+        now[0] += 2.0
+        if watchdog.observe(silent, None):
+            fired = True
+            break
+
+    assert fired, "a real stall after a refusal must still be rescued"

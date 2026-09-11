@@ -156,6 +156,12 @@ class HuntProgressWatchdog:
     map always shows dinosaurs, so "a dinosaur is visible" stayed true through
     fourteen minutes of zero hunts, and a stuck ``startup_*`` phantom held the
     suspend list open for the entire deadlock it was causing.
+
+    The one exception is the game refusing a completed attempt - see
+    ``_answered_wait``. That is a reply, not a screen state, and it proves the
+    whole loop works; a refusal cannot be cleared by restarting the app.
+    Everything else only freezes the timer, so a wait that never ends still
+    ages out.
     """
 
     _EXPECTED_WAIT_TYPES = frozenset(
@@ -217,10 +223,23 @@ class HuntProgressWatchdog:
 
         self.reset()
 
-    def _suspend_reason(self, observed_types: set[str]) -> str | None:
+    def _answered_wait(self, observed_types: set[str]) -> str | None:
+        """The game answering "not now" - proof the bot is not stuck at all.
+
+        These are replies to an action the bot completed: the prey is too
+        strong, or every dinosaur is still on cooldown. Reaching one means
+        capture, detection, tapping and the game's own response all work, so
+        the timer restarts rather than merely freezing. Restarting the app
+        cannot shorten a cooldown or weaken a target; s9 restarted twice in
+        four minutes against exactly this, interrupting live work to fix
+        nothing. A genuine deadlock shows none of these types, so the
+        watchdog still fires there.
+        """
+
         matched = observed_types & self._EXPECTED_WAIT_TYPES
-        if matched:
-            return ", ".join(sorted(matched))
+        return ", ".join(sorted(matched)) if matched else None
+
+    def _suspend_reason(self, observed_types: set[str]) -> str | None:
         matched = observed_types & self._SUSPENDED_TYPES
         if matched:
             return ", ".join(sorted(matched))
@@ -267,6 +286,17 @@ class HuntProgressWatchdog:
         visible_types = {item.type for item in detections}
         target_type = target.type if target is not None else None
         observed_types = visible_types | ({target_type} if target_type else set())
+
+        answered = self._answered_wait(observed_types)
+        if answered is not None:
+            if self._stalled_since is not None:
+                self.logger.info(
+                    "Recovery | game answered the hunt attempt; stall timer"
+                    " reset | reason=%s",
+                    answered,
+                )
+            self.reset()
+            return False
 
         reason = self._suspend_reason(observed_types)
         if reason is not None:
