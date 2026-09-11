@@ -76,6 +76,10 @@ LAUNCHER
 chmod +x "${package_root}/start-dashboard.command"
 
 find "${package_root}" -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
+# 一個 venv 內部記的是絕對路徑,複製到新版資料夾就失效:python 還在,但
+# cv2 匯入失敗、連 pip 都不見了,啟動器又因為 .venv 存在而跳過重建。
+# 一律移除,讓啟動器照它原本的設計去偵測並重新安裝。
+find "${package_root}" -name ".venv" -type d -prune -exec rm -rf {} + 2>/dev/null || true
 find "${package_root}" -name ".DS_Store" -delete 2>/dev/null || true
 
 if command -v zip >/dev/null 2>&1; then
