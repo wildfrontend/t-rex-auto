@@ -340,9 +340,16 @@ def _create_hatch_engine(
 
     Everything platform-shaped (ADB, capture, modes, black-screen recovery,
     event log, stall snapshots) is identical to hunt; only the detector
-    manifest, the planner, and the verification vocabulary change. The hunt
-    progress watchdog stays out: it counts hunts, and a hatch session would
-    look permanently stalled to it.
+    manifest, the planner, and the verification vocabulary change.
+
+    The hunt progress watchdog follows ``hunt_during_cooldown``. A pure hatch
+    session must not have it - it counts confirmed hunts, and a session that
+    never hunts would look permanently stalled and restart on a timer. But the
+    combined modes do hunt, and without the watchdog they have no backstop at
+    all: s9 met an undetected "max population" modal that swallowed the back
+    key, exhausted the hatch recovery ladder, fell through to hunting, and sat
+    blind for seven hours over 1078 stall snapshots with nothing left to rescue
+    it. That backstop is what the blind-stall release was written to rely on.
     """
 
     logger = configure_logging(
@@ -686,6 +693,20 @@ def _create_hatch_engine(
             cooldown_seconds=config.recovery.restart_cooldown_seconds,
             launch_wait_seconds=config.recovery.launch_wait_seconds,
         )
+    # Only the modes that actually hunt get the watchdog; see the note in this
+    # function's docstring for why a pure hatch session must not have it.
+    hunt_progress_recovery = (
+        HuntProgressWatchdog(
+            runtime_recovery,
+            logger,
+            timeout_seconds=config.recovery.no_hunt_progress_timeout_seconds,
+            suspend_budget_seconds=(
+                config.recovery.hunt_progress_suspend_budget_seconds
+            ),
+        )
+        if runtime_recovery is not None and hunt_during_cooldown
+        else None
+    )
     event_log: EventLog = (
         JsonlEventLog(
             config.logs_dir,
@@ -744,7 +765,7 @@ def _create_hatch_engine(
         # must not leak into this feature or --max-cycles can never stop it.
         cycle_complete_targets=defaults.DEFAULT_CYCLE_COMPLETE_TARGETS,
         runtime_recovery=runtime_recovery,
-        hunt_progress_recovery=None,
+        hunt_progress_recovery=hunt_progress_recovery,
         stall_snapshots=stall_snapshots,
         dinosaur_failure_snapshots=dinosaur_failure_snapshots,
         event_log=event_log,

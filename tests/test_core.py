@@ -54,7 +54,11 @@ from dino_bot.models import (
 )
 from dino_bot.modes import DebugMode, RuntimeMode, TrainingMode
 from dino_bot.planning import HuntPlanner, TargetPlanner
-from dino_bot.recovery import AdbAppRestarter, BlackScreenRecovery
+from dino_bot.recovery import (
+    AdbAppRestarter,
+    BlackScreenRecovery,
+    HuntProgressWatchdog,
+)
 from dino_bot.stalls import (
     HUD_ZOOM,
     CapacitySnapshotWriter,
@@ -3965,3 +3969,53 @@ def test_screencap_reports_transport_failure_separately_from_bad_image():
     with pytest.raises(CaptureError) as raised:
         capture.capture()
     assert not isinstance(raised.value, AdbCaptureError)
+
+
+def _hatch_engine_watchdog(tmp_path: Path, feature: str):
+    """Build one hatch-family engine and report the watchdog it was wired with.
+
+    Everything that needs a device is stubbed; the wiring decision under test
+    happens before any of it is used. ``configure_logging`` is stubbed too - it
+    detaches the shared logger from propagation, which would leave every later
+    test in the session unable to capture a log record.
+    """
+
+    config = AppConfig(root=tmp_path)
+    captured: dict[str, object] = {}
+    real_context = application_module.BotContext
+
+    def capture_context(*args, **kwargs):
+        captured["hunt_progress_recovery"] = kwargs.get("hunt_progress_recovery")
+        return real_context(*args, **kwargs)
+
+    with patch.object(application_module, "BotContext", capture_context), \
+            patch.object(
+                application_module,
+                "configure_logging",
+                return_value=logging.getLogger("dino_bot"),
+            ), \
+            patch.object(application_module, "AdbClient"), \
+            patch.object(application_module, "AdbScreencapCapture"), \
+            patch.object(application_module, "MssEmulatorCapture"), \
+            patch.object(application_module, "AdbActionDriver"):
+        application_module.create_engine(config, feature=feature)
+
+    return captured["hunt_progress_recovery"]
+
+
+def test_hatch_hunt_gets_the_hunt_progress_watchdog(tmp_path: Path) -> None:
+    """The combined modes hunt, so the stall backstop has to be present.
+
+    Without it an undetected modal that swallows the back key leaves the bot
+    blind with nothing to rescue it - s9 sat on one for seven hours.
+    """
+
+    for feature in ("hatch-hunt", "custom-workflow"):
+        watchdog = _hatch_engine_watchdog(tmp_path, feature)
+        assert isinstance(watchdog, HuntProgressWatchdog), feature
+
+
+def test_pure_hatch_keeps_the_hunt_progress_watchdog_off(tmp_path: Path) -> None:
+    """A session that never hunts would look permanently stalled to it."""
+
+    assert _hatch_engine_watchdog(tmp_path, "hatch-full") is None
