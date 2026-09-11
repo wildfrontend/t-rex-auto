@@ -860,10 +860,10 @@ class VerifyState:
                     on_action_success(target_type)
             _record_action_success(context, target_type)
             if context.hunt_progress_recovery is not None:
-                # Not progress - only a finished hunt is that - but proof the
-                # screen is moving, which refreshes the suspend budget so a
-                # run alternating between exempt and ordinary screens cannot
-                # exhaust it while acting successfully throughout.
+                # A tap whose expected screen arrived proves the bot can still
+                # drive the game, which is the one thing this watchdog exists
+                # to check. Stage timeouts own the slower "acting but never
+                # progressing" fault; restarting the app cannot repair that.
                 on_verified_action = getattr(
                     context.hunt_progress_recovery, "on_verified_action", None
                 )

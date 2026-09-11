@@ -224,24 +224,32 @@ class HuntProgressWatchdog:
         self.reset()
 
     def on_verified_action(self) -> None:
-        """Refresh the suspend budget after any action that verified.
+        """Treat any action that verified as proof the bot is not stuck.
 
-        The budget exists to stop one unchanging exempt screen muting the
-        watchdog forever, so it may only be spent while nothing is happening.
-        It was being measured from the first exempt frame and cleared only on
-        a frame with no exempt type at all - so a run that alternates between
-        hatch and hunt screens never cleared it: s9 reached "budget exhausted
-        after 513s" against a 420s ceiling while tapping successfully
-        throughout, and the exemption then stopped protecting anything.
+        This watchdog is the last resort, not the thing that paces a run. Its
+        one job is to rescue a bot that can no longer drive the game at all,
+        and a tap whose expected next screen actually arrived is direct
+        evidence of the opposite: capture, detection, the tap and the game's
+        response are all working.
 
-        A verified action is proof the screen is still moving, which is
-        exactly the condition the budget is not meant to penalise. The stall
-        timer itself is untouched: only a completed hunt or an answered
-        refusal clears that, so this cannot mask a workflow that acts forever
-        without finishing anything.
+        It used to refresh only the suspend budget, on the theory that a
+        workflow acting forever without finishing anything should still be
+        caught. Measurement killed that theory. A growth screening pass
+        legitimately runs minutes of verified taps while completing no hunt -
+        s9 restarted six times in 80 minutes, one of them two seconds after
+        "completed growth screening 2", 280s into a pass where every step
+        succeeded. Restarting there destroys real work to fix nothing.
+
+        A workflow that acts but never progresses is a logic fault, and the
+        stage timeouts that own that case (`recovery_timeout_seconds`, the
+        handoff deadline) already handle it far better than killing the app:
+        they re-centre, retry, or fuse one stage off while the rest keeps
+        running. Restarting the game cannot repair a logic fault anyway. So
+        the deadlock this watchdog still catches is the one where actions
+        stop verifying - and there, nothing calls this at all.
         """
 
-        self._suspended_since = None
+        self.reset()
 
     def _answered_wait(self, observed_types: set[str]) -> str | None:
         """The game answering "not now" - proof the bot is not stuck at all.

@@ -4187,3 +4187,52 @@ def test_a_screen_that_stops_moving_still_exhausts_the_budget() -> None:
             break
 
     assert fired, "a screen that stops responding must still be rescued"
+
+
+def test_a_long_screening_pass_of_verified_taps_is_never_restarted() -> None:
+    """Minutes of verified taps completing no hunt is work, not a stall.
+
+    s9 was restarted 280s into a growth screening pass, two seconds after
+    logging "completed growth screening 2", with every step of the pass
+    verifying. That destroys real work to fix nothing.
+    """
+
+    restart = _StubRestart()
+    now = [0.0]
+    watchdog = _watchdog_with_clock(restart, now)
+    # A real pass moves between nest, auto-place and the home map, so some
+    # frames carry no exempt type at all - which is what made the stall timer
+    # rather than the budget the thing that fired.
+    screening = [Detection(type="hatch_nest_title", x=450, y=200, confidence=1.0)]
+    between = [Detection(type="dinosaur", x=100, y=100, confidence=0.9)]
+
+    for i in range(300):  # 600s, far longer than any measured pass
+        now[0] += 2.0
+        frame = between if i % 5 == 0 else screening
+        assert watchdog.observe(frame, None) is False, f"restarted at {now[0]:.0f}s"
+        watchdog.on_verified_action()
+
+    assert restart.restarts == []
+
+
+def test_actions_that_stop_verifying_are_still_rescued() -> None:
+    """The backstop: a bot that can no longer drive the game gets restarted."""
+
+    restart = _StubRestart()
+    now = [0.0]
+    watchdog = _watchdog_with_clock(restart, now)
+    screen = [Detection(type="dinosaur", x=100, y=100, confidence=0.9)]
+
+    for _ in range(5):
+        now[0] += 2.0
+        watchdog.observe(screen, None)
+        watchdog.on_verified_action()
+
+    fired = False
+    for _ in range(200):  # taps stop verifying from here
+        now[0] += 2.0
+        if watchdog.observe(screen, None):
+            fired = True
+            break
+
+    assert fired, "a bot that cannot act any more must still be rescued"
