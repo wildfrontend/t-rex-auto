@@ -223,6 +223,26 @@ class HuntProgressWatchdog:
 
         self.reset()
 
+    def on_verified_action(self) -> None:
+        """Refresh the suspend budget after any action that verified.
+
+        The budget exists to stop one unchanging exempt screen muting the
+        watchdog forever, so it may only be spent while nothing is happening.
+        It was being measured from the first exempt frame and cleared only on
+        a frame with no exempt type at all - so a run that alternates between
+        hatch and hunt screens never cleared it: s9 reached "budget exhausted
+        after 513s" against a 420s ceiling while tapping successfully
+        throughout, and the exemption then stopped protecting anything.
+
+        A verified action is proof the screen is still moving, which is
+        exactly the condition the budget is not meant to penalise. The stall
+        timer itself is untouched: only a completed hunt or an answered
+        refusal clears that, so this cannot mask a workflow that acts forever
+        without finishing anything.
+        """
+
+        self._suspended_since = None
+
     def _answered_wait(self, observed_types: set[str]) -> str | None:
         """The game answering "not now" - proof the bot is not stuck at all.
 

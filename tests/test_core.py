@@ -4142,3 +4142,48 @@ def test_watchdog_still_fires_once_the_refusals_stop() -> None:
             break
 
     assert fired, "a real stall after a refusal must still be rescued"
+
+
+def test_verified_actions_keep_the_suspend_budget_from_expiring() -> None:
+    """Alternating screens must not exhaust the budget while work happens.
+
+    s9 hit "budget exhausted after 513s" against a 420s ceiling while tapping
+    successfully throughout: the budget ran from the first exempt frame and
+    cleared only on a frame with no exempt type at all, which a run that
+    alternates between hatch and hunt screens never produces.
+    """
+
+    restart = _StubRestart()
+    now = [0.0]
+    watchdog = _watchdog_with_clock(restart, now)
+    hatch_screen = [Detection(type="hatch_nest_title", x=450, y=200, confidence=1.0)]
+
+    for _ in range(400):  # 800s, well past the 420s hatch ceiling
+        now[0] += 2.0
+        assert watchdog.observe(hatch_screen, None) is False
+        watchdog.on_verified_action()
+
+    assert restart.restarts == []
+
+
+def test_a_screen_that_stops_moving_still_exhausts_the_budget() -> None:
+    """Refreshing on action is not immunity: a frozen screen still ages out."""
+
+    restart = _StubRestart()
+    now = [0.0]
+    watchdog = _watchdog_with_clock(restart, now)
+    hatch_screen = [Detection(type="hatch_nest_title", x=450, y=200, confidence=1.0)]
+
+    for _ in range(10):
+        now[0] += 2.0
+        watchdog.observe(hatch_screen, None)
+        watchdog.on_verified_action()
+
+    fired = False
+    for _ in range(400):  # nothing verifies any more
+        now[0] += 2.0
+        if watchdog.observe(hatch_screen, None):
+            fired = True
+            break
+
+    assert fired, "a screen that stops responding must still be rescued"

@@ -1022,3 +1022,71 @@ def test_custom_camera_refresh_failure_to_read_flows_into_periodic_hunting_retry
     assert full.capacity_retry_pending and not full.is_hatch_blocked()
     assert full._capacity_checked is False
     assert not full.begin_hunt_map_capacity_refresh()
+
+
+def test_settled_home_anchor_does_not_tap_the_control_that_leaves_home() -> None:
+    """Past the settle wait, a visible home anchor must not request a recentre.
+
+    Exit and Forest sit on the same corner and each reveals the other, so
+    tapping Forest while the hatch home is already on screen walks straight
+    back onto the hunt map. s9 spent 21 taps and 16% of its wall clock going
+    round that loop: exit, wait six frames, tap Forest, land on the map, exit
+    again. The anchor being visible is proof the map already arrived, which
+    makes a recentre the one action guaranteed to undo it.
+
+    The home is deliberately not yet centred, which is the state the loop ran
+    in - a centred one hands over and never reaches this branch.
+    """
+
+    now = [0.0]
+    combined, hatch_planner, hunt_planner = planner()
+    combined.clock = lambda: now[0]
+    assert combined.choose(frame(), []) is None
+    hatch_planner.cooldown_ms = 20_000
+    hunt_planner.next_target = target("forest_recenter_button", 841, 1296)
+    assert combined.choose(frame(), [detection("map_exit_nest_button", 840, 1295)])
+
+    home_view = [
+        detection("hatch_home_anchor", 450, 800),
+        detection("forest_recenter_button", 841, 1296),
+    ]
+    recentres: list[str] = []
+    hunt_planner.request_external_recenter = lambda reason: recentres.append(reason)
+    hunt_planner.next_target = target("forest_recenter_button", 841, 1296)
+
+    # No pile means the recovery handover declines, so the handoff stays put
+    # and keeps re-deciding - exactly the loop's real conditions.
+    with _home_proof(bright=True, pile=False, offset=None):
+        for _ in range(MAX_HOME_ANCHOR_SETTLE_FRAMES + 6):
+            chosen = combined.choose(frame(), home_view)
+            assert chosen is None or chosen.type != "forest_recenter_button"
+
+    assert recentres == []
+
+
+def test_a_map_with_no_home_anchor_still_recentres() -> None:
+    """The guard is about the anchor, not about disabling the recentre.
+
+    A handoff that really is stranded on the hunt map has no hatch anchor in
+    frame, and still needs the recentre round trip to get home.
+    """
+
+    now = [0.0]
+    combined, hatch_planner, hunt_planner = planner()
+    combined.clock = lambda: now[0]
+    assert combined.choose(frame(), []) is None
+    hatch_planner.cooldown_ms = 20_000
+    hunt_planner.next_target = target("forest_recenter_button", 841, 1296)
+    assert combined.choose(frame(), [detection("map_exit_nest_button", 840, 1295)])
+
+    recentres: list[str] = []
+    hunt_planner.request_external_recenter = lambda reason: recentres.append(reason)
+    hunt_planner.next_target = target("forest_recenter_button", 841, 1296)
+    map_only = [
+        detection("dinosaur", 300, 700),
+        detection("forest_recenter_button", 841, 1296),
+    ]
+
+    with _home_proof(bright=False, pile=False, offset=None):
+        combined.choose(frame(), map_only)
+    assert recentres, "a stranded map must still be able to recentre"

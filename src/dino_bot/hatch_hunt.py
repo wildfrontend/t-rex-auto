@@ -799,14 +799,32 @@ class HatchHuntPlanner:
             MAX_HOME_ANCHOR_SETTLE_FRAMES
         ):
             return None
-        if map_evidence and not hunt_controls:
+        # Past the settle wait the anchor is still the strongest evidence in
+        # frame: the map arrived and merely will not prove centred. Exit and
+        # Forest share the map corner and each reveals the other, so a
+        # recentre here taps the one control that walks back onto the hunt
+        # map - s9 spent 21 taps and 16% of its wall clock on exit, wait six
+        # frames, tap Forest, land on the map, exit again. Let the hunt
+        # planner act on anything else it can see instead of arming the round
+        # trip that undoes the arrival.
+        if map_evidence and not hunt_controls and not home_anchor_visible:
             recenter_reason = (
                 "capacity camera refresh"
                 if self._handoff_reason == "capacity camera refresh"
                 else "hatch cooldown handoff"
             )
             self.hunt.request_external_recenter(recenter_reason)
-        return self._choose_owned(self.hunt, frame, detections)
+        target = self._choose_owned(self.hunt, frame, detections)
+        if (
+            target is not None
+            and home_anchor_visible
+            and target.type == self.hunt.forest_recenter_type
+        ):
+            # The planner may still be carrying the recentre from an earlier
+            # frame. Refusing it keeps the loop broken; recovery and the
+            # centred-home proof both run above and own the way out.
+            return None
+        return target
 
     def _offer_home_to_recovery(
         self,

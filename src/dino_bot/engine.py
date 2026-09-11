@@ -859,6 +859,16 @@ class VerifyState:
                 if callable(on_action_success):
                     on_action_success(target_type)
             _record_action_success(context, target_type)
+            if context.hunt_progress_recovery is not None:
+                # Not progress - only a finished hunt is that - but proof the
+                # screen is moving, which refreshes the suspend budget so a
+                # run alternating between exempt and ordinary screens cannot
+                # exhaust it while acting successfully throughout.
+                on_verified_action = getattr(
+                    context.hunt_progress_recovery, "on_verified_action", None
+                )
+                if callable(on_verified_action):
+                    on_verified_action()
             # A confirmed hunt is the only thing the stall watchdog accepts as
             # progress; everything else on screen can stay unchanged for a
             # quarter of an hour while the bot produces nothing. It also ends
