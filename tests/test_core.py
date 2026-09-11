@@ -4019,3 +4019,83 @@ def test_pure_hatch_keeps_the_hunt_progress_watchdog_off(tmp_path: Path) -> None
     """A session that never hunts would look permanently stalled to it."""
 
     assert _hatch_engine_watchdog(tmp_path, "hatch-full") is None
+
+
+class _StubRestart:
+    """Stands in for BlackScreenRecovery, recording restart requests."""
+
+    def __init__(self) -> None:
+        self.restarts: list[str] = []
+
+    def request_restart(self, reason: str, *, reason_key: str) -> bool:
+        self.restarts.append(reason)
+        return True
+
+
+def _watchdog_with_clock(restart: _StubRestart, now: list[float]):
+    return HuntProgressWatchdog(
+        restart,
+        logging.getLogger("dino_bot.test"),
+        timeout_seconds=90.0,
+        suspend_budget_seconds=120.0,
+        hatch_suspend_budget_seconds=420.0,
+        clock=lambda: now[0],
+    )
+
+
+def test_watchdog_lets_a_hatch_screening_pass_run_to_completion() -> None:
+    """A screening pass hunts nothing for minutes and is not a stall.
+
+    s9 restarted five times in ten minutes, each one a second after a verified
+    tap inside auto-place, because no confirmed hunt can happen there.
+    """
+
+    restart = _StubRestart()
+    now = [0.0]
+    watchdog = _watchdog_with_clock(restart, now)
+    screening = [Detection(type="hatch_place_sort_hp", x=451, y=771, confidence=1.0)]
+
+    for _ in range(78):  # 155s at one observation every 2s, the measured pass
+        now[0] += 2.0
+        assert watchdog.observe(screening, None) is False
+
+    assert restart.restarts == []
+
+
+def test_watchdog_still_fires_when_a_hatch_screen_never_leaves() -> None:
+    """The budget ceiling is what stops the exemption becoming a deadlock."""
+
+    restart = _StubRestart()
+    now = [0.0]
+    watchdog = _watchdog_with_clock(restart, now)
+    stuck = [Detection(type="hatch_button", x=450, y=800, confidence=1.0)]
+
+    fired = False
+    for _ in range(600):  # well past budget + timeout
+        now[0] += 2.0
+        if watchdog.observe(stuck, None):
+            fired = True
+            break
+
+    assert fired, "a hatch screen that never advances must still be rescued"
+    assert restart.restarts
+
+
+def test_watchdog_keeps_the_shorter_budget_for_hunt_side_waits() -> None:
+    """Only hatch gets the wider ceiling; hunt-side waits are short."""
+
+    restart = _StubRestart()
+    now = [0.0]
+    watchdog = _watchdog_with_clock(restart, now)
+    waiting = [Detection(type="mail_close_button", x=100, y=100, confidence=1.0)]
+
+    fired_at: float | None = None
+    for _ in range(600):
+        now[0] += 2.0
+        if watchdog.observe(waiting, None):
+            fired_at = now[0]
+            break
+
+    assert fired_at is not None
+    # 120s budget then a 90s timeout; must not have waited for the hatch one.
+    assert fired_at < 420.0

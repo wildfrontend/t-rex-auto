@@ -166,7 +166,13 @@ class HuntProgressWatchdog:
             "hunt_team_return_button",
         }
     )
-    _SUSPENDED_PREFIXES = ("mail_", "startup_")
+    # ``hatch_`` joins these because the combined modes spend legitimate
+    # minutes inside screening and placement, where no hunt can complete by
+    # definition: s9 restarted five times in ten minutes mid-auto-place, each
+    # time one second after a verified tap. The budget ceiling below is what
+    # keeps this from becoming the ``startup_`` phantom the docstring warns
+    # about - an incubator that never leaves the screen still ages out.
+    _SUSPENDED_PREFIXES = ("mail_", "startup_", "hatch_")
     _SUSPENDED_TYPES = frozenset(
         {
             "duplicate_login_close_button",
@@ -182,6 +188,7 @@ class HuntProgressWatchdog:
         *,
         timeout_seconds: float = 180.0,
         suspend_budget_seconds: float = 120.0,
+        hatch_suspend_budget_seconds: float = 420.0,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.runtime_recovery = runtime_recovery
@@ -191,6 +198,10 @@ class HuntProgressWatchdog:
         # before the timer resumes. Without a ceiling, an exempt type that
         # never goes away disables recovery outright.
         self.suspend_budget_seconds = max(0.0, suspend_budget_seconds)
+        # Wide enough for a screening pass plus the navigation either side,
+        # still far short of the seven-hour blind run this watchdog exists to
+        # end.
+        self.hatch_suspend_budget_seconds = max(0.0, hatch_suspend_budget_seconds)
         self.clock = clock
         self._stalled_since: float | None = None
         self._suspended_since: float | None = None
@@ -262,7 +273,18 @@ class HuntProgressWatchdog:
             if self._suspended_since is None:
                 self._suspended_since = now
             suspended_seconds = now - self._suspended_since
-            if suspended_seconds < self.suspend_budget_seconds:
+            # A hatch phase is long by nature - one measured screening pass ran
+            # 155s - while the hunt-side waits this budget was written for stay
+            # short. Giving hatch its own ceiling keeps that original limit
+            # honest instead of loosening it for everything.
+            budget = (
+                self.hatch_suspend_budget_seconds
+                if any(
+                    observed.startswith("hatch_") for observed in observed_types
+                )
+                else self.suspend_budget_seconds
+            )
+            if suspended_seconds < budget:
                 # Genuine waits are short. Keep the stall timer frozen rather
                 # than reset, so a wait that never ends still ages out.
                 return False
