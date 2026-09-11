@@ -1090,3 +1090,120 @@ def test_a_map_with_no_home_anchor_still_recentres() -> None:
     with _home_proof(bright=False, pile=False, offset=None):
         combined.choose(frame(), map_only)
     assert recentres, "a stranded map must still be able to recentre"
+
+
+def _boost_capable(combined, full, *, delay_ms: int = 0) -> list[bool]:
+    """Give the stub hatch side a boost inventory the planner can drive."""
+
+    started: list[bool] = []
+    full.boost_ready_delay_ms = lambda: delay_ms
+
+    def begin(keep_incubator_open: bool = False) -> bool:
+        started.append(keep_incubator_open)
+        return True
+
+    full.begin_boost_visit = begin
+    # The errand branch below the boost one probes this; the real planner has
+    # it and the stub does not.
+    if not hasattr(full, "begin_interim_collection"):
+        full.begin_interim_collection = lambda: False
+    return started
+
+
+def test_a_long_cooldown_makes_a_dedicated_boost_trip() -> None:
+    """Past 30 minutes a ticket is worth its own trip home.
+
+    The only caller used to be "an incubator is already open for some other
+    reason", so a long cooldown could run its whole length without a boost
+    ever being checked.
+    """
+
+    now = [0.0]
+    combined, full, hunt = planner(cooldown_ms=3_600_000)
+    combined.clock = lambda: now[0]
+    started = _boost_capable(combined, full)
+    hunt.next_target = target("dinosaur", 300, 700)
+
+    combined.choose(frame(), [])          # settle into hunt
+    assert combined._mode == "hunt"
+    hunt.delay_ms = 30_000                # hunting is idle
+    combined.choose(frame(), [])
+
+    assert started == [False], "a dedicated visit navigates home itself"
+    assert combined._handoff_reason == "boost"
+
+
+def test_a_short_cooldown_makes_no_dedicated_boost_trip() -> None:
+    """Under the threshold the existing in-passing check is enough."""
+
+    now = [0.0]
+    combined, full, hunt = planner(cooldown_ms=600_000)  # 10 minutes
+    combined.clock = lambda: now[0]
+    started = _boost_capable(combined, full)
+    hunt.next_target = target("dinosaur", 300, 700)
+
+    combined.choose(frame(), [])
+    hunt.delay_ms = 30_000
+    combined.choose(frame(), [])
+
+    assert started == []
+    assert combined._handoff_reason != "boost"
+
+
+def test_a_dedicated_boost_trip_happens_once_per_long_cooldown() -> None:
+    """One trip per cooldown, however many idle windows it contains.
+
+    A visit that finds the button unavailable would otherwise retry on every
+    idle window, trading the saved cooldown for constant switching.
+    """
+
+    now = [0.0]
+    combined, full, hunt = planner(cooldown_ms=3_600_000)
+    combined.clock = lambda: now[0]
+    started = _boost_capable(combined, full)
+    hunt.next_target = target("dinosaur", 300, 700)
+
+    combined.choose(frame(), [])
+    hunt.delay_ms = 30_000
+
+    for _ in range(40):  # ~20 minutes of idle windows
+        now[0] += 30.0
+        combined._mode = "hunt"
+        combined._handoff_reason = ""
+        combined.choose(frame(), [])
+
+    assert len(started) == 1, f"expected one trip, made {len(started)}"
+
+
+def test_live_hunting_is_never_interrupted_for_a_boost() -> None:
+    """A hunt in progress is worth more than a ticket."""
+
+    now = [0.0]
+    combined, full, hunt = planner(cooldown_ms=3_600_000)
+    combined.clock = lambda: now[0]
+    started = _boost_capable(combined, full)
+    hunt.next_target = target("dinosaur", 300, 700)
+
+    combined.choose(frame(), [])
+    hunt.delay_ms = 0  # hunting is ready right now, not idle
+    chosen = combined.choose(frame(), [])
+
+    assert started == []
+    assert chosen is not None and chosen.type == "dinosaur"
+
+
+def test_a_blocked_hatch_side_makes_no_boost_trip() -> None:
+    """Fused hatch stages mean the visit could not navigate home safely."""
+
+    now = [0.0]
+    combined, full, hunt = planner(cooldown_ms=3_600_000)
+    combined.clock = lambda: now[0]
+    started = _boost_capable(combined, full)
+    full.blocked = True
+    hunt.next_target = target("dinosaur", 300, 700)
+
+    combined.choose(frame(), [])
+    hunt.delay_ms = 30_000
+    combined.choose(frame(), [])
+
+    assert started == []

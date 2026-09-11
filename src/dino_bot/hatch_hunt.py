@@ -128,6 +128,14 @@ class HatchHuntPlanner:
         self.errand_margin_ms = 90_000
         self.errand_interval_seconds = 180.0
         self._next_errand_at = 0.0
+        # 冷卻剩餘超過這個門檻才值得為加速專程跑一趟。30 分鐘是下限而非目標:
+        # 更短的冷卻交給既有的順路檢查,那不必離開狩獵。
+        self.boost_visit_min_remaining_ms = 1_800_000
+        # 一次長冷卻只跑一趟。券本身有 30 分鐘的使用間隔,真正需要防的是
+        # 造訪沒用成券(按鈕不可用、加速已生效)時每個閒置窗口都重試一次,
+        # 那會把省下來的切換成本又賠回去。
+        self.boost_visit_interval_seconds = 1_800.0
+        self._next_boost_visit_at = 0.0
 
     @property
     def completion_type(self) -> str:
@@ -284,6 +292,32 @@ class HatchHuntPlanner:
                 )
                 return self._choose_handoff(frame, detections)
             hunt_idle = self.hunt.next_ready_delay_ms()
+            # A boost only ever got checked when something else had already
+            # opened the incubator, so a long cooldown could run its whole
+            # length without one. Past this threshold the ticket is worth a
+            # trip of its own: it shortens the very wait being served, and the
+            # visit navigates home and back by itself.
+            #
+            # Deliberately behind the same idle gate as the errand. A boost
+            # must never interrupt live hunting - it is worth less than a hunt
+            # in progress - so this only spends a window the hunt side has
+            # already declared empty.
+            if (
+                hunt_idle >= self.errand_min_idle_ms
+                and remaining >= self.boost_visit_min_remaining_ms
+                and self.clock() >= self._next_boost_visit_at
+                and self._boost_ready()
+                and self.hatch.begin_boost_visit()
+            ):
+                self._next_boost_visit_at = (
+                    self.clock() + self.boost_visit_interval_seconds
+                )
+                self._enter_handoff("boost")
+                self.logger.info(
+                    "Hatch+Hunt | egg cooldown %.0fs | dedicated cooldown boost visit",
+                    remaining / 1000,
+                )
+                return self._choose_handoff(frame, detections)
             if (
                 hunt_idle >= self.errand_min_idle_ms
                 and remaining > self.handoff_ms + self.errand_margin_ms
@@ -323,6 +357,24 @@ class HatchHuntPlanner:
     def _hatch_cooldown_delay_ms(self) -> int:
         method = getattr(self.hatch, "hunt_cooldown_delay_ms", None)
         return method() if callable(method) else self.hatch.next_ready_delay_ms()
+
+    def _boost_ready(self) -> bool:
+        """Whether a ticket is due right now.
+
+        Read through ``getattr`` because the lightweight hatch planners have
+        no inventory at all; those simply never make the trip. A blocked
+        hatch side is excluded too - its fuses mean the visit could not
+        navigate home safely, and a ticket is not worth risking that.
+        """
+
+        if self._hatch_is_blocked():
+            return False
+        ready = getattr(self.hatch, "boost_ready_delay_ms", None)
+        if not callable(ready):
+            return False
+        if not callable(getattr(self.hatch, "begin_boost_visit", None)):
+            return False
+        return ready() == 0
 
     def planning_detection_types(self) -> frozenset[str] | None:
         if self._mode == "hunt":
