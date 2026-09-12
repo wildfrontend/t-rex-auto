@@ -245,6 +245,32 @@ class HatchHuntPlanner:
         if blocked:
             if not self._continue_hunting_when_blocked():
                 return None
+            if self._mode == "hunt":
+                hunt_idle = self.hunt.next_ready_delay_ms()
+                begin_collection_recovery = getattr(
+                    self.hatch,
+                    "begin_blocked_collection_recovery",
+                    None,
+                )
+                if (
+                    hunt_idle >= self.errand_min_idle_ms
+                    and self.clock() >= self._next_errand_at
+                    and callable(begin_collection_recovery)
+                    and begin_collection_recovery()
+                ):
+                    # A successful collect-only round is allowed to clear only
+                    # the egg-pile calibration fuse. Other hatch safety fuses
+                    # refuse the method above and remain hunt-only.
+                    self._next_errand_at = (
+                        self.clock() + self.errand_interval_seconds
+                    )
+                    self._enter_handoff("blocked_collection")
+                    self.logger.warning(
+                        "Hatch+Hunt | hatch blocked and hunt idle %.0fs"
+                        " | attempting verified nest collection recovery",
+                        hunt_idle / 1000,
+                    )
+                    return self._choose_handoff(frame, detections)
             if self._mode != "hunt":
                 self._mode = "hunt"
                 self._centered_frames = 0
@@ -705,7 +731,7 @@ class HatchHuntPlanner:
             reason or "unknown",
             _describe_home_proof(frame, detections),
         )
-        if reason == "errand":
+        if reason in {"errand", "blocked_collection"}:
             abort = getattr(self.hatch, "abort_interim_collection", None)
             if callable(abort) and abort("centered home never confirmed"):
                 # 差事沒跑成,別讓下一輪空窗立刻再試一次同樣的路。

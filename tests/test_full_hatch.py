@@ -1681,6 +1681,78 @@ def test_interim_collection_pins_remaining_cooldown() -> None:
     assert planner.begin_interim_collection() is False
 
 
+def test_interim_collection_survives_off_center_home_recovery() -> None:
+    now = [1000.0]
+    planner = FullHatchPlanner(
+        DigitReader(GLYPHS),
+        egg_pile_point=(450, 1330),
+        clock=lambda: now[0],
+    )
+    planner._start_empty_rescan_wait()
+    remaining_ms = planner.hunt_cooldown_delay_ms()
+    assert planner.begin_interim_collection()
+
+    # The live S9 handoff reached home with the pile 147px low. Recovery
+    # centered it, but v0.0.80 reset the workflow and tapped the pile instead
+    # of continuing the collect-only errand.
+    planner._begin_home_recovery("hatch+hunt handoff found an off-centre home")
+    home = [detection(hatch.HOME_ANCHOR, 59, 561)]
+    assert planner.choose(frame(), home) is None
+    chosen = planner.choose(frame(), home)
+
+    assert chosen is not None and chosen.type == OPEN_NEST
+    assert planner._collect_only_after_empty
+    assert planner._observed_cooldown_until == now[0] + remaining_ms / 1000
+
+
+def test_verified_nest_collection_clears_only_egg_pile_lock() -> None:
+    planner = make_full_planner()
+    planner._egg_pile_blocked = True
+    planner._stage = "hatch_blocked"
+
+    assert planner.begin_blocked_collection_recovery()
+    assert not planner.is_hatch_blocked()
+    home = [detection(hatch.HOME_ANCHOR, 59, 561)]
+    chosen = planner.choose(frame(), home)
+    assert chosen is not None and chosen.type == OPEN_NEST
+    planner.on_action_success(chosen.type)
+
+    nest = [
+        detection(NEST_TITLE, 450, 260),
+        detection(nest_filter.TAG_HDR_ALL, 228, 168),
+    ]
+    chosen = planner.choose(
+        frame(),
+        nest + [detection(COLLECT_EGGS_BUTTON, 650, 1315)],
+    )
+    assert chosen is not None and chosen.type == COLLECT_EGGS_BUTTON
+    planner.on_action_success(chosen.type)
+    chosen = planner.choose(frame(), nest)
+    assert chosen is not None and chosen.type == NEST_MASK_CLOSE
+    planner.on_action_success(chosen.type)
+
+    # Closing My Nest and proving home is what clears the fuse. The next
+    # action is a fresh capacity preflight, never a blind egg-pile retry.
+    chosen = planner.choose(frame(), home)
+    assert not planner._egg_pile_blocked
+    assert not planner._blocked_collection_recovery
+    assert chosen is not None and chosen.type == PANEL_OPEN
+
+
+def test_abandoned_nest_collection_keeps_egg_pile_locked() -> None:
+    planner = make_full_planner()
+    planner._egg_pile_blocked = True
+    planner._stage = "hatch_blocked"
+    assert planner.begin_blocked_collection_recovery()
+
+    assert planner.abort_interim_collection("centered home never confirmed")
+
+    assert planner.is_hatch_blocked()
+    assert planner._egg_pile_blocked
+    assert not planner._blocked_collection_recovery
+    assert planner._stage == "hatch_blocked"
+
+
 def boost_ready_frame() -> Frame:
     """Home incubator frame whose boost bar shows the saturated ready state."""
 

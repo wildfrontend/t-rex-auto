@@ -2730,6 +2730,12 @@ class FullHatchPlanner:
         self._standalone_returning = False
         self._egg_pile_failures = 0
         self._egg_pile_blocked = False
+        # A combined Hatch+Hunt run may use one collect-only nest round to
+        # clear a roaming-dinosaur/detail obstruction that fused the pile.
+        # Keep the fuse physically set until that round is fully verified;
+        # ``is_hatch_blocked`` only lends control back to the hatch side while
+        # this strictly collect-only recovery is active.
+        self._blocked_collection_recovery = False
         # The first inert egg-pile tap can mean the cave reached its capacity,
         # not that the calibrated coordinate is wrong.  Recover home, run a
         # fresh two-frame capacity preflight, and only retry the pile after a
@@ -2775,18 +2781,13 @@ class FullHatchPlanner:
     def is_complete(self) -> bool:
         # A standalone/full-only run has no hunt owner to fall back to. Stop
         # safely after calibration is blocked instead of spinning forever.
-        return (
-            self._complete
-            or self._egg_pile_blocked
-            or self._screening_blocked
-            or self._capacity_blocked
-        )
+        return self._complete or self.is_hatch_blocked()
 
     def is_hatch_blocked(self) -> bool:
         """Whether calibration or a disabled safety stage blocks hatching."""
 
         return (
-            self._egg_pile_blocked
+            (self._egg_pile_blocked and not self._blocked_collection_recovery)
             or self._screening_blocked
             or self._capacity_blocked
         )
@@ -2995,8 +2996,38 @@ class FullHatchPlanner:
         self._enter_open_nest(collect_only=True)
         return True
 
+    def begin_blocked_collection_recovery(self) -> bool:
+        """Try a collect-only nest round before keeping the pile fused off.
+
+        A roaming dinosaur can intercept the calibrated egg-pile tap and open
+        its detail card.  Returning through My Nest is a named, verifiable
+        route that clears that foreground without granting another pile tap.
+        Only the egg-pile fuse is recoverable this way; screening, capacity
+        and population safety locks remain authoritative.
+        """
+
+        if (
+            not self._egg_pile_blocked
+            or self._blocked_collection_recovery
+            or self._screening_blocked
+            or self._capacity_blocked
+            or self.population_limit_reached
+            or not self._collect_enabled
+        ):
+            return False
+        self._blocked_collection_recovery = True
+        self._collect_before_hatch = False
+        self._observed_cooldown_until = None
+        self.logger.warning(
+            "Hatch calibration | egg pile blocked; starting verified nest"
+            " collection recovery"
+        )
+        self._enter_open_nest(collect_only=True)
+        self._no_target_since = None
+        return True
+
     def abort_interim_collection(self, reason: str) -> bool:
-        """Undo an errand that never reached the nest and resume the cooldown.
+        """Undo an errand that never reached the nest and restore its guard.
 
         `begin_interim_collection` clears the rescan wait so the nest round can
         run, which also makes `is_hunt_cooldown_active` false. A caller that
@@ -3012,6 +3043,18 @@ class FullHatchPlanner:
             "Hatch full | interim collection abandoned | %s",
             reason,
         )
+        if self._blocked_collection_recovery:
+            self._blocked_collection_recovery = False
+            self._collect_only_after_empty = False
+            self._stage = "hatch_blocked"
+            self._child = object()
+            self._empty_rescan_wait = False
+            self._no_target_since = None
+            self.logger.error(
+                "Hatch calibration | nest collection recovery abandoned"
+                " | keeping egg pile blocked"
+            )
+            return True
         self._start_empty_rescan_wait()
         return True
 
@@ -3038,6 +3081,7 @@ class FullHatchPlanner:
             self._boost_visit = None
         self._egg_pile_failures = 0
         self._egg_pile_blocked = False
+        self._blocked_collection_recovery = False
         self._egg_pile_capacity_check_pending = False
         self._hatch_capacity_check_pending = False
         self._egg_pile_capacity_rechecked = False
@@ -3316,6 +3360,7 @@ class FullHatchPlanner:
         """Trip a workflow fuse instead of allowing synthetic target reuse."""
 
         if target.type == OPEN_NEST:
+            self._blocked_collection_recovery = False
             self._screening_blocked = True
             self._stage = "screening_blocked"
             self._no_target_since = None
@@ -3707,6 +3752,7 @@ class FullHatchPlanner:
                 # recovery even though HatchHuntPlanner already has a safe
                 # blocked-hatch fallback.
                 self._egg_pile_blocked = True
+                self._blocked_collection_recovery = False
                 self._stage = "hatch_blocked"
                 self._no_target_since = None
                 return None
@@ -3768,6 +3814,22 @@ class FullHatchPlanner:
                     self._no_target_since = None
                     self._recovery_reason = None
                     self._start_hatch_cycle()
+                    return self._choose_current(frame, detections)
+                if self._collect_only_after_empty:
+                    # A cooldown errand can reach a measurably off-centre home
+                    # and borrow this recovery planner.  Do not let the generic
+                    # reset below erase the collect-only intent and turn the
+                    # errand into an unsafe egg-pile tap (the exact v0.0.80
+                    # failure observed on S9).
+                    self.logger.info(
+                        "Hatch full | centered home restored | resuming interim"
+                        " nest collection"
+                    )
+                    self._stage = "open_nest"
+                    self._child = object()
+                    self._empty_rescan_wait = False
+                    self._no_target_since = None
+                    self._recovery_reason = None
                     return self._choose_current(frame, detections)
                 if self._management_pending:
                     missing = self._missing_screening_stages()
@@ -4037,6 +4099,29 @@ class FullHatchPlanner:
                     )
                     return self._choose_current(frame, detections)
                 if self._collect_only_after_empty:
+                    if self._blocked_collection_recovery:
+                        # The fuse is cleared only after My Nest was opened,
+                        # collection was acknowledged, the panel was closed,
+                        # and the unobscured home map was seen again.
+                        self._blocked_collection_recovery = False
+                        self._egg_pile_blocked = False
+                        self._egg_pile_failures = 0
+                        self._egg_pile_capacity_check_pending = False
+                        self._egg_pile_capacity_rechecked = False
+                        self._egg_pile_retry_pending = False
+                        self._capacity_checked = False
+                        self._collect_only_after_empty = False
+                        self._observed_cooldown_until = None
+                        self._stage = "hatch"
+                        self._child = self._new_hatch()
+                        self._hatch_baseline = 0
+                        self._start_hatch_cycle()
+                        self._no_target_since = None
+                        self.logger.info(
+                            "Hatch calibration | verified nest collection"
+                            " cleared egg pile lock | retrying hatch"
+                        )
+                        return self._choose_current(frame, detections)
                     if self._collect_before_hatch:
                         self._collect_before_hatch = False
                         self._collect_only_after_empty = False

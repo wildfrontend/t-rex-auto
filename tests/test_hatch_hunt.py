@@ -391,7 +391,7 @@ def test_boost_deadline_does_not_interrupt_hunt_or_shorten_wait(boost_delay):
     assert combined._handoff_reason == "cooldown"
 
 
-@pytest.mark.parametrize("fuse", ["_egg_pile_blocked", "_screening_blocked", "_capacity_blocked"])
+@pytest.mark.parametrize("fuse", ["_screening_blocked", "_capacity_blocked"])
 def test_blocked_hatch_does_not_leave_hunt_for_boost(tmp_path, fuse):
     from dino_bot.digits import DigitReader
     from dino_bot.full_hatch import FullHatchPlanner
@@ -416,6 +416,29 @@ def test_blocked_hatch_does_not_leave_hunt_for_boost(tmp_path, fuse):
     assert combined.workflow_status()["stage"] == "hatch_blocked_hunt"
     assert full._child is child and getattr(full, fuse)
     assert inventory.snapshot().remaining == 100
+
+
+def test_idle_hunt_uses_collection_to_recover_egg_pile_lock() -> None:
+    from dino_bot.digits import DigitReader
+    from dino_bot.full_hatch import FullHatchPlanner
+
+    full = FullHatchPlanner(
+        DigitReader(Path(__file__).parents[1] / "assets/hatch/digits"),
+        egg_pile_point=(450, 1330),
+    )
+    full._egg_pile_blocked = True
+    full._stage = "hatch_blocked"
+    hunt = StubHunt()
+    hunt.delay_ms = 30_000
+    combined = HatchHuntPlanner(full, hunt)
+    combined._mode = "hunt"
+
+    combined.choose(frame(), [])
+
+    assert combined._mode == "handoff"
+    assert combined._handoff_reason == "blocked_collection"
+    assert full._blocked_collection_recovery
+    assert full._stage == "open_nest"
 
 
 def test_startup_interruption_during_hunt_restarts_hatch_first() -> None:
