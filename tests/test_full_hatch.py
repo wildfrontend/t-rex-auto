@@ -713,9 +713,11 @@ def test_cave_above_threshold_runs_weakest_continuous_battle(
     )
     assert target is not None and target.type == CAVE_CONTINUOUS_BUTTON
     planner.on_action_success(target.type)
+    assert not planner.outcome_committed
     target = planner.choose(frame(), [detection(hatch.CLAIM_BUTTON, 450, 1170)])
     assert target is not None and target.type == hatch.CLAIM_BUTTON
     planner.on_action_success(target.type)
+    assert planner.outcome_committed
     assert (
         "Hatch cave | cull completed | before=301/350 | selected=40"
         " | expected_after=261 | result=claim_verified"
@@ -3133,6 +3135,52 @@ def test_cave_return_history_survives_recovery_and_undo_retries() -> None:
     planner._child.choose(frame(), home)
     planner._child.choose(frame(), home)
     assert planner._child.is_complete()
+
+
+def test_verified_cave_cleanup_recovery_finishes_without_recollecting() -> None:
+    """A failed cave return must not repeat collection and cull.
+
+    S9 completed and claimed a 370 -> 330 cull, but the cave planner could not
+    prove that its return swipes had centred the home map.  Generic recovery
+    then reopened My Nest, collected another batch, and repeated the same
+    destructive cleanup three times.  Once the claim is verified, recovery
+    only owes us centred-home proof; the management result is already final.
+    """
+
+    planner = make_full_planner()
+    cave = CaveCullPlanner(
+        DigitReader(GLYPHS), threshold=340, capacity_limit=370
+    )
+    cave._capacity_before = 370
+    cave._capacity_readable = True
+    cave._cull_required = True
+    cave._selected_count = 40
+    cave._stage = "battle_result"
+    cave.on_action_success(hatch.CLAIM_BUTTON)
+    cave._stage = "recenter_failed"
+
+    planner._stage = "cave"
+    planner._child = cave
+    planner._management_pending = True
+    planner._cave_cleanup_after_management = True
+    planner._pending_screening_population = 370
+    planner._screening_completed = set(SCREENING_STAGES)
+
+    planner._begin_home_recovery(
+        "no actionable target at full_cave:cave_recenter_failed"
+    )
+    home = [detection(hatch.HOME_ANCHOR, 59, 561)]
+    assert planner.choose(frame(), home) is None
+    target = planner.choose(frame(), home)
+
+    assert target is not None and target.type == hatch.EGG_PILE
+    assert target.type not in {OPEN_NEST, CAVE_SWIPE}
+    assert planner._stage == "hatch"
+    assert planner._capacity_checked
+    assert planner._cave_population == 330
+    assert planner.completed_management_cycles == 1
+    assert not planner._management_pending
+    assert not planner._screening_completed
 
 
 def test_inherited_cave_swipe_is_not_undone_before_the_home_map_is_proven() -> None:

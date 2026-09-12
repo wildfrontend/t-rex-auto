@@ -2158,6 +2158,7 @@ class CaveCullPlanner:
         self._capacity_candidate: int | None = None
         self._capacity_confirmations = 0
         self._selected_count = 0
+        self._cull_claim_verified = False
 
     def last_stage(self) -> str:
         return f"cave_{self._stage}"
@@ -2237,6 +2238,16 @@ class CaveCullPlanner:
             return None
         return max(0, self._capacity_before - self._selected_count)
 
+    @property
+    def outcome_committed(self) -> bool:
+        """Whether the cave result is final and only home recovery remains."""
+
+        if not self.capacity_readable or self._capacity_before is None:
+            return False
+        if not self._cull_required:
+            return True
+        return self._cull_claim_verified
+
     def on_action_success(self, target_type: str) -> None:
         if target_type == CAVE_SWIPE:
             self.navigator.on_swipe_result(moved=True)
@@ -2260,6 +2271,7 @@ class CaveCullPlanner:
             self._stage = "battle_result"
         elif target_type == hatch_feature.CLAIM_BUTTON and self._stage == "battle_result":
             if self._capacity_before is not None and self._selected_count:
+                self._cull_claim_verified = True
                 self.logger.info(
                     "Hatch cave | cull completed | before=%d/%d | selected=%d"
                     " | expected_after=%d | result=claim_verified",
@@ -2712,6 +2724,11 @@ class FullHatchPlanner:
         self._screening_baseline_population: int | None = None
         self._pending_screening_population: int | None = None
         self._cave_cleanup_after_management = False
+        # Once a cave cull's claim is verified, a failed return-to-home is
+        # purely a camera recovery problem.  Preserve the committed result so
+        # generic recovery cannot reopen My Nest, collect another batch, and
+        # destructively repeat the same cleanup.
+        self._committed_cave_population: int | None = None
         # Cleanup is destructive: a capacity-triggered management pass must
         # retain proof that every screening stage completed, including across
         # bounded home recovery.
@@ -3774,6 +3791,16 @@ class FullHatchPlanner:
                     "Hatch full | centered home confirmed | recovered=%s",
                     self._recovery_reason or "unknown",
                 )
+                if self._committed_cave_population is not None:
+                    expected = self._committed_cave_population
+                    self.logger.info(
+                        "Hatch full | committed cave result restored after"
+                        " home recovery | cave≈%d/%d",
+                        expected,
+                        self.capacity_limit,
+                    )
+                    self._finish_cave_management(expected)
+                    return self._choose_current(frame, detections)
                 if (
                     self._egg_pile_capacity_check_pending
                     or self._hatch_capacity_check_pending
@@ -4180,35 +4207,8 @@ class FullHatchPlanner:
                         " | blocking hatch instead of restarting Phase A"
                     )
                     return None
-                self.completed_management_cycles += 1
-                self._capacity_checked = True
-                self._management_pending = False
-                self._screening_completed.clear()
-                self._egg_pile_failures = 0
-                self._egg_pile_capacity_check_pending = False
-                self._egg_pile_capacity_rechecked = False
-                self._egg_pile_retry_pending = False
                 expected = self._cave_child.expected_population
-                if expected is not None:
-                    self._cave_population = expected
-                    self._hatched_since_cave_read = 0
-                self._screening_baseline_population = (
-                    expected
-                    if expected is not None
-                    else self._pending_screening_population
-                )
-                self._pending_screening_population = None
-                self._cave_cleanup_after_management = False
-                self.logger.info(
-                    "Hatch full | completed management cycle %d | restarting Phase A"
-                    " | cave≈%s",
-                    self.completed_management_cycles,
-                    "?" if expected is None else f"{expected}/{self.capacity_limit}",
-                )
-                self._stage = "hatch"
-                self._child = self._new_hatch()
-                self._hatch_baseline = 0
-                self._start_hatch_cycle()
+                self._finish_cave_management(expected)
                 return self._choose_current(frame, detections)
             return target
         return None
@@ -4234,6 +4234,21 @@ class FullHatchPlanner:
         )
 
     def _begin_home_recovery(self, reason: str) -> None:
+        if (
+            self.standalone_stage is None
+            and self._stage == "cave"
+            and self._management_pending
+            and isinstance(self._child, CaveCullPlanner)
+            and self._child.outcome_committed
+        ):
+            self._committed_cave_population = self._child.expected_population
+            self.logger.info(
+                "Hatch cave | preserving committed result across home recovery"
+                " | cave≈%s",
+                "?"
+                if self._committed_cave_population is None
+                else f"{self._committed_cave_population}/{self.capacity_limit}",
+            )
         self._collect_before_hatch = False
         if self._custom_cycle and not self._cave_enabled:
             # The replacement child loses any pending hatch count, so prove
@@ -4391,6 +4406,42 @@ class FullHatchPlanner:
         self._start_hatch_cycle()
 
         self._collect_done_for_cycle = self._custom_cycle and self._collect_enabled
+
+    def _finish_cave_management(self, expected: int | None) -> None:
+        """Commit one cave result and resume hatching without recollection."""
+
+        self.completed_management_cycles += 1
+        self._capacity_checked = True
+        self._management_pending = False
+        self._screening_completed.clear()
+        self._egg_pile_failures = 0
+        self._egg_pile_capacity_check_pending = False
+        self._egg_pile_capacity_rechecked = False
+        self._egg_pile_retry_pending = False
+        if expected is not None:
+            self._cave_population = expected
+            self._hatched_since_cave_read = 0
+        self._screening_baseline_population = (
+            expected
+            if expected is not None
+            else self._pending_screening_population
+        )
+        self._pending_screening_population = None
+        self._cave_cleanup_after_management = False
+        self._committed_cave_population = None
+        self._collect_only_after_empty = False
+        self._no_target_since = None
+        self._recovery_reason = None
+        self.logger.info(
+            "Hatch full | completed management cycle %d | restarting Phase A"
+            " | cave≈%s",
+            self.completed_management_cycles,
+            "?" if expected is None else f"{expected}/{self.capacity_limit}",
+        )
+        self._stage = "hatch"
+        self._child = self._new_hatch()
+        self._hatch_baseline = 0
+        self._start_hatch_cycle()
 
     def _remember_capacity_preflight_result(self) -> None:
         """Persist a valid capacity read before cave recentering can recover."""
