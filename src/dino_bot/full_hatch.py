@@ -19,11 +19,11 @@ destructive-looking affirmative action also requires its known prompt.
 from __future__ import annotations
 
 import logging
-import pathlib
-from functools import lru_cache
 import math
+import pathlib
 import time
 from collections.abc import Callable, Mapping, Sequence
+from functools import lru_cache
 from pathlib import Path
 from typing import Protocol
 
@@ -64,7 +64,7 @@ from .cull import (
 )
 from .digits import DigitReader
 from .hatch_inventory import HatchBoostInventoryStore
-from .models import Detection, Frame, Target, VerificationResult
+from .models import Detection, Frame, Image, Target, VerificationResult
 from .nests import (
     ATTACK_AUTOPLACE_RULE,
     ATTACK_RULE,
@@ -143,6 +143,7 @@ RECOVERY_FOREST = "hatch_recovery_forest_recenter"
 RECOVERY_RECENTER = "hatch_recovery_recenter"
 RECOVERY_UNDO = "hatch_recovery_undo_recenter"
 RECOVERY_BACK = "hatch_recovery_back"
+RECOVERY_MAX_POPULATION_SHORTCUT = "hatch_recovery_max_population_shortcut"
 RECOVERY_HUNT_DIALOG_CLOSE = "hatch_recovery_hunt_dialog_close"
 RECOVERY_HUNT_DIALOG_DISMISS = "hatch_recovery_hunt_dialog_dismiss"
 # 收掉狩獵氣泡框用的地圖空點,900 寬座標。左側中下最不容易壓到 HUD;真的
@@ -254,6 +255,7 @@ DEFAULT_TARGET_ACTIONS: dict[str, str] = {
     RECOVERY_RECENTER: "swipe",
     RECOVERY_UNDO: "swipe",
     RECOVERY_BACK: "back",
+    RECOVERY_MAX_POPULATION_SHORTCUT: "tap",
     RECOVERY_HUNT_DIALOG_CLOSE: "tap",
     RECOVERY_HUNT_DIALOG_DISMISS: "tap",
     STARTUP_GROWTH_RESULT: "tap",
@@ -304,6 +306,7 @@ DEFAULT_POST_ACTION_DELAYS_MS: dict[str, int] = {
     RECOVERY_RECENTER: 4000,
     RECOVERY_UNDO: 4000,
     RECOVERY_BACK: 4000,
+    RECOVERY_MAX_POPULATION_SHORTCUT: 5000,
     RECOVERY_HUNT_DIALOG_CLOSE: 3000,
     RECOVERY_HUNT_DIALOG_DISMISS: 3000,
     STARTUP_GROWTH_RESULT: 3000,
@@ -1110,6 +1113,62 @@ def is_unready_egg_detail(frame: Frame) -> bool:
     return _unready_egg_detail_close(frame) is not None
 
 
+def _max_population_shortcut(frame: Frame) -> tuple[int, int] | None:
+    """Locate the only safe exit offered by the maximum-population modal.
+
+    The live S9 modal has no close control and Android Back is ignored. Its
+    stable structure is a large, centred white card with one yellow shortcut
+    button in the lower half. This remains a frame predicate rather than a
+    global detector: callers enable it only immediately after a hatch tap
+    failed to reach the claim screen, so unrelated yellow dialogs are ignored.
+    """
+
+    if frame.image.size == 0:
+        return None
+    scale = frame.width / 900.0
+    hsv = cv2.cvtColor(frame.image, cv2.COLOR_BGR2HSV)
+    white = cv2.inRange(hsv, (0, 0, 190), (180, 45, 255))
+    yellow = cv2.inRange(hsv, (12, 80, 100), (40, 255, 255))
+
+    def components(mask: np.ndarray) -> list[tuple[int, int, int, int, int, float, float]]:
+        count, _, stats, centers = cv2.connectedComponentsWithStats(mask)
+        return [
+            (*map(int, stats[index]), float(centers[index][0]), float(centers[index][1]))
+            for index in range(1, count)
+        ]
+
+    cards = [
+        (x, y, width, height)
+        for x, y, width, height, area, _cx, _cy in components(white)
+        if area >= 140_000 * scale * scale
+        and 140 * scale <= x <= 260 * scale
+        and 430 * scale <= y <= 620 * scale
+        and 450 * scale <= width <= 650 * scale
+        and 450 * scale <= height <= 700 * scale
+    ]
+    if not cards:
+        return None
+    buttons = [
+        (cx, cy)
+        for x, y, width, height, area, cx, cy in components(yellow)
+        if area >= 7_000 * scale * scale
+        and 300 * scale <= x <= 450 * scale
+        and 850 * scale <= y <= 1050 * scale
+        and 110 * scale <= width <= 230 * scale
+        and 55 * scale <= height <= 130 * scale
+    ]
+    if not buttons:
+        return None
+    cx, cy = min(buttons, key=lambda center: abs(center[0] - frame.width / 2))
+    return round(cx), round(cy)
+
+
+def is_max_population_dialog(frame: Frame) -> bool:
+    """Whether the live maximum-population modal structure is present."""
+
+    return _max_population_shortcut(frame) is not None
+
+
 class HatchHomeRecoveryPlanner:
     """Unwind known/unknown foregrounds and prove the map is centered again."""
 
@@ -1129,6 +1188,8 @@ class HatchHomeRecoveryPlanner:
         max_measured_corrections: int = 4,
         max_hunt_dialog_dismissals: int = 3,
         max_bubble_dismissals: int = 3,
+        expect_max_population: bool = False,
+        max_population_shortcut_attempts: int = 2,
         applied_swipes: Sequence[tuple[int, int, int, int]] = (),
     ) -> None:
         self.reference_width = reference_width
@@ -1141,6 +1202,10 @@ class HatchHomeRecoveryPlanner:
         self.max_forest_trips = 0
         self.max_hunt_dialog_dismissals = max(0, max_hunt_dialog_dismissals)
         self.max_bubble_dismissals = max(0, max_bubble_dismissals)
+        self.expect_max_population = bool(expect_max_population)
+        self.max_population_shortcut_attempts = max(
+            1, max_population_shortcut_attempts
+        )
         self.max_measured_corrections = max(0, max_measured_corrections)
         self._stage = "inspect"
         self._back_attempts = 0
@@ -1151,6 +1216,8 @@ class HatchHomeRecoveryPlanner:
         self._forest_trips = 0
         self._hunt_dialog_dismissals = 0
         self._bubble_dismissals = 0
+        self._max_population_shortcut_attempts = 0
+        self._max_population_seen = False
         self._measured_corrections = 0
         self._last_offset: tuple[float, float] | None = None
         self._camera_limit_hits = 0
@@ -1190,6 +1257,12 @@ class HatchHomeRecoveryPlanner:
 
     def is_failed(self) -> bool:
         return self._failed
+
+    @property
+    def max_population_seen(self) -> bool:
+        """Whether recovery proved the hatch failure was the capacity modal."""
+
+        return self._max_population_seen
 
     def camera_history(self) -> tuple[tuple[int, int, int, int], ...]:
         return tuple(self._applied_swipes)
@@ -1370,8 +1443,27 @@ class HatchHomeRecoveryPlanner:
             self._stage = "collect_result"
             return synthetic_target(RECOVERY_CLAIM, claim.x, claim.y)
 
-        # Android Back dismisses the maximum-population dialog but does not
-        # close the egg detail beneath it. Once the dialog is gone, use the
+        if self.expect_max_population:
+            shortcut = _max_population_shortcut(frame)
+            if shortcut is not None:
+                self._max_population_seen = True
+                if (
+                    self._max_population_shortcut_attempts
+                    < self.max_population_shortcut_attempts
+                ):
+                    self._max_population_shortcut_attempts += 1
+                    self._stage = (
+                        "max_population_shortcut_"
+                        f"{self._max_population_shortcut_attempts}/"
+                        f"{self.max_population_shortcut_attempts}"
+                    )
+                    return synthetic_target(
+                        RECOVERY_MAX_POPULATION_SHORTCUT, *shortcut
+                    )
+
+        # Older game builds let Android Back dismiss the maximum-population
+        # dialog but left the egg detail beneath it. The current dialog is
+        # handled by its shortcut above; once either variant is gone, use the
         # structurally proven red-X/yellow-button pair to leave the detail and
         # continue toward a real home screen before the capacity preflight.
         detail_close = _unready_egg_detail_close(frame)
@@ -2113,6 +2205,7 @@ class CaveCullPlanner:
         capacity_read_retries: int = 2,
         capacity_consistent_reads: int = DEFAULT_CAPACITY_CONSISTENT_READS,
         cave_recenter_checks: int = 3,
+        force_cull: bool = False,
         capacity_snapshots: CapacitySnapshot | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
@@ -2140,6 +2233,7 @@ class CaveCullPlanner:
         self.capacity_read_retries = max(1, capacity_read_retries)
         self.capacity_consistent_reads = max(1, capacity_consistent_reads)
         self.cave_recenter_checks = max(1, cave_recenter_checks)
+        self.force_cull = bool(force_cull)
         self.capacity_snapshots = capacity_snapshots
         self.logger = logger or logging.getLogger("dino_bot")
         self.navigator = CaveNavigator(reference_width=reference_width)
@@ -2220,7 +2314,7 @@ class CaveCullPlanner:
 
     @property
     def cull_required(self) -> bool:
-        """Whether the readable capacity crossed the configured threshold."""
+        """Whether the threshold or a proven hard-limit signal requires culling."""
 
         return self._cull_required
 
@@ -2431,7 +2525,7 @@ class CaveCullPlanner:
                 count,
                 self.capacity_limit,
                 self.threshold,
-                should_cull(count, self.threshold),
+                self._cull_required,
             )
             if not self._cull_required or not self.allow_cull:
                 self._stage = "recenter"
@@ -2552,7 +2646,7 @@ class CaveCullPlanner:
             )
             return False
         self._capacity_before = count
-        self._cull_required = should_cull(count, self.threshold)
+        self._cull_required = self.force_cull or should_cull(count, self.threshold)
         return True
 
     def _reset_capacity_confirmation(self) -> None:
@@ -2775,6 +2869,10 @@ class FullHatchPlanner:
         self._capacity_camera_refresh_used = False
         self.population_limit_reached = False
         self.capacity_retry_pending = False
+        # A visually proven maximum-population modal is stronger than a stale
+        # cached count or a below-threshold panel read. Keep the latch across a
+        # game restart until a verified cave cleanup creates headroom.
+        self._force_capacity_management = False
         self._screening_recovery_failures: dict[str, int] = {}
         self.completed_management_cycles = 0
         self._start_hatch_cycle()
@@ -3106,6 +3204,9 @@ class FullHatchPlanner:
         self._screening_blocked = False
         self._capacity_blocked = False
         self._screening_recovery_failures.clear()
+        if self._force_capacity_management:
+            self._capacity_checked = False
+            self._hatch_capacity_check_pending = True
         if self.standalone_stage is not None:
             self._stage = "recover_home"
             self._child = HatchHomeRecoveryPlanner(
@@ -3740,6 +3841,15 @@ class FullHatchPlanner:
 
         if self._stage == "recover_home":
             target = self._recovery_child.choose(frame, detections)
+            if (
+                self._recovery_child.max_population_seen
+                and not self._force_capacity_management
+            ):
+                self._force_capacity_management = True
+                self.logger.warning(
+                    "Hatch capacity | maximum-population modal confirmed"
+                    " | forcing screening and cave cleanup"
+                )
             if self._recovery_child.is_failed():
                 self._capture_recovery_evidence(frame, detections)
                 elapsed = self.clock() - (self._recovery_started_at or self.clock())
@@ -4002,7 +4112,11 @@ class FullHatchPlanner:
                     self._stage = "capacity_blocked"
                     return None
                 self.capacity_retry_pending = False
-                if self._capacity_child.cull_required:
+                cleanup_required = (
+                    self._capacity_child.cull_required
+                    or self._force_capacity_management
+                )
+                if cleanup_required:
                     self._egg_pile_capacity_check_pending = False
                     self._hatch_capacity_check_pending = False
                     self._egg_pile_capacity_rechecked = False
@@ -4292,6 +4406,7 @@ class FullHatchPlanner:
         self._child = HatchHomeRecoveryPlanner(
             reference_width=self.reference_width,
             logger=self.logger,
+            expect_max_population=self._hatch_capacity_check_pending,
             applied_swipes=history,
         )
         # Recovery replaces the HatchPlanner that owns the rescan countdown, so
@@ -4341,6 +4456,15 @@ class FullHatchPlanner:
             " | completed=%s",
             self._format_screening_stages(self._screening_completed),
         )
+        # Include every hatch since the last panel read. Passing the stale
+        # `_cave_population` here discarded that delta (S9: 324 + 32 became
+        # 324), skipped the required cull, and reset the estimate immediately
+        # before the account reached 370/370.
+        known_capacity = (
+            self._pending_screening_population
+            if self._pending_screening_population is not None
+            else self._cave_population
+        )
         self._stage = "cave"
         self._child = CaveCullPlanner(
             self.reader,
@@ -4349,9 +4473,10 @@ class FullHatchPlanner:
             safe_margin=self.cave_safe_margin,
             bottom_exclusion_px=self.cave_bottom_exclusion_px,
             capacity_limit=self.capacity_limit,
-            known_capacity=self._cave_population,
+            known_capacity=known_capacity,
             capacity_read_retries=self.capacity_read_retries,
             cave_recenter_checks=self.cave_recenter_checks,
+            force_cull=self._force_capacity_management,
             capacity_snapshots=self.capacity_snapshots,
             logger=self.logger,
         )
@@ -4429,6 +4554,7 @@ class FullHatchPlanner:
         self._pending_screening_population = None
         self._cave_cleanup_after_management = False
         self._committed_cave_population = None
+        self._force_capacity_management = False
         self._collect_only_after_empty = False
         self._no_target_since = None
         self._recovery_reason = None
@@ -4452,7 +4578,7 @@ class FullHatchPlanner:
             return
         self._cave_population = reading
         self._hatched_since_cave_read = 0
-        if child.cull_required:
+        if child.cull_required or self._force_capacity_management:
             if not self._cave_enabled:
                 # The capacity child must finish returning home before the
                 # blocked flag permits the combined planner to start hunting.

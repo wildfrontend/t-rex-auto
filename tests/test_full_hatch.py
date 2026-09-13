@@ -9,16 +9,10 @@ import pytest
 
 from dino_bot import hatch, nest_filter
 from dino_bot.attack_replacement import AttackReplacementTestPlanner
-from dino_bot.cull import CAPACITY_REGION, PANEL_CAPACITY_REGION, CapacityRead, should_cull
+from dino_bot.cull import CAPACITY_REGION, CapacityRead, should_cull
 from dino_bot.detection import OpenCvDetector
 from dino_bot.digits import DigitReader
 from dino_bot.full_hatch import (
-    NEST_BUBBLE,
-    RECOVERY_BUBBLE_DISMISS,
-    PILE_SETTLE_FRAMES,
-    PANEL_CLOSE,
-    PANEL_OPEN,
-    PANEL_TITLE,
     AUTOPLACE_BUTTON,
     AUTOPLACE_MASK_CLOSE,
     AUTOPLACE_NOTICE,
@@ -39,9 +33,14 @@ from dino_bot.full_hatch import (
     HATCH_BOOST_CONFIRM,
     HATCH_DETAIL_CLOSE,
     HOME_PILE_BASE,
+    NEST_BUBBLE,
     NEST_GEAR,
     NEST_MASK_CLOSE,
     OPEN_NEST,
+    PANEL_CLOSE,
+    PANEL_OPEN,
+    PANEL_TITLE,
+    PILE_SETTLE_FRAMES,
     PLACE_HDR_ATTACK,
     PLACE_HDR_BEST,
     PLACE_HDR_HP,
@@ -51,11 +50,13 @@ from dino_bot.full_hatch import (
     PLACE_SORT_HP,
     PLACE_SORT_LEVEL,
     RECOVERY_BACK,
+    RECOVERY_BUBBLE_DISMISS,
     RECOVERY_FOREST,
     RECOVERY_HUNT_DIALOG_CLOSE,
     RECOVERY_HUNT_DIALOG_DISMISS,
     RECOVERY_MAP_EXIT,
     RECOVERY_MASK_CLOSE,
+    RECOVERY_MAX_POPULATION_SHORTCUT,
     RECOVERY_NO,
     RECOVERY_RECENTER,
     RECOVERY_UNDO,
@@ -78,6 +79,7 @@ from dino_bot.full_hatch import (
     is_centered_home_frame,
     is_centered_home_screen,
     is_home_screen,
+    is_max_population_dialog,
     is_unready_egg_detail,
     set_home_base_template,
 )
@@ -106,6 +108,15 @@ def frame(image: np.ndarray | None = None) -> Frame:
     return Frame(
         image
     )
+
+
+def max_population_frame() -> Frame:
+    """Structural stand-in for the live S9 370/370 modal."""
+
+    image = np.full((1600, 900, 3), 39, dtype=np.uint8)
+    image[513:1074, 188:712] = (255, 255, 255)
+    image[950:1031, 377:523] = (74, 189, 255)
+    return frame(image)
 
 
 def detection(
@@ -2948,6 +2959,49 @@ def test_home_recovery_closes_hatch_detail_after_capacity_dialog_is_dismissed() 
     assert 1146 <= target.y <= 1213
 
 
+def test_home_recovery_uses_max_population_shortcut_only_when_expected() -> None:
+    screen = max_population_frame()
+    assert is_max_population_dialog(screen)
+
+    ordinary = HatchHomeRecoveryPlanner()
+    ordinary_target = ordinary.choose(screen, [])
+    assert ordinary_target is not None
+    assert ordinary_target.type == RECOVERY_BACK
+    assert not ordinary.max_population_seen
+
+    capacity_recovery = HatchHomeRecoveryPlanner(expect_max_population=True)
+    target = capacity_recovery.choose(screen, [])
+    assert target is not None
+    assert target.type == RECOVERY_MAX_POPULATION_SHORTCUT
+    assert (target.x, target.y) == (450, 990)
+    assert capacity_recovery.max_population_seen
+
+
+def test_max_population_modal_latches_forced_management() -> None:
+    planner = make_full_planner()
+    planner._capacity_checked = True
+    planner.on_action_failure(hatch.HATCH_BUTTON)
+
+    target = planner.choose(max_population_frame(), [])
+
+    assert target is not None
+    assert target.type == RECOVERY_MAX_POPULATION_SHORTCUT
+    assert planner._force_capacity_management
+    assert planner._hatch_capacity_check_pending
+
+
+def test_max_population_latch_survives_runtime_recovery_reset() -> None:
+    planner = make_full_planner()
+    planner._force_capacity_management = True
+    planner._capacity_checked = True
+
+    planner.reset_workflow()
+
+    assert planner._force_capacity_management
+    assert not planner._capacity_checked
+    assert planner._hatch_capacity_check_pending
+
+
 def test_home_recovery_uses_named_cave_close_before_falling_back_to_back() -> None:
     planner = HatchHomeRecoveryPlanner()
     target = planner.choose(
@@ -3462,6 +3516,61 @@ def test_cave_estimate_triggers_screening_at_cull_threshold() -> None:
     assert planner._management_pending is True
     assert planner._collect_only_after_empty is False
     assert planner._cave_cleanup_after_management is True
+
+
+def test_cave_cleanup_receives_accumulated_population_not_stale_panel_read() -> None:
+    """S9 reached 356 but cave cleanup was incorrectly handed the old 324."""
+
+    planner = FullHatchPlanner(
+        DigitReader(GLYPHS),
+        egg_pile_point=(450, 1330),
+        capacity_limit=370,
+        cull_threshold=350,
+    )
+    planner._cave_population = 324
+    planner._pending_screening_population = 356
+    planner._management_pending = True
+    planner._cave_cleanup_after_management = True
+    planner._screening_completed = set(SCREENING_STAGES)
+
+    planner._start_cave_cleanup()
+
+    assert isinstance(planner._child, CaveCullPlanner)
+    assert planner._child.known_capacity == 356
+
+
+def test_proven_max_population_forces_cleanup_below_configured_threshold(
+    monkeypatch,
+) -> None:
+    _patch_capacity(monkeypatch, 338)
+    planner = FullHatchPlanner(
+        DigitReader(GLYPHS),
+        egg_pile_point=(450, 1330),
+        capacity_limit=370,
+        cull_threshold=340,
+    )
+    planner._force_capacity_management = True
+    home = [detection(hatch.HOME_ANCHOR, 59, 561)]
+
+    target = planner.choose(frame(), home)
+    assert target is not None and target.type == PANEL_OPEN
+    planner.on_action_success(target.type)
+    target = planner.choose(panel_frame(), [detection(PANEL_TITLE, 452, 317)])
+    assert target is not None and target.type == PANEL_CLOSE
+    assert planner._management_pending
+    assert planner._cave_cleanup_after_management
+    assert planner._pending_screening_population == 338
+
+    planner._screening_completed = set(SCREENING_STAGES)
+    planner._start_cave_cleanup()
+    cave = planner._child
+    assert isinstance(cave, CaveCullPlanner)
+    assert cave.known_capacity == 338
+    assert cave.force_cull
+    assert not should_cull(338, 340)
+    assert not cave._confirm_capacity(338)
+    assert cave._confirm_capacity(338)
+    assert cave.cull_required
 
 
 def test_cave_estimate_below_trigger_keeps_collect_only_cycle() -> None:
