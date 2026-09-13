@@ -86,6 +86,13 @@ class TemplateAsset:
     click_offset: tuple[int, int] | None = None
     scales: tuple[float, ...] = (1.0,)
     prepared_images: tuple[tuple[float, np.ndarray], ...] = ()
+    # Fraction of the reference resolution this template is searched at.
+    # matchTemplate costs scale with the searched pixel count, so halving both
+    # axes is close to a 4x cut. Confidence survives it - INTER_AREA is a low
+    # pass filter, so the noise that fights the match goes with the pixels -
+    # but only for templates large enough to keep their shape. Anything that
+    # would shrink below a legible size stays at 1.0.
+    match_scale: float = 1.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,15 +170,24 @@ class OpenCvDetector:
             )
             if not scales or any(value <= 0 for value in scales):
                 raise DetectorAssetError(f"Template scales must be positive: {path}")
+            match_scale = float(raw.get("match_scale", 1.0))
+            if not 0 < match_scale <= 1.0:
+                raise DetectorAssetError(
+                    f"Template match_scale must be within (0, 1]: {path}"
+                )
             prepared_images: list[tuple[float, np.ndarray]] = []
             for scale in scales:
-                if scale == 1.0:
+                # The prepared image carries both scales: `scale` is the size
+                # the game draws this control at, `match_scale` the resolution
+                # we search for it in.
+                effective = scale * match_scale
+                if effective == 1.0:
                     prepared_images.append((scale, image))
                     continue
                 source_height, source_width = image.shape[:2]
-                width = max(1, round(source_width * scale))
-                height = max(1, round(source_height * scale))
-                interpolation = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
+                width = max(1, round(source_width * effective))
+                height = max(1, round(source_height * effective))
+                interpolation = cv2.INTER_AREA if effective < 1.0 else cv2.INTER_LINEAR
                 prepared_images.append(
                     (
                         scale,
@@ -195,6 +211,7 @@ class OpenCvDetector:
                     ),
                     scales=scales,
                     prepared_images=tuple(prepared_images),
+                    match_scale=match_scale,
                 )
             )
 
@@ -276,26 +293,53 @@ class OpenCvDetector:
         target_types: frozenset[str] | None = None,
     ) -> list[Detection]:
         results: list[Detection] = []
+        # One reduced copy per distinct match_scale, built at most once per
+        # scan and shared by every asset that searches at that resolution.
+        # The resize itself is under a millisecond; the templates it saves
+        # are hundreds.
+        searched: dict[float, np.ndarray] = {1.0: image}
         for asset in self.templates:
             if target_types is not None and asset.type not in target_types:
                 continue
+            haystack = searched.get(asset.match_scale)
+            if haystack is None:
+                source_height, source_width = image.shape[:2]
+                haystack = cv2.resize(
+                    image,
+                    (
+                        max(1, round(source_width * asset.match_scale)),
+                        max(1, round(source_height * asset.match_scale)),
+                    ),
+                    interpolation=cv2.INTER_AREA,
+                )
+                searched[asset.match_scale] = haystack
+            # Everything below is computed in the reduced space and lifted
+            # back to reference coordinates with this factor.
+            back = 1.0 / asset.match_scale
             for scale, template in asset.prepared_images:
                 height, width = template.shape[:2]
-                if image.shape[0] < height or image.shape[1] < width:
+                if haystack.shape[0] < height or haystack.shape[1] < width:
                     continue
-                matches = cv2.matchTemplate(image, template, cv2.TM_CCOEFF_NORMED)
+                matches = cv2.matchTemplate(haystack, template, cv2.TM_CCOEFF_NORMED)
                 ys, xs = np.where(matches >= asset.threshold)
                 if len(xs) > 2000:
                     scores = matches[ys, xs]
                     top = np.argpartition(scores, -2000)[-2000:]
                     xs, ys = xs[top], ys[top]
                 for x, y in zip(xs.tolist(), ys.tolist(), strict=True):
-                    bbox = BoundingBox(x=x, y=y, width=width, height=height)
+                    bbox = BoundingBox(
+                        x=round(x * back),
+                        y=round(y * back),
+                        width=max(1, round(width * back)),
+                        height=max(1, round(height * back)),
+                    )
                     metadata = {
                         "detector": "template",
                         "asset": asset.path.name,
                         "template_scale": scale,
                     }
+                    if asset.match_scale != 1.0:
+                        metadata["match_scale"] = asset.match_scale
                     if asset.click_offset is None:
                         results.append(
                             Detection.from_bbox(
@@ -306,13 +350,13 @@ class OpenCvDetector:
                             )
                         )
                     else:
-                        click_x = x + round(asset.click_offset[0] * scale)
-                        click_y = y + round(asset.click_offset[1] * scale)
+                        click_x = bbox.x + round(asset.click_offset[0] * scale)
+                        click_y = bbox.y + round(asset.click_offset[1] * scale)
                         metadata["anchor_bbox"] = {
-                            "x": x,
-                            "y": y,
-                            "width": width,
-                            "height": height,
+                            "x": bbox.x,
+                            "y": bbox.y,
+                            "width": bbox.width,
+                            "height": bbox.height,
                         }
                         results.append(
                             Detection(
@@ -525,12 +569,15 @@ class HuntTeamAvailabilityDetector:
             ),
             key=lambda item: item[0],
         )
-        # "0 / 11" is four glyphs, "10 / 11" and "11 / 11" are five. Within the
-        # four-glyph shapes only the leading digit separates "no team left"
-        # from "some team left", and a width threshold alone accepts every one
-        # of 2..9 - which cancelled thirteen consecutive hunts. Identify the
-        # zero by its shape instead.
-        if len(glyphs) != 4 or not _is_zero_glyph(mask, glyphs[0]):
+        # The glyph count follows the account's team cap: "0 / 5" is three,
+        # "0 / 11" is four, and a two-digit current value ("10 / 11") is five.
+        # Only the leading digit ever separates "no team left" from "some team
+        # left", and a width threshold alone accepts every one of 2..9 - which
+        # cancelled thirteen consecutive hunts. Identify the zero by its shape
+        # instead, and accept either counter width: requiring exactly four
+        # blinded this detector on every single-digit cap, so s13 kept opening
+        # sheet after sheet it could not field a team for instead of waiting.
+        if len(glyphs) not in (3, 4) or not _is_zero_glyph(mask, glyphs[0]):
             return []
 
         scale_x = frame.width / width
@@ -553,8 +600,47 @@ class HuntTeamAvailabilityDetector:
         ]
 
 
+# The same dispatched/total pair the egg nest carries is mirrored in the HUD
+# pill at the top right, which does not travel with the map. Measured on a
+# 900x1600 frame, between the meat icon that opens the pill and the green plus
+# that closes it, so only the digits and their separator fall inside.
+HUNT_TEAM_HUD_REGION: tuple[int, int, int, int] = (770, 222, 862, 264)
+
+
+def _groups_match(mask: np.ndarray, left: list, right: list) -> bool:
+    """Whether two glyph runs draw the same number, ignoring what it is.
+
+    A dispatched counter is full exactly when both sides of the slash read
+    alike, so the pair can be compared as pixels and never has to be
+    recognised as digits. That is what keeps this free of a hard-coded team
+    cap: 5/5 and 11/11 answer yes on the same evidence as 10/10, and a pass
+    that raises the limit later needs no recalibration here.
+    """
+
+    if not left or len(left) != len(right):
+        return False
+    for first, second in zip(left, right, strict=True):
+        x1, y1, w1, h1, _ = first
+        x2, y2, w2, h2, _ = second
+        # One glyph drawn at two sub-pixel offsets can bound a pixel apart, so
+        # the boxes are only required to be the same size to within that.
+        if abs(w1 - w2) > 1 or abs(h1 - h2) > 1:
+            return False
+        one = mask[y1 : y1 + h1, x1 : x1 + w1]
+        two = mask[y2 : y2 + h2, x2 : x2 + w2]
+        if one.size == 0 or two.size == 0:
+            return False
+        if one.shape != two.shape:
+            two = cv2.resize(two, (one.shape[1], one.shape[0]), interpolation=cv2.INTER_NEAREST)
+        # Measured on rendered counters: one digit against itself agrees on
+        # 0.90 of its pixels at worst, two different digits on 0.69 at best.
+        if float(np.mean(one == two)) < 0.8:
+            return False
+    return True
+
+
 class HuntCapacityDetector:
-    """Detect the map egg nest's fixed ``10/10`` dispatched-team counter."""
+    """Detect the fixed ``N/N`` dispatched-team counter, full only."""
 
     def __init__(
         self,
@@ -562,7 +648,9 @@ class HuntCapacityDetector:
         reference_size: tuple[int, int] = (900, 1600),
         anchor_template: str | Path | None = None,
         anchor_threshold: float = 0.65,
+        hud_region: tuple[int, int, int, int] = HUNT_TEAM_HUD_REGION,
     ) -> None:
+        self.hud_region = hud_region
         self.target_type = target_type
         self.reference_size = reference_size
         template_path = (
@@ -591,7 +679,7 @@ class HuntCapacityDetector:
         )
         _, anchor_confidence, _, (anchor_x, anchor_y) = cv2.minMaxLoc(matches)
         if anchor_confidence < self.anchor_threshold:
-            return []
+            return self._detect_hud(image)
 
         # The availability label is immediately below/right of the egg nest.
         # Its position follows the nest as the map pans, unlike the top-right
@@ -618,7 +706,7 @@ class HuntCapacityDetector:
         if len(glyphs) != 5 or [
             _is_zero_glyph(mask, glyph) for glyph in glyphs
         ] != [False, True, False, False, True]:
-            return []
+            return self._detect_hud(image)
         scale_x = frame.width / width
         scale_y = frame.height / height
         bbox = BoundingBox(
@@ -639,6 +727,49 @@ class HuntCapacityDetector:
                     "value": "10/10",
                     "anchor_confidence": float(anchor_confidence),
                 },
+            )
+        ]
+
+    def _detect_hud(self, image: np.ndarray) -> list[Detection]:
+        """Read the counter from the HUD pill instead of the egg nest.
+
+        The nest-anchored reading only exists while the nest is on screen, and
+        the map pans away from it for most of a hunt: sampling a live session
+        found the anchor over threshold in one frame out of six. A capacity
+        wait that is invisible five times out of six is read as a stall, and
+        the watchdog answers a stall by restarting the game - an expensive
+        reply to teams that only needed time to come back.
+        """
+
+        x1, y1, x2, y2 = self.hud_region
+        if x1 >= x2 or y1 >= y2 or x2 > image.shape[1] or y2 > image.shape[0]:
+            return []
+        gray = cv2.cvtColor(image[y1:y2, x1:x2], cv2.COLOR_BGR2GRAY)
+        mask = np.where(gray > 210, 255, 0).astype(np.uint8)
+        _, _, stats, _ = cv2.connectedComponentsWithStats(mask)
+        glyphs = sorted(
+            (
+                (int(x), int(y), int(glyph_width), int(glyph_height), int(area))
+                for x, y, glyph_width, glyph_height, area in stats[1:]
+                if area >= 8 and glyph_height >= 8
+            ),
+            key=lambda item: item[0],
+        )
+        # An odd count with a matching run either side is the only shape a
+        # full counter takes; every partial reading is shorter on the left.
+        if len(glyphs) < 3 or len(glyphs) % 2 == 0:
+            return []
+        half = len(glyphs) // 2
+        if not _groups_match(mask, glyphs[:half], glyphs[half + 1 :]):
+            return []
+        return [
+            Detection(
+                type=self.target_type,
+                x=round((x1 + x2) / 2),
+                y=round((y1 + y2) / 2),
+                confidence=1.0,
+                bbox=BoundingBox(x=x1, y=y1, width=x2 - x1, height=y2 - y1),
+                metadata={"detector": "hunt_team_hud", "digits": half},
             )
         ]
 
@@ -718,9 +849,11 @@ class StartupGrowthResultDetector:
         if (frame.width, frame.height) != self.reference_size:
             image = cv2.resize(image, (width, height), interpolation=cv2.INTER_LINEAR)
 
-        # This modal is the only launch screen with a tall white card and two
-        # large cyan/green shortcut buttons along its bottom edge. Requiring
-        # all three features avoids sending a tap on ordinary map screens.
+        # This modal is the only launch screen with a tall white card and a
+        # shortcut button along its bottom edge. Older game builds showed two
+        # buttons (auto battle + nest); newer builds keep only the centred
+        # green "Nest management shortcut" button. Requiring the white card
+        # plus a known button layout avoids tapping ordinary map screens.
         white_regions = np.concatenate(
             [
                 image[190:275, 200:685].reshape(-1, 3),
@@ -738,25 +871,53 @@ class StartupGrowthResultDetector:
             & (cyan[:, :, 1] >= 120)
             & (cyan[:, :, 0] >= cyan[:, :, 2] + 35)
         )
-        green = image[1190:1340, 475:710].astype(np.int16)
-        green_mask = (
-            (green[:, :, 1] >= 130)
-            & (green[:, :, 1] >= green[:, :, 0] + 15)
-            & (green[:, :, 1] >= green[:, :, 2] + 15)
+        legacy_green = image[1190:1340, 475:710].astype(np.int16)
+        legacy_green_mask = (
+            (legacy_green[:, :, 1] >= 130)
+            & (legacy_green[:, :, 1] >= legacy_green[:, :, 0] + 15)
+            & (legacy_green[:, :, 1] >= legacy_green[:, :, 2] + 15)
         )
         cyan_ratio = float(np.mean(cyan_mask))
-        green_ratio = float(np.mean(green_mask))
-        if cyan_ratio < 0.2 or green_ratio < 0.2:
+        legacy_green_ratio = float(np.mean(legacy_green_mask))
+
+        # The new centred button is approximately x=330..570, y=1200..1340
+        # in the 900x1600 reference layout. Sampling a slightly wider band
+        # tolerates the rounded corners and the egg artwork overlapping its
+        # top edge while still requiring a substantial green control.
+        centred_green = image[1200:1340, 320:580].astype(np.int16)
+        centred_green_mask = (
+            (centred_green[:, :, 1] >= 120)
+            & (centred_green[:, :, 1] >= centred_green[:, :, 0] + 12)
+            & (centred_green[:, :, 1] >= centred_green[:, :, 2] + 12)
+        )
+        centred_green_ratio = float(np.mean(centred_green_mask))
+
+        legacy_layout = cyan_ratio >= 0.2 and legacy_green_ratio >= 0.2
+        centred_layout = centred_green_ratio >= 0.25
+        if not legacy_layout and not centred_layout:
             return []
+
+        if centred_layout and not legacy_layout:
+            shortcut_layout = "centered_nest"
+            shortcut_point = (450.0, 1270.0)
+            growth_result_point = shortcut_point
+            button_ratio = centred_green_ratio
+        else:
+            shortcut_layout = "legacy_dual"
+            shortcut_point = (592.0, 1265.0)
+            # Hunt mode uses the left legacy shortcut to dismiss the result;
+            # full-hatch mode reads shortcut_point above and chooses the nest.
+            growth_result_point = (307.0, 1265.0)
+            button_ratio = min(cyan_ratio, legacy_green_ratio)
 
         scale_x = frame.width / width
         scale_y = frame.height / height
         return [
             Detection(
                 type=self.target_type,
-                x=round(307 * scale_x),
-                y=round(1265 * scale_y),
-                confidence=min(0.99, 0.7 + min(cyan_ratio, green_ratio) * 0.29),
+                x=round(growth_result_point[0] * scale_x),
+                y=round(growth_result_point[1] * scale_y),
+                confidence=min(0.99, 0.7 + button_ratio * 0.29),
                 bbox=BoundingBox(
                     x=round(125 * scale_x),
                     y=round(180 * scale_y),
@@ -767,7 +928,10 @@ class StartupGrowthResultDetector:
                     "detector": "startup_growth_result_layout",
                     "white_ratio": white_ratio,
                     "cyan_ratio": cyan_ratio,
-                    "green_ratio": green_ratio,
+                    "green_ratio": legacy_green_ratio,
+                    "centered_green_ratio": centred_green_ratio,
+                    "shortcut_layout": shortcut_layout,
+                    "shortcut_point": shortcut_point,
                 },
             )
         ]
@@ -834,6 +998,177 @@ class StartupAutoBattleDialogDetector:
                     "detector": "startup_auto_battle_layout",
                     "white_ratio": white_ratio,
                     "cyan_ratio": cyan_ratio,
+                },
+            )
+        ]
+
+
+class StartupOfferDismissDetector:
+    """Detect the timed promotion card that dims the map mid-session.
+
+    The game raises a paid offer ("遺跡探索促進" and friends) on its own while
+    the bot is running.  It has no close button and Android Back does not
+    touch it: on 2026-08-31 the recovery ladder spent its whole budget on one,
+    logging ``pixel_change=0.000`` for every Back, and S9 dropped the hatch
+    workflow at 10:54 to hunt for the rest of the session.
+
+    The card is identified by three independent bands, because the offer
+    artwork itself changes between promotions while the frame does not: an
+    orange title ribbon, a cream body panel, and - the part ordinary bright
+    screens cannot fake - both side margins dimmed by the modal backdrop.
+    Across 69 captured non-offer frames the orange band never exceeded 0.002.
+    """
+
+    def __init__(
+        self,
+        target_type: str = "startup_offer_dismiss",
+        reference_size: tuple[int, int] = (900, 1600),
+        min_orange_ratio: float = 0.45,
+        min_cream_ratio: float = 0.45,
+        min_dim_ratio: float = 0.90,
+    ) -> None:
+        self.target_type = target_type
+        self.reference_size = reference_size
+        self.min_orange_ratio = min_orange_ratio
+        self.min_cream_ratio = min_cream_ratio
+        self.min_dim_ratio = min_dim_ratio
+
+    def detect(self, frame: Frame) -> list[Detection]:
+        width, height = self.reference_size
+        image = frame.image
+        if (frame.width, frame.height) != self.reference_size:
+            image = cv2.resize(image, (width, height), interpolation=cv2.INTER_LINEAR)
+
+        pixels = image.astype(np.int16)
+        blue, green, red = pixels[:, :, 0], pixels[:, :, 1], pixels[:, :, 2]
+
+        # The title ribbon: saturated orange, measured at 0.753 on the frame
+        # that stalled S9 and at most 0.002 on every captured map screen.
+        orange = (
+            (red >= 180)
+            & (green >= 110)
+            & (green <= 205)
+            & (blue <= 110)
+            & (red >= blue + 90)
+        )
+        orange_ratio = float(orange[275:355, 175:730].mean())
+        if orange_ratio < self.min_orange_ratio:
+            return []
+
+        cream = (blue >= 120) & (green >= 170) & (red >= 200) & (red >= blue + 30)
+        cream_ratio = float(cream[820:1240, 185:715].mean())
+        if cream_ratio < self.min_cream_ratio:
+            return []
+
+        # Both margins must be dimmed.  This is what separates a modal offer
+        # from a bright, fully interactive screen that merely contains orange
+        # and cream artwork, and it is why the tap below is safe to make.
+        dimmed = (red < 90) & (green < 90) & (blue < 90)
+        dim_ratio = min(
+            float(dimmed[300:1300, 0:120].mean()),
+            float(dimmed[300:1300, 780:900].mean()),
+        )
+        if dim_ratio < self.min_dim_ratio:
+            return []
+
+        scale_x = frame.width / width
+        scale_y = frame.height / height
+        return [
+            Detection(
+                type=self.target_type,
+                # The card carries no close control; tapping the dimmed
+                # backdrop dismisses it.  Reuse the mask point the nest and
+                # auto-place layers already close through - it measured
+                # (33,34,32) on the stalled frame, so it lands on backdrop.
+                x=round(50 * scale_x),
+                y=round(800 * scale_y),
+                confidence=min(0.99, 0.7 + orange_ratio * 0.29),
+                bbox=BoundingBox(
+                    x=round(165 * scale_x),
+                    y=round(265 * scale_y),
+                    width=round(575 * scale_x),
+                    height=round(1000 * scale_y),
+                ),
+                metadata={
+                    "detector": "startup_offer_layout",
+                    "orange_ratio": orange_ratio,
+                    "cream_ratio": cream_ratio,
+                    "dim_ratio": dim_ratio,
+                },
+            )
+        ]
+
+
+class HatchAutoplaceDialogDetector:
+    """Detect auto-place confirmation variants by their stable modal layout.
+
+    Both the best-attribute and level-order wording contain orange emphasis,
+    followed by a cyan Yes button and a red No button. Requiring all three
+    regions distinguishes this dialog from parent-selection confirmations.
+    """
+
+    def __init__(
+        self,
+        target_type: str = "hatch_autoplace_notice",
+        reference_size: tuple[int, int] = (900, 1600),
+    ) -> None:
+        self.target_type = target_type
+        self.reference_size = reference_size
+
+    def detect(self, frame: Frame) -> list[Detection]:
+        width, height = self.reference_size
+        image = frame.image
+        if (frame.width, frame.height) != self.reference_size:
+            image = cv2.resize(image, (width, height), interpolation=cv2.INTER_LINEAR)
+
+        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+        orange = cv2.inRange(hsv[600:820, 235:665], (0, 70, 120), (18, 255, 255))
+        if cv2.countNonZero(orange) < 80:
+            return []
+
+        def color_ratio(
+            region: np.ndarray,
+            predicate: np.ndarray,
+        ) -> float:
+            return float(np.mean(predicate)) if region.size else 0.0
+
+        yes = image[800:1010, 250:455].astype(np.int16)
+        yes_ratio = color_ratio(
+            yes,
+            (yes[:, :, 0] >= 120)
+            & (yes[:, :, 1] >= 120)
+            & (yes[:, :, 0] >= yes[:, :, 2] + 25)
+            & (yes[:, :, 1] >= yes[:, :, 2] + 25),
+        )
+        no = image[800:1010, 445:650].astype(np.int16)
+        no_ratio = color_ratio(
+            no,
+            (no[:, :, 2] >= 150)
+            & (no[:, :, 2] >= no[:, :, 0] + 35)
+            & (no[:, :, 2] >= no[:, :, 1] + 20),
+        )
+        if yes_ratio < 0.08 or no_ratio < 0.08:
+            return []
+
+        scale_x = frame.width / width
+        scale_y = frame.height / height
+        bbox = BoundingBox(
+            x=round(235 * scale_x),
+            y=round(580 * scale_y),
+            width=round(430 * scale_x),
+            height=round(440 * scale_y),
+        )
+        return [
+            Detection(
+                type=self.target_type,
+                x=round(450 * scale_x),
+                y=round(720 * scale_y),
+                confidence=min(0.99, 0.8 + min(yes_ratio, no_ratio)),
+                bbox=bbox,
+                metadata={
+                    "detector": "hatch_autoplace_dialog_layout",
+                    "yes_ratio": yes_ratio,
+                    "no_ratio": no_ratio,
                 },
             )
         ]

@@ -8,6 +8,19 @@ from pathlib import Path
 from typing import Any, Literal
 
 from .models import ExclusionZone
+from .nests import StatUpgradeGuard, default_stat_upgrade_guards
+
+CUSTOM_WORKFLOW_STAGE_ORDER: tuple[str, ...] = (
+    "attack",
+    "hp",
+    "top",
+    "mass",
+    "collect",
+    "cave",
+    "hatch",
+    "hunt",
+)
+DEFAULT_CUSTOM_WORKFLOW_STAGES: tuple[str, ...] = ("collect", "hatch", "hunt")
 
 
 class ConfigError(ValueError):
@@ -56,6 +69,53 @@ def _default_speed_profiles() -> dict[str, dict[str, int]]:
     return {name: dict(values) for name, values in DEFAULT_SPEED_PROFILES.items()}
 
 
+def _merge_config_data(
+    base: dict[str, Any], overrides: dict[str, Any]
+) -> dict[str, Any]:
+    """Recursively overlay an instance config without sharing nested objects."""
+
+    merged: dict[str, Any] = {}
+    for key, value in base.items():
+        merged[key] = (
+            _merge_config_data(value, {}) if isinstance(value, dict) else value
+        )
+    for key, value in overrides.items():
+        current = merged.get(key)
+        if isinstance(current, dict) and isinstance(value, dict):
+            merged[key] = _merge_config_data(current, value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _instance_base_config(config_path: Path) -> Path | None:
+    """Find the shared config for ``instances/<id>/config.json`` layouts."""
+
+    instances_root = config_path.parent.parent
+    if instances_root.name.casefold() != "instances":
+        return None
+    runtime_root = instances_root.parent
+    for candidate in (
+        runtime_root / "app" / "config.json",
+        runtime_root / "config.json",
+    ):
+        if candidate.is_file() and candidate.resolve() != config_path:
+            return candidate.resolve()
+    return None
+
+
+def _read_config_object(config_path: Path, *, label: str = "Config") -> dict[str, Any]:
+    try:
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise ConfigError(f"{label} file not found: {config_path}") from exc
+    except json.JSONDecodeError as exc:
+        raise ConfigError(f"Invalid JSON in {config_path}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ConfigError(f"{label} root must be a JSON object")
+    return data
+
+
 @dataclass(frozen=True, slots=True)
 class CaptureConfig:
     backend: Literal["mss", "adb"] = "mss"
@@ -69,9 +129,13 @@ class CaptureConfig:
 @dataclass(frozen=True, slots=True)
 class AdbConfig:
     executable: str | None = None
+    # 留空(null)代表「自動找」:啟動時探測 discovery_ports,恰好找到一台就用它。
     serial: str | None = "127.0.0.1:5555"
     connect_on_start: bool = True
     timeout: float = 5.0
+    auto_discover: bool = True
+    # 空 tuple 代表沿用 adb_discovery.DEFAULT_DISCOVERY_PORTS。
+    discovery_ports: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,23 +164,118 @@ class PlannerConfig:
     capacity_wait_seconds: float = 300.0
     ring_width: float = 150.0
     own_path_angle_degrees: float = 7.0
-    stalled_recenter_frames: int = 8
+    stalled_recenter_seconds: float = 10.0
+    # Recentering restores the supply of reachable dinosaurs; it is not about
+    # where the egg sits. Reset once fewer than this many candidates survive.
+    recenter_min_candidates: int = 1
+    # Two consecutive empty map observations are enough to prove the current
+    # area is exhausted without waiting for the wall-clock stall timeout.
+    empty_supply_recenter_frames: int = 2
+    # Every other stall guard is written as "leave once the expected control
+    # appears", so none of them fire on a screen showing no known control at
+    # all. This one is measured from the planner alone.
+    blind_idle_seconds: float = 20.0
+    mail_stage_timeout_seconds: float = 20.0
     map_settle_frames: int = 2
     map_settle_tolerance_px: float = 20.0
     map_settle_max_frames: int = 12
+    # How far from the viewport center a dinosaur may sit and still be worth
+    # tapping. Beyond it the tap mostly just recenters the map without opening
+    # the hunt panel. 0 disables the limit.
+    max_center_distance_px: float = 600.0
     bottom_exclusion_px: int = 180
     exclusion_zones: tuple[ExclusionZone, ...] = ()
     retry_exhausted_cooldown_ms: int = 60_000
     suppression_radius: float = 60.0
     action_cooldowns_ms: dict[str, int] = field(default_factory=dict)
+    stage_scoped_scan: bool = True
+    full_scan_interval_seconds: float = 30.0
+    full_scan_after_idle_cycles: int = 2
 
 
 @dataclass(frozen=True, slots=True)
 class VerifyConfig:
     max_distance: float = 35.0
     pixel_change_threshold: float = 0.08
+    minimum_checks: int = 2
     failure_types: tuple[str, ...] = ()
     success_transitions: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    success_requires_target_absence: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class HatchConfig:
+    """Auto Hatch feature settings (docs/auto-hatch-plan.md).
+
+    Coordinates live in manifest reference space (a 900-wide layout) and are
+    rescaled by frame width at run time, same as ``ExclusionZone``.
+    """
+
+    manifest: Path = Path("assets/hatch/manifest.json")
+    reference_width: float = 900.0
+    # The egg pile is styled dynamically, so it is tapped by coordinate, never
+    # matched by template. Calibrate against a snapshot before first use.
+    egg_pile: tuple[float, float] = (450.0, 1330.0)
+    scroll_vector: tuple[float, float, float, float] = (450.0, 1100.0, 450.0, 500.0)
+    scroll_duration_ms: int = 400
+    # Ready eggs are ordered at the top. If the visible rows have no hatch
+    # label, lower rows do not need scanning. Keep scrolling opt-in only.
+    max_scrolls: int = 0
+    # Game-imposed incubation cooldown is ~25 minutes; this is only how often
+    # the bot re-enters to check, per the plan's rescan rule.
+    rescan_interval_seconds: float = 600.0
+    # Fixed game stat increments are used as a final OCR/action guard. Update
+    # these ranges here when a later game version expands them.
+    stat_upgrade_guards: dict[str, StatUpgradeGuard] = field(
+        default_factory=default_stat_upgrade_guards
+    )
+    # Some HP/attack breeding lines intentionally start from a 10/1/1 parent.
+    # Keep this opt-in because the same values can otherwise hide OCR errors.
+    allow_extreme_specialization_parent: bool = False
+    # Expel a newborn on the hatch-result screen when it reaches neither
+    # breeding target. A specialized line deliberately floors the opposing
+    # stat, so clearing either floor is enough to be kept: 5880/1 and 10/854
+    # are successes, while 1000/20 and 20/444 are lines that drifted. Both
+    # floors must be set for any expelling to happen, and an unreadable screen
+    # is always claimed. Keep the dry run on until the logged verdicts have
+    # been checked - expelling cannot be undone.
+    expel_below_hp: int = 0
+    expel_below_attack: int = 0
+    expel_dry_run: bool = True
+    # Fill Attack/HP nests with the game's tag-scoped primary-stat auto-place
+    # and stop there, the same way Top and Mass already work.
+    #
+    # A manual purity-repair pass used to follow. It cost ~12s per side across
+    # six sides and returned 20 keeps for 1 swap, because auto-place had just
+    # ordered the pool by the very stat the repair then sorted by. Worse, the
+    # one real swap left a highlight animation over the sibling's stats, the
+    # digits binarised to black, and the stage aborted into home recovery - so
+    # the pass was most likely to break right after it did something useful.
+    auto_place_specializations: bool = False
+    # OCR values must repeat across complete frames before any parent or
+    # candidate tap is allowed. Retries include the initial observations.
+    stat_consistent_reads: int = 2
+    stat_read_retries: int = 3
+    require_home_anchor: bool = True
+    home_failure_limit: int = 3
+    home_backoff_seconds: float = 30.0
+    # Phase C: the denominator shown by the cave-view population HUD.
+    # Keep this configurable because the game can expand the population cap.
+    capacity_limit: int = 350
+    # Cull once the cave-view population readout reaches this safety limit.
+    # May equal the configured cap when no spare population is desired.
+    cull_threshold: int = 330
+    # Below the cull line, rerun nest screening every this many newly added
+    # dinosaurs, measured from the last completed screening.
+    screening_growth_interval: int = 20
+    # Slow machines may need several complete detect cycles before the HUD is
+    # rendered sharply enough for the capacity reader.
+    capacity_read_retries: int = 2
+    # Give the cave map more complete detect cycles to prove that it returned
+    # home before entering bounded recovery.
+    cave_recenter_checks: int = 3
+    # Time without an actionable target before full hatch begins home recovery.
+    recovery_timeout_seconds: float = 15.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,6 +288,7 @@ class TrainingConfig:
 class WorkflowConfig:
     max_cycles: int = 0
     complete_on: tuple[str, ...] = ()
+    custom_stages: tuple[str, ...] = DEFAULT_CUSTOM_WORKFLOW_STAGES
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,6 +302,27 @@ class EventLogConfig:
 
     enabled: bool = True
     max_bytes: int = 16 * 1024 * 1024
+    # Generations kept behind the live file. The cap fills in about 97 minutes,
+    # so one generation covered barely three hours and an overnight run lost
+    # everything before the last stretch. Generations past the first are
+    # gzipped to 6.5%, so twenty of them cost about 21 MB instead of 320 MB.
+    backup_count: int = 20
+
+
+@dataclass(frozen=True, slots=True)
+class StallConfig:
+    """Evidence written when the planner stalls on an unrecognised screen.
+
+    The planner owns the timer (``planner.blind_idle_seconds``); this owns what
+    happens once it fires. On by default, because these episodes are rare
+    enough that nobody will have switched it on before the one that matters.
+    """
+
+    snapshots_enabled: bool = True
+    # Repeated recovery failures frequently show the same frame. Three recent
+    # groups preserve change over time without letting a loop consume disk.
+    snapshot_limit: int = 3
+    snapshot_min_interval_seconds: float = 60.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,10 +330,22 @@ class RecoveryConfig:
     enabled: bool = True
     black_screen_timeout_seconds: float = 45.0
     black_mean_threshold: float = 2.0
-    no_hunt_progress_timeout_seconds: float = 180.0
+    # Restarting the app is the most expensive escape there is - force-stop,
+    # relaunch, a launch wait and the whole startup dialog sequence - and a
+    # measured run needed two of them to leave one stall. Now that the planner
+    # releases its own stages first, this is the backstop rather than the only
+    # way out, so it can fire sooner.
+    no_hunt_progress_timeout_seconds: float = 90.0
     hunt_progress_suspend_budget_seconds: float = 120.0
     restart_cooldown_seconds: float = 90.0
     launch_wait_seconds: float = 15.0
+    # One exhausted retry budget is still a local failure. Repeated exhausted
+    # budgets for the same behaviour first unwind its workflow, then restart
+    # the game. If restarts themselves do not produce a real milestone, stop
+    # instead of force-stopping the app forever.
+    action_failure_stage_threshold: int = 2
+    action_failure_restart_threshold: int = 3
+    max_restarts_without_progress: int = 3
     package: str = "com.mondayoff.dinomutant"
     activity: str = "com.unity3d.player.UnityPlayerActivity"
 
@@ -173,7 +366,12 @@ class AppConfig:
     # The text log is read back by the control window and the diagnostic
     # bundle, so its size is a latency budget, not just disk.
     log_max_bytes: int = 32 * 1024 * 1024
+    # Same reasoning as event_log.backup_count; the text log fills its cap in
+    # roughly two hours and compresses to 4.4%.
+    log_backup_count: int = 12
     transition_poll_interval: int = 250
+    # Set by the CLI speed preset; config-file loads leave it unset.
+    timing_profile: str | None = None
     speed_profiles: dict[str, dict[str, int]] = field(
         default_factory=_default_speed_profiles
     )
@@ -183,14 +381,20 @@ class AppConfig:
     detector: DetectorConfig = field(default_factory=DetectorConfig)
     planner: PlannerConfig = field(default_factory=PlannerConfig)
     verify: VerifyConfig = field(default_factory=VerifyConfig)
+    hatch: HatchConfig = field(default_factory=HatchConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
     workflow: WorkflowConfig = field(default_factory=WorkflowConfig)
     recovery: RecoveryConfig = field(default_factory=RecoveryConfig)
     event_log: EventLogConfig = field(default_factory=EventLogConfig)
+    stalls: StallConfig = field(default_factory=StallConfig)
 
     @property
     def logs_dir(self) -> Path:
         return self.root / "logs"
+
+    @property
+    def stalls_dir(self) -> Path:
+        return self.root / "logs" / "stalls"
 
     @property
     def debug_dir(self) -> Path:
@@ -211,6 +415,81 @@ def _section(data: dict[str, Any], name: str) -> dict[str, Any]:
 def _path_from(root: Path, raw: str) -> Path:
     path = Path(raw)
     return path if path.is_absolute() else root / path
+
+
+def _port_tuple(data: dict[str, Any], label: str) -> tuple[int, ...]:
+    """Parse an optional list of TCP ports, rejecting values that cannot be one."""
+
+    raw = data.get(label.rsplit(".", 1)[-1])
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise ConfigError(f"{label} must be a list of port numbers")
+    ports: list[int] = []
+    for value in raw:
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ConfigError(f"{label} must contain integers")
+        if not 1 <= value <= 65535:
+            raise ConfigError(f"{label} entries must be between 1 and 65535")
+        ports.append(value)
+    return tuple(dict.fromkeys(ports))
+
+
+def _number_tuple(
+    data: dict[str, Any],
+    label: str,
+    key: str,
+    length: int,
+    default: tuple[float, ...],
+) -> tuple[float, ...]:
+    raw = data.get(key)
+    if raw is None:
+        return default
+    if not isinstance(raw, list) or len(raw) != length:
+        raise ConfigError(f"{label} must be a list of {length} numbers")
+    try:
+        return tuple(float(value) for value in raw)
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"{label} must contain numbers") from exc
+
+
+def _stat_upgrade_guards(data: dict[str, Any]) -> dict[str, StatUpgradeGuard]:
+    raw = data.get("stat_upgrade_guards")
+    guards = default_stat_upgrade_guards()
+    if raw is None:
+        return guards
+    if not isinstance(raw, dict):
+        raise ConfigError("hatch.stat_upgrade_guards must be a JSON object")
+
+    unknown_stats = set(raw) - set(guards)
+    if unknown_stats:
+        raise ConfigError(
+            "hatch.stat_upgrade_guards contains unknown stats: "
+            + ", ".join(sorted(str(item) for item in unknown_stats))
+        )
+    allowed_keys = frozenset(
+        {"min_delta", "max_delta", "min_value", "max_value", "multiple_of"}
+    )
+    for stat, entry in raw.items():
+        if not isinstance(entry, dict):
+            raise ConfigError(f"hatch.stat_upgrade_guards.{stat} must be a JSON object")
+        unknown_keys = set(entry) - allowed_keys
+        if unknown_keys:
+            raise ConfigError(
+                f"hatch.stat_upgrade_guards.{stat} contains unknown keys: "
+                + ", ".join(sorted(str(item) for item in unknown_keys))
+            )
+        default = guards[stat]
+        values: dict[str, int | None] = {}
+        for key in allowed_keys:
+            value = entry.get(key, getattr(default, key))
+            if value is not None and (isinstance(value, bool) or not isinstance(value, int)):
+                raise ConfigError(
+                    f"hatch.stat_upgrade_guards.{stat}.{key} must be an integer or null"
+                )
+            values[key] = value
+        guards[stat] = StatUpgradeGuard(**values)
+    return guards
 
 
 def _exclusion_zones(data: dict[str, Any]) -> tuple[ExclusionZone, ...]:
@@ -269,14 +548,13 @@ def _exclusion_zones(data: dict[str, Any]) -> tuple[ExclusionZone, ...]:
 
 def load_config(path: str | Path = "config.json") -> AppConfig:
     config_path = Path(path).expanduser().resolve()
-    try:
-        data = json.loads(config_path.read_text(encoding="utf-8"))
-    except FileNotFoundError as exc:
-        raise ConfigError(f"Config file not found: {config_path}") from exc
-    except json.JSONDecodeError as exc:
-        raise ConfigError(f"Invalid JSON in {config_path}: {exc}") from exc
-    if not isinstance(data, dict):
-        raise ConfigError("Config root must be a JSON object")
+    data = _read_config_object(config_path)
+    base_config = _instance_base_config(config_path)
+    if base_config is not None:
+        data = _merge_config_data(
+            _read_config_object(base_config, label="Base config"),
+            data,
+        )
 
     root = config_path.parent
     emulator = str(data.get("emulator", "bluestacks")).lower()
@@ -289,10 +567,12 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
     detector_data = _section(data, "detector")
     planner_data = _section(data, "planner")
     verify_data = _section(data, "verify")
+    hatch_data = _section(data, "hatch")
     training_data = _section(data, "training")
     workflow_data = _section(data, "workflow")
     recovery_data = _section(data, "recovery")
     event_log_data = _section(data, "event_log")
+    stalls_data = _section(data, "stalls")
     speed_profiles_data = _section(data, "speed_profiles")
 
     speed_profiles = _default_speed_profiles()
@@ -351,6 +631,7 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
         save_debug_image=bool(data.get("save_debug_image", False)),
         idle_delay=int(data.get("idle_delay", 500)),
         log_max_bytes=int(data.get("log_max_bytes", 32 * 1024 * 1024)),
+        log_backup_count=int(data.get("log_backup_count", 12)),
         transition_poll_interval=int(data.get("transition_poll_interval", 250)),
         speed_profiles=speed_profiles,
         max_actions=int(data.get("max_actions", 0)),
@@ -371,6 +652,8 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
             serial=adb_data.get("serial", emulator_profile["serial"]),
             connect_on_start=bool(adb_data.get("connect_on_start", True)),
             timeout=float(adb_data.get("timeout", 5.0)),
+            auto_discover=bool(adb_data.get("auto_discover", True)),
+            discovery_ports=_port_tuple(adb_data, "adb.discovery_ports"),
         ),
         detector=DetectorConfig(
             manifest=_path_from(root, detector_data.get("manifest", "assets/manifest.json")),
@@ -409,8 +692,18 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
             own_path_angle_degrees=float(
                 planner_data.get("own_path_angle_degrees", 7)
             ),
-            stalled_recenter_frames=int(
-                planner_data.get("stalled_recenter_frames", 8)
+            stalled_recenter_seconds=float(
+                planner_data.get("stalled_recenter_seconds", 10)
+            ),
+            recenter_min_candidates=int(
+                planner_data.get("recenter_min_candidates", 1)
+            ),
+            empty_supply_recenter_frames=int(
+                planner_data.get("empty_supply_recenter_frames", 2)
+            ),
+            blind_idle_seconds=float(planner_data.get("blind_idle_seconds", 20)),
+            mail_stage_timeout_seconds=float(
+                planner_data.get("mail_stage_timeout_seconds", 20)
             ),
             map_settle_frames=int(planner_data.get("map_settle_frames", 2)),
             map_settle_tolerance_px=float(
@@ -418,6 +711,9 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
             ),
             map_settle_max_frames=int(
                 planner_data.get("map_settle_max_frames", 12)
+            ),
+            max_center_distance_px=float(
+                planner_data.get("max_center_distance_px", 600)
             ),
             bottom_exclusion_px=int(planner_data.get("bottom_exclusion_px", 180)),
             exclusion_zones=_exclusion_zones(planner_data),
@@ -431,10 +727,18 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
                     planner_data, "action_cooldowns_ms"
                 ).items()
             },
+            stage_scoped_scan=bool(planner_data.get("stage_scoped_scan", True)),
+            full_scan_interval_seconds=float(
+                planner_data.get("full_scan_interval_seconds", 30)
+            ),
+            full_scan_after_idle_cycles=int(
+                planner_data.get("full_scan_after_idle_cycles", 2)
+            ),
         ),
         verify=VerifyConfig(
             max_distance=float(verify_data.get("max_distance", 35)),
             pixel_change_threshold=float(verify_data.get("pixel_change_threshold", 0.08)),
+            minimum_checks=int(verify_data.get("minimum_checks", 2)),
             failure_types=tuple(verify_data.get("failure_types", [])),
             success_transitions={
                 str(target_type): tuple(str(item) for item in successors)
@@ -442,6 +746,57 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
                     "success_transitions", {}
                 ).items()
             },
+            success_requires_target_absence=tuple(
+                str(item)
+                for item in verify_data.get(
+                    "success_requires_target_absence",
+                    [],
+                )
+            ),
+        ),
+        hatch=HatchConfig(
+            manifest=_path_from(
+                root, hatch_data.get("manifest", "assets/hatch/manifest.json")
+            ),
+            reference_width=float(hatch_data.get("reference_width", 900)),
+            egg_pile=_number_tuple(hatch_data, "hatch.egg_pile", "egg_pile", 2, (450.0, 1330.0)),
+            scroll_vector=_number_tuple(
+                hatch_data,
+                "hatch.scroll_vector",
+                "scroll_vector",
+                4,
+                (450.0, 1100.0, 450.0, 500.0),
+            ),
+            scroll_duration_ms=int(hatch_data.get("scroll_duration_ms", 400)),
+            max_scrolls=int(hatch_data.get("max_scrolls", 0)),
+            rescan_interval_seconds=float(
+                hatch_data.get("rescan_interval_seconds", 600)
+            ),
+            stat_upgrade_guards=_stat_upgrade_guards(hatch_data),
+            allow_extreme_specialization_parent=bool(
+                hatch_data.get("allow_extreme_specialization_parent", False)
+            ),
+            auto_place_specializations=bool(
+                hatch_data.get("auto_place_specializations", False)
+            ),
+            expel_below_hp=int(hatch_data.get("expel_below_hp", 0)),
+            expel_below_attack=int(hatch_data.get("expel_below_attack", 0)),
+            expel_dry_run=bool(hatch_data.get("expel_dry_run", True)),
+            stat_consistent_reads=int(hatch_data.get("stat_consistent_reads", 2)),
+            stat_read_retries=int(hatch_data.get("stat_read_retries", 3)),
+            require_home_anchor=bool(hatch_data.get("require_home_anchor", True)),
+            home_failure_limit=int(hatch_data.get("home_failure_limit", 3)),
+            home_backoff_seconds=float(hatch_data.get("home_backoff_seconds", 30)),
+            capacity_limit=int(hatch_data.get("capacity_limit", 350)),
+            cull_threshold=int(hatch_data.get("cull_threshold", 330)),
+            screening_growth_interval=int(
+                hatch_data.get("screening_growth_interval", 20)
+            ),
+            capacity_read_retries=int(hatch_data.get("capacity_read_retries", 2)),
+            cave_recenter_checks=int(hatch_data.get("cave_recenter_checks", 3)),
+            recovery_timeout_seconds=float(
+                hatch_data.get("recovery_timeout_seconds", 15)
+            ),
         ),
         training=TrainingConfig(
             fps=float(training_data.get("fps", 2)),
@@ -450,6 +805,13 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
         workflow=WorkflowConfig(
             max_cycles=int(workflow_data.get("max_cycles", 0)),
             complete_on=tuple(workflow_data.get("complete_on", [])),
+            custom_stages=tuple(
+                str(stage)
+                for stage in workflow_data.get(
+                    "custom_stages",
+                    DEFAULT_CUSTOM_WORKFLOW_STAGES,
+                )
+            ),
         ),
         recovery=RecoveryConfig(
             enabled=bool(recovery_data.get("enabled", True)),
@@ -460,7 +822,7 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
                 recovery_data.get("black_mean_threshold", 2)
             ),
             no_hunt_progress_timeout_seconds=float(
-                recovery_data.get("no_hunt_progress_timeout_seconds", 180)
+                recovery_data.get("no_hunt_progress_timeout_seconds", 90)
             ),
             hunt_progress_suspend_budget_seconds=float(
                 recovery_data.get("hunt_progress_suspend_budget_seconds", 120)
@@ -470,6 +832,15 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
             ),
             launch_wait_seconds=float(
                 recovery_data.get("launch_wait_seconds", 15)
+            ),
+            action_failure_stage_threshold=int(
+                recovery_data.get("action_failure_stage_threshold", 2)
+            ),
+            action_failure_restart_threshold=int(
+                recovery_data.get("action_failure_restart_threshold", 3)
+            ),
+            max_restarts_without_progress=int(
+                recovery_data.get("max_restarts_without_progress", 3)
             ),
             package=str(
                 recovery_data.get("package", "com.mondayoff.dinomutant")
@@ -483,6 +854,14 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
         event_log=EventLogConfig(
             enabled=bool(event_log_data.get("enabled", True)),
             max_bytes=int(event_log_data.get("max_bytes", 16 * 1024 * 1024)),
+            backup_count=int(event_log_data.get("backup_count", 20)),
+        ),
+        stalls=StallConfig(
+            snapshots_enabled=bool(stalls_data.get("snapshots_enabled", True)),
+            snapshot_limit=int(stalls_data.get("snapshot_limit", 3)),
+            snapshot_min_interval_seconds=float(
+                stalls_data.get("snapshot_min_interval_seconds", 60)
+            ),
         ),
     )
     _validate(config)
@@ -517,16 +896,108 @@ def _validate(config: AppConfig) -> None:
             raise ConfigError(
                 f"speed_profiles.{profile_name}.poll_interval_ms must be greater than zero"
             )
-    if any(action not in {"tap", "back"} for action in config.target_actions.values()):
-        raise ConfigError("target_actions values must be tap or back")
+    if any(
+        action not in {"tap", "back", "swipe"}
+        for action in config.target_actions.values()
+    ):
+        raise ConfigError("target_actions values must be tap, back, or swipe")
+    if config.hatch.reference_width <= 0:
+        raise ConfigError("hatch.reference_width must be greater than zero")
+    if config.hatch.scroll_duration_ms <= 0:
+        raise ConfigError("hatch.scroll_duration_ms must be greater than zero")
+    if config.hatch.max_scrolls < 0:
+        raise ConfigError("hatch.max_scrolls cannot be negative")
+    if config.hatch.rescan_interval_seconds < 0:
+        raise ConfigError("hatch.rescan_interval_seconds cannot be negative")
+    expected_stats = {"hp", "attack", "speed"}
+    if set(config.hatch.stat_upgrade_guards) != expected_stats:
+        raise ConfigError(
+            "hatch.stat_upgrade_guards must define exactly hp, attack, and speed"
+        )
+    for stat, guard in config.hatch.stat_upgrade_guards.items():
+        for name in (
+            "min_delta",
+            "max_delta",
+            "min_value",
+            "max_value",
+            "multiple_of",
+        ):
+            value = getattr(guard, name)
+            if value is not None and value < 0:
+                raise ConfigError(f"hatch.stat_upgrade_guards.{stat}.{name} cannot be negative")
+        if guard.multiple_of == 0:
+            raise ConfigError(
+                f"hatch.stat_upgrade_guards.{stat}.multiple_of must be greater than zero"
+            )
+        if (
+            guard.min_delta is not None
+            and guard.max_delta is not None
+            and guard.min_delta > guard.max_delta
+        ):
+            raise ConfigError(
+                f"hatch.stat_upgrade_guards.{stat}.min_delta cannot exceed max_delta"
+            )
+        if (
+            guard.min_value is not None
+            and guard.max_value is not None
+            and guard.min_value > guard.max_value
+        ):
+            raise ConfigError(
+                f"hatch.stat_upgrade_guards.{stat}.min_value cannot exceed max_value"
+            )
+    if config.hatch.stat_consistent_reads <= 0:
+        raise ConfigError("hatch.stat_consistent_reads must be greater than zero")
+    if config.hatch.stat_read_retries < config.hatch.stat_consistent_reads:
+        raise ConfigError(
+            "hatch.stat_read_retries cannot be less than stat_consistent_reads"
+        )
+    if config.hatch.capacity_read_retries <= 0:
+        raise ConfigError("hatch.capacity_read_retries must be greater than zero")
+    if config.hatch.cave_recenter_checks <= 0:
+        raise ConfigError("hatch.cave_recenter_checks must be greater than zero")
+    if config.hatch.recovery_timeout_seconds <= 0:
+        raise ConfigError("hatch.recovery_timeout_seconds must be greater than zero")
+    if config.hatch.home_failure_limit <= 0:
+        raise ConfigError("hatch.home_failure_limit must be greater than zero")
+    if config.hatch.home_backoff_seconds < 0:
+        raise ConfigError("hatch.home_backoff_seconds cannot be negative")
+    if config.hatch.capacity_limit <= 0:
+        raise ConfigError("hatch.capacity_limit must be greater than zero")
+    if config.hatch.cull_threshold <= 0:
+        raise ConfigError("hatch.cull_threshold must be greater than zero")
+    if config.hatch.cull_threshold > config.hatch.capacity_limit:
+        raise ConfigError(
+            "hatch.cull_threshold cannot exceed hatch.capacity_limit"
+        )
+    if config.hatch.screening_growth_interval <= 0:
+        raise ConfigError(
+            "hatch.screening_growth_interval must be greater than zero"
+        )
     if config.verify_retry < 0:
         raise ConfigError("verify_retry cannot be negative")
+    if config.verify.minimum_checks <= 0:
+        raise ConfigError("verify.minimum_checks must be greater than zero")
     if not 1 <= config.training.fps <= 5:
         raise ConfigError("training.fps must be between 1 and 5")
     if not 1 <= config.training.max_images <= 500:
         raise ConfigError("training.max_images must be between 1 and 500")
     if config.workflow.max_cycles < 0:
         raise ConfigError("workflow.max_cycles cannot be negative")
+    custom_stages = config.workflow.custom_stages
+    if not custom_stages:
+        raise ConfigError("workflow.custom_stages cannot be empty")
+    if len(set(custom_stages)) != len(custom_stages):
+        raise ConfigError("workflow.custom_stages cannot contain duplicates")
+    unknown_custom_stages = set(custom_stages) - set(CUSTOM_WORKFLOW_STAGE_ORDER)
+    if unknown_custom_stages:
+        raise ConfigError(
+            "workflow.custom_stages contains unsupported stages: "
+            + ", ".join(sorted(unknown_custom_stages))
+        )
+    if "hatch" not in custom_stages or "hunt" not in custom_stages:
+        raise ConfigError(
+            "workflow.custom_stages must include hatch and hunt for cooldown cycling"
+        )
     if config.planner.dedup_radius < 0 or config.planner.history_limit <= 0:
         raise ConfigError("planner dedup_radius/history_limit are invalid")
     if config.planner.recenter_every <= 0:
@@ -543,6 +1014,22 @@ def _validate(config: AppConfig) -> None:
         raise ConfigError("recovery.restart_cooldown_seconds cannot be negative")
     if config.recovery.launch_wait_seconds < 0:
         raise ConfigError("recovery.launch_wait_seconds cannot be negative")
+    if config.recovery.action_failure_stage_threshold <= 0:
+        raise ConfigError(
+            "recovery.action_failure_stage_threshold must be greater than zero"
+        )
+    if (
+        config.recovery.action_failure_restart_threshold
+        <= config.recovery.action_failure_stage_threshold
+    ):
+        raise ConfigError(
+            "recovery.action_failure_restart_threshold must be greater than "
+            "action_failure_stage_threshold"
+        )
+    if config.recovery.max_restarts_without_progress <= 0:
+        raise ConfigError(
+            "recovery.max_restarts_without_progress must be greater than zero"
+        )
     if not config.recovery.package or not config.recovery.activity:
         raise ConfigError("recovery package/activity cannot be empty")
     if config.planner.own_path_radius < 0:
@@ -565,8 +1052,30 @@ def _validate(config: AppConfig) -> None:
         raise ConfigError("planner.ring_width must be greater than zero")
     if not 0 <= config.planner.own_path_angle_degrees <= 180:
         raise ConfigError("planner.own_path_angle_degrees must be between 0 and 180")
-    if config.planner.stalled_recenter_frames <= 0:
-        raise ConfigError("planner.stalled_recenter_frames must be greater than zero")
+    if config.planner.stalled_recenter_seconds <= 0:
+        raise ConfigError("planner.stalled_recenter_seconds must be greater than zero")
+    if config.planner.recenter_min_candidates <= 0:
+        raise ConfigError("planner.recenter_min_candidates must be greater than zero")
+    if config.planner.empty_supply_recenter_frames <= 0:
+        raise ConfigError(
+            "planner.empty_supply_recenter_frames must be greater than zero"
+        )
+    if config.planner.blind_idle_seconds <= 0:
+        raise ConfigError("planner.blind_idle_seconds must be greater than zero")
+    if config.planner.mail_stage_timeout_seconds <= 0:
+        raise ConfigError(
+            "planner.mail_stage_timeout_seconds must be greater than zero"
+        )
+    if config.stalls.snapshot_limit <= 0:
+        raise ConfigError("stalls.snapshot_limit must be greater than zero")
+    if config.stalls.snapshot_min_interval_seconds < 0:
+        raise ConfigError("stalls.snapshot_min_interval_seconds cannot be negative")
+    if config.planner.full_scan_interval_seconds < 0:
+        raise ConfigError("planner.full_scan_interval_seconds cannot be negative")
+    if config.planner.full_scan_after_idle_cycles <= 0:
+        raise ConfigError(
+            "planner.full_scan_after_idle_cycles must be greater than zero"
+        )
     if config.planner.map_settle_frames <= 0:
         raise ConfigError("planner.map_settle_frames must be greater than zero")
     if config.planner.map_settle_tolerance_px < 0:
@@ -575,6 +1084,8 @@ def _validate(config: AppConfig) -> None:
         raise ConfigError(
             "planner.map_settle_max_frames must be at least map_settle_frames"
         )
+    if config.planner.max_center_distance_px < 0:
+        raise ConfigError("planner.max_center_distance_px cannot be negative")
     if config.planner.bottom_exclusion_px < 0:
         raise ConfigError("planner.bottom_exclusion_px cannot be negative")
     if config.planner.retry_exhausted_cooldown_ms < 0:
@@ -587,6 +1098,10 @@ def _validate(config: AppConfig) -> None:
         )
     if config.event_log.max_bytes < 0:
         raise ConfigError("event_log.max_bytes cannot be negative")
+    if config.event_log.backup_count < 1:
+        raise ConfigError("event_log.backup_count must be at least one")
+    if config.log_backup_count < 1:
+        raise ConfigError("log_backup_count must be at least one")
     if not 0 <= config.detector.default_threshold <= 1:
         raise ConfigError("detector.default_threshold must be between zero and one")
     if not 0 <= config.detector.nms_iou <= 1:

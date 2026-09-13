@@ -1,0 +1,9 @@
+{
+  "emulator": "custom",
+  "adb": {
+    "serial": "127.0.0.1:5555"
+  },
+  "capture": {
+    "backend": "adb"
+  }
+}

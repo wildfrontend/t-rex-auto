@@ -7,6 +7,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import TextIO
 
+from .rotation import roll_generations
+
 
 class DailyFileHandler(logging.Handler):
     """Write one file per day, rolling over once at a size cap.
@@ -24,11 +26,13 @@ class DailyFileHandler(logging.Handler):
         directory: Path,
         encoding: str = "utf-8",
         max_bytes: int = 0,
+        backup_count: int = 1,
     ) -> None:
         super().__init__()
         self.directory = directory
         self.encoding = encoding
         self.max_bytes = max(0, max_bytes)
+        self.backup_count = max(1, backup_count)
         self._date = ""
         self._stream: TextIO | None = None
         self._written = 0
@@ -44,18 +48,12 @@ class DailyFileHandler(logging.Handler):
             self._stream = path.open("a", encoding=self.encoding, buffering=1)
             self._date = today
         elif self.max_bytes and self._written >= self.max_bytes:
-            # Roll rather than truncate, and keep exactly one generation: the
-            # readers take the newest lines, and a run long enough to fill the
-            # cap has already been diagnosed from the event stream if it needed
-            # diagnosing at all.
+            # Roll rather than truncate: the readers take the newest lines, and
+            # truncating in place leaves nothing right after the roll - which is
+            # exactly when someone reaches for it.
             self._stream.close()
+            roll_generations(self.directory, today, ".log", self.backup_count)
             path = self.directory / f"{today}.log"
-            previous = self.directory / f"{today}.1.log"
-            try:
-                previous.unlink(missing_ok=True)
-                path.replace(previous)
-            except OSError:
-                pass
             self._stream = path.open("w", encoding=self.encoding, buffering=1)
             self._written = 0
         assert self._stream is not None
@@ -81,6 +79,7 @@ def configure_logging(
     logs_dir: Path,
     verbose: bool = False,
     max_bytes: int = 32 * 1024 * 1024,
+    backup_count: int = 12,
 ) -> logging.Logger:
     logger = logging.getLogger("dino_bot")
     logger.setLevel(logging.DEBUG if verbose else logging.INFO)
@@ -90,7 +89,11 @@ def configure_logging(
         logger.removeHandler(handler)
 
     formatter = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s", "%H:%M:%S")
-    file_handler = DailyFileHandler(logs_dir, max_bytes=max_bytes)
+    file_handler = DailyFileHandler(
+        logs_dir,
+        max_bytes=max_bytes,
+        backup_count=backup_count,
+    )
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
 

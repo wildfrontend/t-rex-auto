@@ -1,0 +1,282 @@
+{
+  "reference_size": [
+    900,
+    1600
+  ],
+  "templates": [
+    {
+      "type": "hatch_incubator_title",
+      "file": "templates/hatch-incubator-title.png",
+      "threshold": 0.88
+    },
+    {
+      "type": "hatch_label",
+      "file": "templates/hatch-label.png",
+      "threshold": 0.85,
+      "click_offset": [
+        29,
+        -99
+      ]
+    },
+    {
+      "type": "hatch_close_button",
+      "file": "templates/hatch-close-button.png",
+      "threshold": 0.88
+    },
+    {
+      "type": "hatch_button",
+      "file": "templates/hatch-button.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_claim_button",
+      "file": "templates/hatch-claim-button.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_expel_button",
+      "file": "templates/hatch-expel-button.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_home_anchor",
+      "file": "templates/hatch-home-anchor.png",
+      "threshold": 0.78,
+      "match_scale": 0.5
+    },
+    {
+      "type": "hatch_tag_all",
+      "file": "templates/hatch-tag-all.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_tag_mass",
+      "file": "templates/hatch-tag-mass.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_tag_top",
+      "file": "templates/hatch-tag-top.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_tag_hp",
+      "file": "templates/hatch-tag-hp.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_tag_attack",
+      "file": "templates/hatch-tag-attack.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_sort_hp",
+      "file": "templates/hatch-sort-hp.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_sort_attack",
+      "file": "templates/hatch-sort-attack.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_place_sort_best",
+      "file": "templates/hatch-place-sort-best.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_place_sort_level",
+      "file": "templates/hatch-place-sort-level.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_place_sort_attack",
+      "file": "templates/hatch-place-sort-attack.png",
+      "threshold": 0.92
+    },
+    {
+      "type": "hatch_place_sort_hp",
+      "file": "templates/hatch-place-sort-hp.png",
+      "threshold": 0.92
+    },
+    {
+      "type": "hatch_place_hdr_best",
+      "file": "templates/hatch-place-hdr-best.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_place_hdr_level",
+      "file": "templates/hatch-place-hdr-level.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_place_hdr_attack",
+      "file": "templates/hatch-place-hdr-attack.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_place_hdr_hp",
+      "file": "templates/hatch-place-hdr-hp.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_tag_hdr_attack",
+      "file": "templates/hatch-tag-hdr-attack.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_tag_hdr_top",
+      "file": "templates/hatch-tag-hdr-top.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_tag_hdr_hp",
+      "file": "templates/hatch-tag-hdr-hp.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_tag_hdr_all",
+      "file": "templates/hatch-tag-hdr-all.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_tag_hdr_mass",
+      "file": "templates/hatch-tag-hdr-mass.png",
+      "threshold": 0.85
+    },
+    {
+      "type": "hatch_sort_hdr_attack",
+      "file": "templates/hatch-sort-hdr-attack.png",
+      "threshold": 0.85
+    },
+    {
+      "type": "hatch_select_confirm_prompt",
+      "file": "templates/hatch-select-confirm-prompt.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_nested_parent_warning",
+      "file": "templates/hatch-nested-parent-warning.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_confirm_yes",
+      "file": "templates/hatch-confirm-yes.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_confirm_no",
+      "file": "templates/hatch-confirm-no.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_autoplace_notice",
+      "file": "templates/hatch-autoplace-notice.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_incubator_full_toast",
+      "file": "templates/hatch-incubator-full-toast.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_cave",
+      "file": "templates/hatch-cave.png",
+      "threshold": 0.82,
+      "scales": [
+        0.85,
+        0.9,
+        0.95,
+        1.0,
+        1.05
+      ]
+    },
+    {
+      "type": "hatch_nest_title",
+      "file": "templates/hatch-nest-title.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_nest_bubble",
+      "file": "templates/hatch-nest-bubble-upgrade.png",
+      "threshold": 0.85
+    },
+    {
+      "type": "hatch_my_dino_title",
+      "file": "templates/hatch-my-dino-title.png",
+      "threshold": 0.85,
+      "scales": [
+        1.0,
+        0.97,
+        0.94,
+        1.03
+      ]
+    },
+    {
+      "type": "hatch_select_title",
+      "file": "templates/hatch-select-title.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_nest_gear",
+      "file": "templates/hatch-nest-gear.png",
+      "threshold": 0.88
+    },
+    {
+      "type": "hatch_autoplace_title",
+      "file": "templates/hatch-autoplace-title.png",
+      "threshold": 0.88
+    },
+    {
+      "type": "hatch_autoplace_button",
+      "file": "templates/hatch-autoplace-button.png",
+      "threshold": 0.88,
+      "match_scale": 0.5
+    },
+    {
+      "type": "hatch_collect_eggs_button",
+      "file": "templates/hatch-collect-eggs-button.png",
+      "threshold": 0.88
+    },
+    {
+      "type": "hatch_cave_select_button",
+      "file": "templates/hatch-cave-select-button.png",
+      "threshold": 0.88
+    },
+    {
+      "type": "hatch_cave_continuous_button",
+      "file": "templates/hatch-cave-continuous-button.png",
+      "threshold": 0.88
+    },
+    {
+      "type": "hatch_select_weakest_button",
+      "file": "templates/hatch-select-weakest-button.png",
+      "threshold": 0.88
+    },
+    {
+      "type": "hatch_select_choose_button",
+      "file": "templates/hatch-select-choose-button.png",
+      "threshold": 0.88
+    },
+    {
+      "type": "hatch_autoplace_prompt",
+      "file": "templates/hatch-autoplace-prompt.png",
+      "threshold": 0.88
+    },
+    {
+      "type": "hatch_cave_close_button",
+      "file": "templates/hatch-cave-close-button.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_confirm_yes",
+      "file": "templates/hatch-confirm-yes-ticket.png",
+      "threshold": 0.9
+    },
+    {
+      "type": "hatch_confirm_no",
+      "file": "templates/hatch-confirm-no-v2.png",
+      "threshold": 0.9
+    }
+  ]
+}
