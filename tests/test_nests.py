@@ -64,6 +64,32 @@ def test_primary_ocr_conflict_does_not_apply_growth_or_other_digit_rules() -> No
     ) is None
 
 
+def test_primary_ocr_conflict_trusts_a_parent_value_read_back_correctly() -> None:
+    # A live nest sat on attack 707 with candidates 707/704/703/701. The 1/7
+    # pair 707-versus-701 stopped every replacement round, and the retry path
+    # re-read the same nest into a loop. The correctly read 707 in the list is
+    # proof this OCR pass renders the digit properly, so 701 is a sibling.
+    parent = Stats(10, 707, 150)
+    rows = [
+        Stats(10, 707, 150),
+        Stats(10, 704, 150),
+        Stats(10, 703, 150),
+        Stats(10, 701, 150),
+        Stats(10, 701, 150),
+    ]
+
+    assert find_primary_ocr_conflict(parent, rows, ATTACK_RULE) is None
+
+
+def test_primary_ocr_conflict_still_flags_a_flip_without_the_parent_value() -> None:
+    # Same nest, same 1/7 pair, but nothing read the parent's 7 back. This is
+    # the pattern the guard exists for and it must keep failing closed.
+    parent = Stats(10, 707, 150)
+    rows = [Stats(10, 701, 150), Stats(10, 701, 150), Stats(10, 700, 150)]
+
+    assert find_primary_ocr_conflict(parent, rows, ATTACK_RULE) == (707, 701)
+
+
 def test_extreme_specialization_parent_is_opt_in() -> None:
     assert Stats(10, 1, 1) == EXTREME_SPECIALIZATION_PARENT
     assert is_intentional_extreme_specialization_parent(

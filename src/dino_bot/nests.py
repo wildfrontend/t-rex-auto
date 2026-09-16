@@ -184,6 +184,14 @@ def find_primary_ocr_conflict(
     evidence pattern seen in live logs: a parent primary value and a repeated
     candidate primary value differ in exactly one digit, and that digit is
     ``1`` versus ``7``. The caller must re-read or fail closed.
+
+    One exception keeps a real nest from deadlocking. If the parent value is
+    itself among the candidate readings, this pass of the OCR demonstrably
+    read that ``7`` correctly, so a nearby value sharing the digit pattern is
+    a genuine sibling rather than a misread of the parent. A live nest sat on
+    parent 707 with candidates 707/704/703/701 and refused every replacement
+    round on the 707-versus-701 pair, recovering and retrying in a loop until
+    the recovery fuse blew.
     """
 
     if minimum_repeats <= 0 or not rows:
@@ -191,6 +199,8 @@ def find_primary_ocr_conflict(
     parent_value = primary_of(parent, rule)
     parent_text = str(parent_value)
     counts = Counter(primary_of(row, rule) for row in rows)
+    if parent_value in counts:
+        return None
     for candidate_value, count in counts.items():
         if count < minimum_repeats:
             continue
