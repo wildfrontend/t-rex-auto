@@ -3634,6 +3634,54 @@ def test_home_recovery_accepts_pile_the_camera_cannot_move_further() -> None:
     assert planner.is_failed() is False
 
 
+def test_open_nest_accepts_the_edge_home_recovery_just_approved() -> None:
+    """S9 v0.0.82 livelock: recovery said yes, open_nest said no, forever.
+
+    A failed hunt sent the errand home 146px off-centre.  Recovery could not
+    move the camera, concluded it was at the map edge and completed on the
+    weaker test.  ``open_nest`` still demanded a strictly centred map, rejected
+    that very frame, reported no actionable target, and the 31s idle timer
+    started another identical recovery.  Six minutes of back-tap, "centered
+    home confirmed", nothing, repeat.  The stage must honour recovery's own
+    verdict so the round can actually proceed.
+    """
+
+    planner = FullHatchPlanner(DigitReader(GLYPHS), egg_pile_point=(450, 1330))
+    home = [detection(hatch.HOME_ANCHOR, 59, 561)]
+    stuck = _edge_home_frame(1285)
+
+    # The stage gate rejects the off-centre map while nothing has proven the
+    # camera is stuck - that strictness is still what protects a normal frame.
+    planner._enter_open_nest(collect_only=True)
+    assert planner._home_is_actionable(stuck, home) is False
+
+    # Recovery reaches the same conclusion the live run did.
+    planner._begin_home_recovery("hatch+hunt handoff found an off-centre home")
+    for _ in range(12):
+        target = planner.choose(stuck, home)
+        if planner._stage != "recover_home":
+            break
+        if target is not None:
+            planner.on_action_success(target.type)
+    assert planner._home_camera_at_limit is True
+
+    # The stage must now act on the frame instead of stalling on it.
+    assert planner._home_is_actionable(stuck, home) is True
+    assert planner._stage == "open_nest"
+    target = planner.choose(stuck, home)
+    assert target is not None and target.type == OPEN_NEST
+
+
+def test_edge_home_verdict_does_not_outlive_its_recovery() -> None:
+    """The relaxed gate is scoped to one recovery, not latched on forever."""
+
+    planner = FullHatchPlanner(DigitReader(GLYPHS), egg_pile_point=(450, 1330))
+    planner._home_camera_at_limit = True
+
+    planner._begin_home_recovery("unrelated later stall")
+    assert planner._home_camera_at_limit is False
+
+
 def test_home_recovery_still_corrects_a_camera_that_is_actually_moving() -> None:
     """A converging camera must not be mistaken for one stuck at the edge."""
 

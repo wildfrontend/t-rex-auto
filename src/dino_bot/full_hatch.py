@@ -1264,6 +1264,18 @@ class HatchHomeRecoveryPlanner:
 
         return self._max_population_seen
 
+    @property
+    def camera_at_limit(self) -> bool:
+        """Whether recovery accepted a home the camera could not centre.
+
+        Recovery may complete on an off-centre map when the camera is parked
+        against a map edge.  Callers gating on `is_centered_home_screen` must
+        read this, or they reject the very frame recovery just approved and
+        hand it straight back for another round.
+        """
+
+        return self._camera_at_limit
+
     def camera_history(self) -> tuple[tuple[int, int, int, int], ...]:
         return tuple(self._applied_swipes)
 
@@ -2873,6 +2885,10 @@ class FullHatchPlanner:
         # cached count or a below-threshold panel read. Keep the latch across a
         # game restart until a verified cave cleanup creates headroom.
         self._force_capacity_management = False
+        # Set when home recovery completed on a map the camera could not
+        # centre.  Stage gates that demand a centred home honour it, so the
+        # stage cannot reject the frame recovery just approved.
+        self._home_camera_at_limit = False
         self._screening_recovery_failures: dict[str, int] = {}
         self.completed_management_cycles = 0
         self._start_hatch_cycle()
@@ -3897,9 +3913,18 @@ class FullHatchPlanner:
                         return self._choose_current(frame, detections)
                 self._recovery_rounds = 0
                 self._recovery_started_at = None
+                # Recovery may have accepted an off-centre map because the
+                # camera is against a map edge.  Record that verdict before the
+                # child is replaced: the stage gates below must apply the same
+                # standard recovery just used, or they reject this very frame
+                # and hand it back for another identical round.  That loop cost
+                # S9 six idle minutes on v0.0.82 - back, "centered home
+                # confirmed", no actionable target, repeat.
+                self._home_camera_at_limit = self._recovery_child.camera_at_limit
                 self.logger.info(
-                    "Hatch full | centered home confirmed | recovered=%s",
+                    "Hatch full | centered home confirmed | recovered=%s%s",
                     self._recovery_reason or "unknown",
+                    " | camera at map edge" if self._home_camera_at_limit else "",
                 )
                 if self._committed_cave_population is not None:
                     expected = self._committed_cave_population
@@ -3996,7 +4021,7 @@ class FullHatchPlanner:
         if (
             self._stage == "hatch"
             and is_home_screen(frame, detections)
-            and not is_centered_home_screen(frame, detections)
+            and not self._home_is_actionable(frame, detections)
         ):
             self._begin_home_recovery("hatch started from shifted cave view")
             return self.choose(frame, detections)
@@ -4187,7 +4212,7 @@ class FullHatchPlanner:
             # threshold must not turn into permission to tap a matching egg
             # behind a dimmed item/detail overlay: require the independently
             # measured, bright and centred home map before using the match.
-            if not is_centered_home_screen(frame, detections):
+            if not self._home_is_actionable(frame, detections):
                 return None
             return synthetic_target(OPEN_NEST, anchor.x, anchor.y)
         if self._stage in ("attack", "hp"):
@@ -4364,6 +4389,10 @@ class FullHatchPlanner:
                 else f"{self._committed_cave_population}/{self.capacity_limit}",
             )
         self._collect_before_hatch = False
+        # A fresh recovery re-measures the camera from scratch; carrying the
+        # previous verdict in would let one edge-parked round permanently relax
+        # every later centred-home gate.
+        self._home_camera_at_limit = False
         if self._custom_cycle and not self._cave_enabled:
             # The replacement child loses any pending hatch count, so prove
             # population again before allowing more hatches after recovery.
@@ -4659,6 +4688,41 @@ class FullHatchPlanner:
             raise RuntimeError(
                 f"standalone stage does not use My Nest: {self.standalone_stage}"
             )
+
+    def _home_is_actionable(
+        self,
+        frame: Frame,
+        detections: Sequence[Detection],
+    ) -> bool:
+        """Whether the home map may be tapped, on recovery's own standard.
+
+        A centred map is the normal proof.  When recovery concluded the camera
+        is parked against a map edge it completed without one, and demanding it
+        here would reject that frame forever: the stage reports no actionable
+        target, the idle timer fires another recovery, recovery re-approves the
+        same frame, and nothing ever advances.  Fall back to the weaker map
+        test recovery used, but keep the click guard - the tap must still land
+        on the pile rather than in the chat strip, which is what the strict
+        check was protecting in the first place.
+        """
+
+        if is_centered_home_screen(frame, detections):
+            return True
+        if not self._home_camera_at_limit:
+            return False
+        if not is_home_screen(frame, detections):
+            return False
+        # `_home_pile_click_blocked` is gated on the centred test that just
+        # failed, so it would be vacuously False here.  Measure the tap point
+        # itself to keep the guard real on this path.
+        return (
+            hatch_feature.home_pile_tap_point(
+                frame,
+                egg_pile_point=(450.0, 1330.0),
+                reference_width=900.0,
+            )
+            is not None
+        )
 
     def _enter_open_nest(self, *, collect_only: bool) -> None:
         self._stage = "open_nest"
