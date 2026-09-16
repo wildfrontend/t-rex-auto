@@ -103,12 +103,19 @@ class BlackScreenRecovery:
             self._black_since = None
         return restarted
 
-    def request_restart(self, reason: str, *, reason_key: str) -> bool:
+    def request_restart(
+        self,
+        reason: str,
+        *,
+        reason_key: str,
+        bypass_cooldown: bool = False,
+    ) -> bool:
         """Restart the configured app while sharing one cross-cause cooldown."""
 
         now = self.clock()
         if (
-            self._last_restart_at is not None
+            not bypass_cooldown
+            and self._last_restart_at is not None
             and now - self._last_restart_at < self.cooldown_seconds
         ):
             if reason_key not in self._deferred_reasons:
@@ -129,12 +136,14 @@ class BlackScreenRecovery:
             self.logger.error("Recovery | game restart failed: %s", exc)
             return False
         self._last_restart_at = now
+        self._black_since = None
+        self._is_black = False
         self._deferred_reasons.clear()
+        self.logger.info(
+            "Recovery | game restarted; waiting %.0fs for launch",
+            self.launch_wait_seconds,
+        )
         if self.launch_wait_seconds:
-            self.logger.info(
-                "Recovery | game restarted; waiting %.0fs for launch",
-                self.launch_wait_seconds,
-            )
             self.sleeper(self.launch_wait_seconds)
         return True
 
@@ -147,6 +156,12 @@ class HuntProgressWatchdog:
     map always shows dinosaurs, so "a dinosaur is visible" stayed true through
     fourteen minutes of zero hunts, and a stuck ``startup_*`` phantom held the
     suspend list open for the entire deadlock it was causing.
+
+    The one exception is the game refusing a completed attempt - see
+    ``_answered_wait``. That is a reply, not a screen state, and it proves the
+    whole loop works; a refusal cannot be cleared by restarting the app.
+    Everything else only freezes the timer, so a wait that never ends still
+    ages out.
     """
 
     _EXPECTED_WAIT_TYPES = frozenset(
@@ -157,9 +172,19 @@ class HuntProgressWatchdog:
             "hunt_team_return_button",
         }
     )
-    _SUSPENDED_PREFIXES = ("mail_", "startup_")
+    # ``hatch_`` joins these because the combined modes spend legitimate
+    # minutes inside screening and placement, where no hunt can complete by
+    # definition: s9 restarted five times in ten minutes mid-auto-place, each
+    # time one second after a verified tap. The budget ceiling below is what
+    # keeps this from becoming the ``startup_`` phantom the docstring warns
+    # about - an incubator that never leaves the screen still ages out.
+    _SUSPENDED_PREFIXES = ("mail_", "startup_", "hatch_")
     _SUSPENDED_TYPES = frozenset(
-        {"duplicate_login_close_button", "device_history_confirm_button"}
+        {
+            "duplicate_login_close_button",
+            "device_history_confirm_button",
+            "server_error_restart_button",
+        }
     )
 
     def __init__(
@@ -169,6 +194,7 @@ class HuntProgressWatchdog:
         *,
         timeout_seconds: float = 180.0,
         suspend_budget_seconds: float = 120.0,
+        hatch_suspend_budget_seconds: float = 420.0,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.runtime_recovery = runtime_recovery
@@ -178,6 +204,10 @@ class HuntProgressWatchdog:
         # before the timer resumes. Without a ceiling, an exempt type that
         # never goes away disables recovery outright.
         self.suspend_budget_seconds = max(0.0, suspend_budget_seconds)
+        # Wide enough for a screening pass plus the navigation either side,
+        # still far short of the seven-hour blind run this watchdog exists to
+        # end.
+        self.hatch_suspend_budget_seconds = max(0.0, hatch_suspend_budget_seconds)
         self.clock = clock
         self._stalled_since: float | None = None
         self._suspended_since: float | None = None
@@ -193,10 +223,51 @@ class HuntProgressWatchdog:
 
         self.reset()
 
-    def _suspend_reason(self, observed_types: set[str]) -> str | None:
+    def on_verified_action(self) -> None:
+        """Treat any action that verified as proof the bot is not stuck.
+
+        This watchdog is the last resort, not the thing that paces a run. Its
+        one job is to rescue a bot that can no longer drive the game at all,
+        and a tap whose expected next screen actually arrived is direct
+        evidence of the opposite: capture, detection, the tap and the game's
+        response are all working.
+
+        It used to refresh only the suspend budget, on the theory that a
+        workflow acting forever without finishing anything should still be
+        caught. Measurement killed that theory. A growth screening pass
+        legitimately runs minutes of verified taps while completing no hunt -
+        s9 restarted six times in 80 minutes, one of them two seconds after
+        "completed growth screening 2", 280s into a pass where every step
+        succeeded. Restarting there destroys real work to fix nothing.
+
+        A workflow that acts but never progresses is a logic fault, and the
+        stage timeouts that own that case (`recovery_timeout_seconds`, the
+        handoff deadline) already handle it far better than killing the app:
+        they re-centre, retry, or fuse one stage off while the rest keeps
+        running. Restarting the game cannot repair a logic fault anyway. So
+        the deadlock this watchdog still catches is the one where actions
+        stop verifying - and there, nothing calls this at all.
+        """
+
+        self.reset()
+
+    def _answered_wait(self, observed_types: set[str]) -> str | None:
+        """The game answering "not now" - proof the bot is not stuck at all.
+
+        These are replies to an action the bot completed: the prey is too
+        strong, or every dinosaur is still on cooldown. Reaching one means
+        capture, detection, tapping and the game's own response all work, so
+        the timer restarts rather than merely freezing. Restarting the app
+        cannot shorten a cooldown or weaken a target; s9 restarted twice in
+        four minutes against exactly this, interrupting live work to fix
+        nothing. A genuine deadlock shows none of these types, so the
+        watchdog still fires there.
+        """
+
         matched = observed_types & self._EXPECTED_WAIT_TYPES
-        if matched:
-            return ", ".join(sorted(matched))
+        return ", ".join(sorted(matched)) if matched else None
+
+    def _suspend_reason(self, observed_types: set[str]) -> str | None:
         matched = observed_types & self._SUSPENDED_TYPES
         if matched:
             return ", ".join(sorted(matched))
@@ -244,12 +315,34 @@ class HuntProgressWatchdog:
         target_type = target.type if target is not None else None
         observed_types = visible_types | ({target_type} if target_type else set())
 
+        answered = self._answered_wait(observed_types)
+        if answered is not None:
+            if self._stalled_since is not None:
+                self.logger.info(
+                    "Recovery | game answered the hunt attempt; stall timer"
+                    " reset | reason=%s",
+                    answered,
+                )
+            self.reset()
+            return False
+
         reason = self._suspend_reason(observed_types)
         if reason is not None:
             if self._suspended_since is None:
                 self._suspended_since = now
             suspended_seconds = now - self._suspended_since
-            if suspended_seconds < self.suspend_budget_seconds:
+            # A hatch phase is long by nature - one measured screening pass ran
+            # 155s - while the hunt-side waits this budget was written for stay
+            # short. Giving hatch its own ceiling keeps that original limit
+            # honest instead of loosening it for everything.
+            budget = (
+                self.hatch_suspend_budget_seconds
+                if any(
+                    observed.startswith("hatch_") for observed in observed_types
+                )
+                else self.suspend_budget_seconds
+            )
+            if suspended_seconds < budget:
                 # Genuine waits are short. Keep the stall timer frozen rather
                 # than reset, so a wait that never ends still ages out.
                 return False

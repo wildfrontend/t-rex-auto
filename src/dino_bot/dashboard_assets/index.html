@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>猛龍計畫儀表板</title>
+  <link rel="stylesheet" href="/dashboard.css">
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">猛龍計畫</p>
+        <h1>培育控制中心</h1>
+      </div>
+      <div class="live-state">
+        <span id="liveDot" class="live-dot"></span>
+        <div>
+          <strong id="modeLabel">正在連線…</strong>
+          <small id="lastUpdate">等待狀態</small>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="panel instances-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="section-label">BOT INSTANCES</p>
+            <h3>多開實例管理</h3>
+          </div>
+          <button id="addInstanceToggle" type="button">新增模擬器</button>
+        </div>
+        <div id="instanceList" class="instance-grid"><p class="empty">讀取實例中…</p></div>
+        <form id="instanceForm" class="instance-form hidden">
+          <label>名稱<input id="instanceName" required maxlength="40" placeholder="例如：主力二號"></label>
+          <label>ADB serial
+            <span class="field-row">
+              <input id="instanceSerial" required placeholder="127.0.0.1:16385">
+              <button id="scanAdb" type="button" title="掃描已知模擬器連接埠">掃描</button>
+            </span>
+          </label>
+          <div id="adbScanResult" class="scan-result hidden"></div>
+          <label>狀態 Port<input id="instancePort" required type="number" min="1" max="65535" value="8775"></label>
+          <button class="primary" type="submit">建立實例</button>
+          <button id="addInstanceCancel" type="button">取消</button>
+        </form>
+      </section>
+
+      <section class="hero panel">
+        <div>
+          <p class="section-label">目前工作流程</p>
+          <h2 id="workflowLabel">讀取中</h2>
+          <p id="workflowMeta" class="muted">正在連接本機 Bot</p>
+        </div>
+        <div id="cooldown" class="cooldown hidden">
+          <small>孵蛋重新檢查</small>
+          <strong id="cooldownValue">--:--</strong>
+        </div>
+        <div class="stage-track" aria-label="孵蛋工作流程">
+          <span data-stage="hatch">孵蛋</span>
+          <span data-stage="nest_attack">攻擊</span>
+          <span data-stage="nest_hp">HP</span>
+          <span data-stage="nest_top">頂尖</span>
+          <span data-stage="nest_mass">量產</span>
+          <span data-stage="collect">收蛋</span>
+          <span data-stage="cave">洞穴</span>
+          <span data-stage="cooldown_hunt">狩獵</span>
+        </div>
+      </section>
+
+      <section class="metric-grid">
+        <article class="metric-card accent-orange">
+          <span>成功狩獵</span>
+          <strong id="huntSession">0</strong>
+          <small>今日 <b id="huntToday">0</b> · 累積 <b id="huntTotal">0</b></small>
+        </article>
+        <article class="metric-card accent-cyan">
+          <span>孵化取得</span>
+          <strong id="hatchSession">0</strong>
+          <small>今日 <b id="hatchToday">0</b> · 累積 <b id="hatchTotal">0</b></small>
+        </article>
+        <article class="metric-card accent-lime">
+          <span>親代替換</span>
+          <strong id="replacementSession">0</strong>
+          <small>今日 <b id="replacementToday">0</b> · 累積 <b id="replacementTotal">0</b></small>
+        </article>
+        <article class="metric-card accent-violet">
+          <span>收蛋批次</span>
+          <strong id="collectSession">0</strong>
+          <small>今日 <b id="collectToday">0</b> · 累積 <b id="collectTotal">0</b></small>
+        </article>
+        <article class="metric-card accent-red">
+          <span>洞穴成功淘汰</span>
+          <strong id="cullSession">0</strong>
+          <small>今日 <b id="cullToday">0</b> · 累積 <b id="cullTotal">0</b></small>
+        </article>
+      </section>
+
+      <section class="two-column">
+        <article class="panel records-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="section-label">BREEDING RECORDS</p>
+              <h3>最高培育數值</h3>
+            </div>
+            <span class="verified-chip">已驗證 OCR</span>
+          </div>
+          <div class="record-list">
+            <div><span>HP</span><strong id="recordHp">—</strong><small id="recordHpMeta">尚無資料</small></div>
+            <div><span>攻擊</span><strong id="recordAttack">—</strong><small id="recordAttackMeta">尚無資料</small></div>
+            <div><span>速度</span><strong id="recordSpeed">—</strong><small id="recordSpeedMeta">尚無資料</small></div>
+          </div>
+          <div class="mini-stats">
+            <span>驗證失敗 <b id="failureToday">0</b></span>
+          </div>
+        </article>
+
+        <article class="panel trend-panel">
+          <div class="panel-heading">
+            <div>
+              <p id="trendScope" class="section-label">今天 · 每小時</p>
+              <h3>狩獵與孵化趨勢</h3>
+            </div>
+            <div class="legend"><span class="hunt-key">狩獵</span><span class="hatch-key">孵化</span></div>
+          </div>
+          <div id="timeline" class="timeline"><p class="empty">尚無歷史資料</p></div>
+        </article>
+      </section>
+
+      <section class="two-column lower">
+        <article class="panel events-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="section-label">LIVE EVENT STREAM</p>
+              <h3>最近紀錄</h3>
+            </div>
+          </div>
+          <div id="events" class="event-list"><p class="empty">等待事件</p></div>
+        </article>
+
+        <aside class="panel controls-panel">
+          <p class="section-label">SAFE CONTROLS</p>
+          <h3>控制指令</h3>
+          <div class="control-group">
+            <button class="primary" data-action="start-hatch-hunt" data-mode="hatch-hunt">啟動孵蛋＋狩獵</button>
+            <button data-action="start-custom-workflow" data-mode="custom-workflow">啟動自訂循環</button>
+            <button data-action="start-hunt" data-mode="hunt">啟動純狩獵</button>
+          </div>
+          <div class="inventory-control custom-workflow-control">
+            <div>
+              <span>自訂循環流程</span>
+              <strong id="customWorkflowSummary">收集巢蛋 → 孵蛋 → 狩獵</strong>
+              <small>依安全順序執行；孵蛋冷卻期間狩獵，到期後自動循環</small>
+              <small>關閉洞穴時，達安全人口會停止孵化並只繼續狩獵</small>
+              <small>安全人口可設為上限人口；冷卻加速券依下方開關自動使用</small>
+            </div>
+            <div class="workflow-stage-options" aria-label="自訂流程階段">
+              <label><input type="checkbox" data-custom-stage="attack">攻擊親代</label>
+              <label><input type="checkbox" data-custom-stage="hp">HP 親代</label>
+              <label><input type="checkbox" data-custom-stage="top">頂尖配置</label>
+              <label><input type="checkbox" data-custom-stage="mass">量產配置</label>
+              <label><input type="checkbox" data-custom-stage="collect">收集巢蛋</label>
+              <label><input type="checkbox" data-custom-stage="cave">洞穴淘汰</label>
+              <label><input type="checkbox" data-custom-stage="hatch" checked disabled>孵蛋（循環必要）</label>
+              <label><input type="checkbox" data-custom-stage="hunt" checked disabled>狩獵（循環必要）</label>
+            </div>
+            <button id="customWorkflowSave" type="button">儲存自訂流程</button>
+          </div>
+          <div class="inventory-control">
+            <div>
+              <span>冷卻加速券</span>
+              <strong><b id="boostStockValue">100</b> / 100 張</strong>
+              <small>每次加速消耗 1 張</small>
+              <small>累計使用 <span id="boostUsedTotal">0</span> 次</small>
+              <small id="boostSchedule">已關閉自動使用</small>
+            </div>
+            <label class="toggle-control">
+              <input id="boostEnabled" type="checkbox" aria-label="正常開啟孵化器時檢查冷卻加速券，使用間隔至少 30 分鐘">
+              <span id="boostEnabledLabel">孵化時自動檢查加速：關閉</span>
+            </label>
+            <label>
+              <span>校正庫存</span>
+              <input id="boostStockInput" type="number" min="0" max="100" step="1" value="100">
+            </label>
+            <button id="boostStockUpdate" type="button">更新</button>
+          </div>
+          <div class="inventory-control">
+            <div>
+              <span>孵蛋參數</span>
+              <strong>上限 <b id="capacityLimitValue">—</b>／安全 <b id="cullThresholdValue">—</b></strong>
+              <small>上限要和遊戲畫面的分母一致，對不上會拒讀</small>
+              <small>達到安全人口才開始淘汰</small>
+              <small>每新增 <span id="screeningIntervalValue">—</span> 隻重跑一次篩選</small>
+              <label class="toggle-control hatch-tuning-toggle">
+                <input id="extremeParentProtection" type="checkbox" aria-label="保護 10/1/1 極端親代">
+                <span id="extremeParentProtectionLabel">10/1/1 極端親代保護：關閉</span>
+              </label>
+              <label class="toggle-control hatch-tuning-toggle">
+                <input id="specializationAutoPlace" type="checkbox" aria-label="攻擊與 HP 特化先自動放置再手動純化">
+                <span id="specializationAutoPlaceLabel">攻擊／HP 自動放置＋純化：關閉</span>
+              </label>
+              <small>開啟時先依主屬性自動放置，再手動挑回較純的特化親代；速度 1～150 都不影響判定</small>
+            </div>
+            <label>
+              <span>上限人口</span>
+              <input id="capacityLimitInput" type="number" min="1" max="9999" step="1">
+            </label>
+            <label>
+              <span>安全人口</span>
+              <input id="cullThresholdInput" type="number" min="1" max="9999" step="1">
+            </label>
+            <label>
+              <span>篩選間隔</span>
+              <input id="screeningIntervalInput" type="number" min="1" max="9999" step="1">
+            </label>
+            <button id="hatchTuningUpdate" type="button">儲存（重啟後生效）</button>
+          </div>
+          <p class="control-label">只執行一個階段</p>
+          <div class="control-grid stage-controls">
+            <button data-action="start-stage-hatch" data-confirm="只執行一輪孵蛋並返回主畫面？">孵蛋一輪</button>
+            <button data-action="start-stage-attack" data-confirm="檢查攻擊親代，主屬性同分時選副屬性較低者？">攻擊親代</button>
+            <button data-action="start-stage-hp" data-confirm="檢查 HP 親代，主屬性同分時選副屬性較低者？">HP 親代</button>
+            <button data-action="start-stage-collect" data-confirm="只切回所有並收集全部巢蛋？">收集巢蛋</button>
+            <button data-action="start-stage-cave" data-confirm="只檢查洞穴容量，達到 330 才淘汰？">洞穴檢查</button>
+          </div>
+          <div class="control-grid">
+            <button data-action="restart-bot" data-confirm="確定重新啟動 Bot？">重啟 Bot</button>
+            <button data-action="restart-game" data-confirm="確定重新啟動遊戲？">重啟遊戲</button>
+            <button data-action="snapshot">擷取畫面</button>
+            <button data-action="diagnostics">產生診斷包（含目前畫面）</button>
+            <button data-action="open-logs">開啟日誌</button>
+            <button class="danger" data-action="stop" data-confirm="確定安全停止 Bot？">安全停止</button>
+          </div>
+          <div id="commandResult" class="command-result">所有控制只允許本機白名單指令。</div>
+        </aside>
+      </section>
+    </main>
+  </div>
+  <script src="/dashboard.js" defer></script>
+</body>
+</html>

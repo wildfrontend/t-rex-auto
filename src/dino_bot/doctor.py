@@ -77,7 +77,10 @@ def run_checks(config: AppConfig) -> list[Check]:
     else:
         try:
             device = adb.ensure_ready()
-            checks.append(Check("ADB device", True, device.serial))
+            width, height = adb.display_size()
+            checks.append(
+                Check("ADB device", True, f"{device.serial} | shell={width}x{height}")
+            )
         except Exception as exc:
             checks.append(Check("ADB device", False, str(exc)))
     if operating_system == "Windows" and config.capture.backend == "mss":

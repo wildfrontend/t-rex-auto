@@ -1,0 +1,50 @@
+[
+  {
+    "name": "Python",
+    "ok": true,
+    "required": true,
+    "detail": "3.12.10"
+  },
+  {
+    "name": "Operating system and capture backend",
+    "ok": true,
+    "required": true,
+    "detail": "Windows-11-10.0.26200-SP0 | capture=adb"
+  },
+  {
+    "name": "Dependency numpy",
+    "ok": true,
+    "required": true,
+    "detail": "installed"
+  },
+  {
+    "name": "Dependency cv2",
+    "ok": true,
+    "required": true,
+    "detail": "installed"
+  },
+  {
+    "name": "Dependency mss",
+    "ok": true,
+    "required": true,
+    "detail": "installed"
+  },
+  {
+    "name": "Detector assets",
+    "ok": true,
+    "required": false,
+    "detail": "18 configured"
+  },
+  {
+    "name": "ADB executable",
+    "ok": true,
+    "required": true,
+    "detail": "C:\\platform-tools\\adb.exe"
+  },
+  {
+    "name": "ADB device",
+    "ok": true,
+    "required": true,
+    "detail": "127.0.0.1:16416"
+  }
+]

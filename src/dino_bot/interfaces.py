@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Protocol
 
 from .models import (
@@ -54,6 +55,39 @@ class ModeObserver(Protocol):
 
 class RuntimeRecovery(Protocol):
     def observe(self, frame: Frame) -> bool: ...
+
+    def request_restart(
+        self,
+        reason: str,
+        *,
+        reason_key: str,
+        bypass_cooldown: bool = False,
+    ) -> bool: ...
+
+
+class StallRecorder(Protocol):
+    def capture(
+        self,
+        frame: Frame,
+        detections: Sequence[Detection],
+        *,
+        seconds: float,
+        stage: str,
+        escapes: int,
+    ) -> Path | None: ...
+
+
+class DinosaurFailureRecorder(Protocol):
+    def capture(
+        self,
+        before: Frame,
+        after: Frame,
+        target: Target,
+        detections: Sequence[Detection],
+        result: VerificationResult,
+        *,
+        attempt: int,
+    ) -> Path | None: ...
 
 
 class HuntProgressRecovery(Protocol):

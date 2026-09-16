@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import logging
+import subprocess
 import time
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -13,12 +15,27 @@ import pytest
 import action as action_facade
 import capture as capture_facade
 import detector as detector_facade
+import dino_bot.application as application_module
 import planner as planner_facade
-from dino_bot.actions import AdbActionDriver, AdbClient, RecordingActionDriver
+from dino_bot.actions import (
+    AdbActionDriver,
+    AdbClient,
+    AdbError,
+    RecordingActionDriver,
+)
 from dino_bot.assets import create_template
 from dino_bot.cli import apply_run_timing, build_parser
-from dino_bot.config import AppConfig, ConfigError, load_config
+from dino_bot.config import (
+    AdbConfig,
+    AppConfig,
+    ConfigError,
+    WorkflowConfig,
+    load_config,
+)
+from dino_bot.cull import CapacityRead
 from dino_bot.detection import (
+    DetectorAssetError,
+    HatchAutoplaceDialogDetector,
     HuntCapacityDetector,
     HuntTeamAvailabilityDetector,
     OpenCvDetector,
@@ -27,15 +44,27 @@ from dino_bot.detection import (
 from dino_bot.engine import BotContext, BotEngine, BotState
 from dino_bot.models import (
     ActionCommand,
+    ActionKind,
     BoundingBox,
     Detection,
+    ExclusionZone,
     Frame,
     Target,
     VerificationResult,
 )
 from dino_bot.modes import DebugMode, RuntimeMode, TrainingMode
 from dino_bot.planning import HuntPlanner, TargetPlanner
-from dino_bot.recovery import AdbAppRestarter, BlackScreenRecovery
+from dino_bot.recovery import (
+    AdbAppRestarter,
+    BlackScreenRecovery,
+    HuntProgressWatchdog,
+)
+from dino_bot.stalls import (
+    HUD_ZOOM,
+    CapacitySnapshotWriter,
+    DinosaurFailureSnapshotWriter,
+    StallSnapshotWriter,
+)
 from dino_bot.verification import TargetChangedVerifier
 
 
@@ -66,6 +95,98 @@ def test_config_enforces_training_collection_limits(
         load_config(config_file)
 
 
+def test_config_requires_positive_verification_minimum_checks(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.json"
+    config_file.write_text(
+        json.dumps({"verify": {"minimum_checks": 0}}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="verify.minimum_checks"):
+        load_config(config_file)
+
+
+def test_config_rejects_a_negative_center_distance_limit(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.json"
+    config_file.write_text(
+        json.dumps({"planner": {"max_center_distance_px": -1}}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="planner.max_center_distance_px"):
+        load_config(config_file)
+
+
+def test_config_requires_positive_empty_supply_recenter_frames(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.json"
+    config_file.write_text(
+        json.dumps({"planner": {"empty_supply_recenter_frames": 0}}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="planner.empty_supply_recenter_frames"):
+        load_config(config_file)
+
+
+def test_config_defaults_custom_workflow_to_collect_hatch_and_hunt(
+    tmp_path: Path,
+) -> None:
+    config_file = tmp_path / "config.json"
+    config_file.write_text("{}", encoding="utf-8")
+
+    assert load_config(config_file).workflow.custom_stages == (
+        "collect",
+        "hatch",
+        "hunt",
+    )
+
+
+def test_config_accepts_selected_custom_workflow_in_safe_order(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.json"
+    config_file.write_text(
+        json.dumps(
+            {
+                "workflow": {
+                    "custom_stages": ["attack", "collect", "cave", "hatch", "hunt"]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert load_config(config_file).workflow.custom_stages == (
+        "attack",
+        "collect",
+        "cave",
+        "hatch",
+        "hunt",
+    )
+
+
+@pytest.mark.parametrize(
+    "stages",
+    [
+        [],
+        ["collect", "hatch"],
+        ["collect", "hunt"],
+        ["collect", "hatch", "hunt", "hunt"],
+        ["collect", "dance", "hatch", "hunt"],
+    ],
+)
+def test_config_rejects_unsafe_custom_workflow(
+    tmp_path: Path,
+    stages: list[str],
+) -> None:
+    config_file = tmp_path / "config.json"
+    config_file.write_text(
+        json.dumps({"workflow": {"custom_stages": stages}}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="workflow.custom_stages"):
+        load_config(config_file)
+
+
 def test_cli_fast_speed_profile_reduces_hunt_delays() -> None:
     config = AppConfig(
         root=Path("."),
@@ -84,6 +205,164 @@ def test_cli_fast_speed_profile_reduces_hunt_delays() -> None:
     assert result.post_action_delays["dinosaur"] == 300
     assert result.post_action_delays["hunt_button"] == 900
     assert result.post_action_delays["hunt_confirm_button"] == 1200
+
+
+def test_cli_safe_speed_profile_uses_conservative_delays() -> None:
+    config = AppConfig(
+        root=Path("."),
+        click_delay=300,
+        idle_delay=250,
+        transition_poll_interval=100,
+        post_action_delays={
+            "hunt_button": 900,
+            "hunt_confirm_button": 1200,
+        },
+    )
+
+    result = apply_run_timing(config, speed="safe")
+
+    assert result.click_delay == 1500
+    assert result.idle_delay == 500
+    assert result.transition_poll_interval == 250
+    assert result.post_action_delays["dinosaur"] == 1500
+    assert result.post_action_delays["hunt_button"] == 5000
+    assert result.post_action_delays["hunt_confirm_button"] == 3000
+    assert result.timing_profile == "safe"
+    assert result.post_action_delays["hatch_cave_swipe"] == 6000
+    assert result.post_action_delays["hatch_cave_recenter"] == 7000
+    assert result.hatch.capacity_read_retries == 4
+    assert result.hatch.cave_recenter_checks == 5
+    assert result.hatch.recovery_timeout_seconds == 30.0
+
+
+def test_cli_leaves_speed_unset_for_config_default() -> None:
+    args = build_parser().parse_args(["run"])
+
+    assert args.speed is None
+
+
+def test_custom_workflow_wires_selected_stages_into_cooldown_cycle(
+    tmp_path: Path,
+) -> None:
+    config = AppConfig(
+        root=tmp_path,
+        workflow=WorkflowConfig(
+            custom_stages=("attack", "collect", "hatch", "hunt"),
+        ),
+    )
+    engine = object()
+
+    with patch.object(
+        application_module,
+        "_create_hatch_engine",
+        return_value=engine,
+    ) as create_hatch:
+        result = application_module.create_engine(
+            config,
+            verbose=True,
+            feature="custom-workflow",
+        )
+
+    assert result is engine
+    create_hatch.assert_called_once_with(
+        config,
+        verbose=True,
+        full=True,
+        hunt_during_cooldown=True,
+        enabled_stages=("attack", "collect", "hatch"),
+    )
+
+
+def test_s13_config_uses_adb_capture() -> None:
+    config_path = Path(__file__).resolve().parents[1] / "instances" / "s13" / "config.json"
+    config = load_config(config_path)
+
+    assert config.adb.serial == "127.0.0.1:16416"
+    assert config.capture.backend == "adb"
+    # 容量上限跟著帳號進度走，讀到的分母必須與設定相符才會被採信：S13 已升到 300，
+    # 留在 250 的設定讓每一次 preflight 都以 unexpected_capacity 收場。
+    assert config.hatch.capacity_limit == 300
+    assert config.hatch.cull_threshold == 260
+    assert "forest_recenter_button" in config.planner.target_types
+    assert "dinosaur" in config.planner.target_types
+    assert config.planner.blocking_types == ("duplicate_hunt_alert",)
+    assert config.planner.deduplicate_types == ("dinosaur",)
+
+
+def test_s9_config_inherits_the_shared_windows_base() -> None:
+    config_path = Path(__file__).resolve().parents[1] / "instances" / "s9" / "config.json"
+    config = load_config(config_path)
+
+    assert config.adb.serial == "127.0.0.1:16384"
+    assert config.capture.backend == "adb"
+    assert config.root == config_path.parent
+    assert config.detector.manifest == config_path.parent / "assets" / "manifest.json"
+
+
+def test_s13_instance_allows_single_hatch_stages_without_changing_main() -> None:
+    registry_path = Path(__file__).resolve().parents[1] / "instances.json"
+    registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    modes = {
+        instance["id"]: set(instance["allowed_modes"])
+        for instance in registry["instances"]
+    }
+    config_paths = {
+        instance["id"]: instance["config"] for instance in registry["instances"]
+    }
+
+    assert config_paths["main"] == "instances/s9/config.json"
+    assert modes["main"] == {"hunt", "hatch-hunt", "custom-workflow"}
+    assert modes["s13"] == {
+        "hunt",
+        "hatch-hunt",
+        "custom-workflow",
+        "hatch-stage",
+    }
+
+
+def test_packaged_instance_config_inherits_shared_app_config(tmp_path: Path) -> None:
+    app_root = tmp_path / "app"
+    app_root.mkdir()
+    (app_root / "config.json").write_text(
+        json.dumps(
+            {
+                "adb": {"timeout": 30},
+                "detector": {"manifest": "assets/manifest.json"},
+                "planner": {
+                    "target_types": ["forest_recenter_button", "dinosaur"],
+                    "blocking_types": ["duplicate_hunt_alert"],
+                },
+                "hatch": {"capacity_limit": 350},
+            }
+        ),
+        encoding="utf-8",
+    )
+    instance_root = tmp_path / "instances" / "s13"
+    instance_root.mkdir(parents=True)
+    instance_config = instance_root / "config.json"
+    instance_config.write_text(
+        json.dumps(
+            {
+                "emulator": "custom",
+                "adb": {"serial": "127.0.0.1:16416"},
+                "hatch": {"capacity_limit": 380},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_config(instance_config)
+
+    assert config.root == instance_root
+    assert config.adb.serial == "127.0.0.1:16416"
+    assert config.adb.timeout == 30
+    assert config.detector.manifest == instance_root / "assets" / "manifest.json"
+    assert config.planner.target_types == (
+        "forest_recenter_button",
+        "dinosaur",
+    )
+    assert config.planner.blocking_types == ("duplicate_hunt_alert",)
+    assert config.hatch.capacity_limit == 380
 
 
 def test_cli_explicit_timing_overrides_profile() -> None:
@@ -149,6 +428,8 @@ def test_adb_client_discovers_android_sdk_for_current_user(
     monkeypatch.delenv("ANDROID_SDK_ROOT", raising=False)
     monkeypatch.delenv("ANDROID_HOME", raising=False)
     monkeypatch.setattr("dino_bot.actions.shutil.which", lambda _: None)
+    monkeypatch.setattr("dino_bot.actions.sys.platform", "win32")
+    monkeypatch.setattr(Path, "is_file", lambda candidate: candidate == adb)
 
     assert AdbClient._resolve_executable(None) == str(adb)
 
@@ -313,6 +594,26 @@ def test_hunt_planner_retries_forest_when_recenter_tap_is_ignored() -> None:
     assert resumed is not None and resumed.type == "dinosaur"
 
 
+def test_hunt_planner_accepts_stable_dinosaur_only_recenter_result() -> None:
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(
+        ("forest_recenter_button", "map_center_egg", "dinosaur"),
+        safe_margin=80,
+        map_settle_frames=2,
+    )
+    forest_button = Detection("forest_recenter_button", 841, 1295, 1.0)
+    dinosaur = Detection("dinosaur", 650, 800, 0.9)
+
+    target = planner.choose(frame, [forest_button])
+    assert target is not None and target.type == "forest_recenter_button"
+    planner.on_action_success("forest_recenter_button")
+
+    assert planner.choose(frame, [dinosaur]) is None
+    assert planner.choose(frame, [dinosaur]) is None
+    resumed = planner.choose(frame, [dinosaur])
+    assert resumed is not None and resumed.type == "dinosaur"
+
+
 def test_hunt_planner_excludes_dinosaur_on_own_blue_path() -> None:
     frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
     planner = HuntPlanner(
@@ -358,6 +659,60 @@ def test_hunt_planner_never_clicks_dinosaur_in_bottom_ui() -> None:
     ) is None
 
 
+def test_hunt_planner_never_clicks_dinosaur_under_redesigned_map_hud() -> None:
+    """The redesigned map has several fixed controls on the right edge.
+
+    Their art is animated and may miss template matching for a frame, so the
+    map layout owns small exclusion zones as a second line of defence. The
+    free area immediately to their left must remain huntable.
+    """
+
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    right_hud = ExclusionZone(
+        name="map_right_hunt_action",
+        x0=755,
+        y0=945,
+        x1=900,
+        y1=1075,
+    )
+    planner = HuntPlanner(
+        ("dinosaur",),
+        safe_margin=80,
+        exclusion_zones=(right_hud,),
+    )
+    anchor = Detection("map_center_egg", 450, 800, 1.0)
+    covered = Detection("dinosaur", 820, 1010, 0.99)
+    safe = Detection("dinosaur", 700, 1010, 0.80)
+
+    target = planner.choose(frame, [anchor, covered, safe])
+
+    assert target is not None and (target.x, target.y) == (700, 1010)
+
+
+def test_hunt_planner_does_not_hunt_when_only_redesigned_map_hud_is_visible() -> None:
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    right_hud = ExclusionZone(
+        name="map_right_nest",
+        x0=775,
+        y0=1260,
+        x1=900,
+        y1=1405,
+    )
+    planner = HuntPlanner(
+        ("dinosaur",),
+        safe_margin=80,
+        exclusion_zones=(right_hud,),
+    )
+
+    assert planner.choose(
+        frame,
+        [
+            Detection("map_center_egg", 450, 800, 1.0),
+            Detection("dinosaur", 835, 1320, 0.99),
+        ],
+    ) is None
+
+
 def test_hunt_planner_waits_when_all_dinosaurs_are_on_own_blue_path() -> None:
     frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
     planner = HuntPlanner(
@@ -374,13 +729,27 @@ def test_hunt_planner_waits_when_all_dinosaurs_are_on_own_blue_path() -> None:
     assert planner.choose(frame, detections) is None
 
 
-def test_hunt_planner_recenters_after_repeated_frames_without_safe_dinosaur() -> None:
+def test_hunt_planner_recenters_after_seconds_without_a_safe_dinosaur() -> None:
+    """The stall threshold counts seconds, not frames.
+
+    A frame count buys a different wait on every machine: the same four frames
+    were 4.3 seconds when a scan cost 1080ms and 15 seconds when the host was
+    busy enough to push it to 3668ms. Seconds hold the wait still.
+
+    The grace period survived the move to supply-driven recentering: a corridor
+    full of the bot's own routes clears itself as hunts return, so resetting the
+    instant supply dips would trade seconds of waiting for a whole map reload.
+    """
+
     frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    now = [0.0]
     planner = HuntPlanner(
         ("map_exit_nest_button", "dinosaur"),
         own_path_radius=90,
-        stalled_recenter_frames=2,
+        stalled_recenter_seconds=10.0,
+        empty_supply_recenter_frames=99,
         safe_margin=80,
+        clock=lambda: now[0],
     )
     detections = [
         Detection("map_center_egg", 450, 800, 1.0),
@@ -390,24 +759,445 @@ def test_hunt_planner_recenters_after_repeated_frames_without_safe_dinosaur() ->
     ]
 
     assert planner.choose(frame, detections) is None
+    now[0] = 9.0
+    assert planner.choose(frame, detections) is None, "still inside the window"
+
+    now[0] = 10.0
     reset = planner.choose(frame, detections)
     assert reset is not None and reset.type == "map_exit_nest_button"
+    assert planner.last_recenter_reason() == "low_supply"
+    assert planner.last_supply() == 0
+
+
+def test_hunt_planner_keeps_hunting_once_the_anchor_is_only_predicted() -> None:
+    """Tapping a dinosaur must not disqualify the next one.
+
+    `anchor_window` asks whether a tap would push the centre egg off screen.
+    That protects the egg, and the egg is not the point: recentering exists to
+    restore the supply of reachable dinosaurs, and the egg is only how the bot
+    recognises the reset finished. Enforced against an anchor that is *inferred*
+    from the previous tap - which is the state for 88% of a measured run - the
+    rule threw away 1344 candidates, emptied 22% of all planning cycles, and
+    then charged a recenter to refill a map that was never empty.
+    """
+
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(("dinosaur",), clock=lambda: 0.0)
+    # The egg sits off centre, which is the only way the rule can bite: with the
+    # anchor exactly centred the projection is a point reflection through the
+    # centre, and `screen_margin` has already excluded everything it could
+    # reject.
+    egg = Detection("map_center_egg", 250, 500, 1.0)
+    far = Detection("dinosaur", 700, 1100, 0.95)
+
+    # Measured anchor: the rule applies, and this tap would throw the egg off
+    # screen, so it is refused.
+    assert planner.choose(frame, [egg, far]) is None
+    assert planner.anchor_measured()
+    assert planner.last_rejections().get("anchor_window") == 1
+
+    # Same dinosaur, same anchor, but now only predicted. The egg is no longer
+    # worth protecting, so the hunt goes ahead.
+    planner._anchor_measured = False
+    target = planner.choose(frame, [far])
+
+    assert target is not None and target.type == "dinosaur"
+    assert "anchor_window" not in planner.last_rejections()
+    assert planner.last_supply() == 1
+
+
+def test_hunt_planner_counts_only_dinosaurs_it_could_actually_tap() -> None:
+    """A dinosaur already hunted this map is scenery, not supply.
+
+    It stays on screen and keeps passing every rejection rule, but `choose`
+    drops it as a duplicate. Counting it left the map reporting supply while
+    planning nothing, so the resupply trigger never fired: a measured run sat
+    on `supply=2` through twenty seconds of empty cycles before the blind-stall
+    timer had to rescue it. Resetting the map is exactly what should have
+    happened, and it is what the operator expected to see.
+    """
+
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    now = [0.0]
+    planner = HuntPlanner(
+        ("map_exit_nest_button", "dinosaur"),
+        deduplicate_types=("dinosaur",),
+        dedup_radius=25.0,
+        stalled_recenter_seconds=10.0,
+        empty_supply_recenter_frames=99,
+        clock=lambda: now[0],
+    )
+    planner._last_anchor = (450.0, 800.0)
+    landmark = Detection("mailbox_button", 841, 1210, 0.99)
+    lone = Detection("dinosaur", 450, 640, 0.95)
+
+    first = planner.choose(frame, [landmark, lone])
+    assert first is not None and first.type == "dinosaur"
+    assert planner.last_supply() == 1
+
+    # The hunt went out; the map still shows the dinosaur that was spent on it.
+    planner._awaiting_hunt_button = False
+    assert planner.choose(frame, [landmark, lone]) is None
+    assert planner.last_supply() == 0, "a spent dinosaur is not supply"
+
+    now[0] = 10.0
+    reset = planner.choose(frame, [landmark, lone])
+
+    assert reset is not None and reset.type == "map_exit_nest_button"
+    assert planner.last_recenter_reason() == "low_supply"
+
+
+def test_hunt_planner_recenters_after_two_confirmed_empty_map_frames() -> None:
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(
+        ("map_exit_nest_button", "dinosaur"),
+        stalled_recenter_seconds=60.0,
+        empty_supply_recenter_frames=2,
+        clock=lambda: 0.0,
+    )
+    anchor = Detection("map_center_egg", 450, 800, 1.0)
+    exit_button = Detection("map_exit_nest_button", 841, 1295, 1.0)
+
+    assert planner.choose(frame, [anchor, exit_button]) is None
+    reset = planner.choose(frame, [anchor, exit_button])
+
+    assert reset is not None and reset.type == "map_exit_nest_button"
+    assert planner.last_recenter_reason() == "empty_supply"
+
+
+def test_hunt_planner_skips_dinosaurs_too_far_from_the_viewport_center() -> None:
+    """A far tap recenters the map without opening the hunt panel.
+
+    Measured over 161 minutes: taps landing within 300 px of the center opened
+    the panel 86% of the time, 300-500 px 69%, and past 500 px only 21%. The
+    band beyond 600 px produced 2 hunts out of 31 taps while the failures each
+    cost a full verify budget, so the limit removes near-pure waste.
+    """
+
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(
+        ("map_exit_nest_button", "dinosaur"),
+        max_center_distance_px=600.0,
+        safe_margin=40,
+    )
+    planner._last_anchor = (450.0, 800.0)
+    landmark = Detection("mailbox_button", 841, 1210, 0.99)
+    # 700 px straight up from the center at (450, 800).
+    far = Detection("dinosaur", 450, 100, 0.95)
+    near = Detection("dinosaur", 450, 500, 0.95)
+
+    assert planner.choose(frame, [landmark, far]) is None
+    assert planner.last_supply() == 0, "an unreachable dinosaur is not supply"
+    assert planner.last_rejections().get("center_distance") == 1
+
+    chosen = planner.choose(frame, [landmark, near])
+    assert chosen is not None and chosen.type == "dinosaur"
+
+
+def test_hunt_planner_center_distance_limit_can_be_disabled() -> None:
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(
+        ("map_exit_nest_button", "dinosaur"),
+        max_center_distance_px=0.0,
+        safe_margin=40,
+    )
+    planner._last_anchor = (450.0, 800.0)
+    landmark = Detection("mailbox_button", 841, 1210, 0.99)
+    far = Detection("dinosaur", 450, 100, 0.95)
+
+    chosen = planner.choose(frame, [landmark, far])
+    assert chosen is not None and chosen.type == "dinosaur"
+
+
+def test_hunt_planner_prefers_the_tap_that_moves_the_map_least() -> None:
+    """Displacement is measured from the screen centre, not from the anchor.
+
+    A tap re-centres the map on the dinosaur, so its distance from the *screen*
+    centre is exactly how far the view is about to travel. Ranking from the
+    anchor measured the wrong thing the moment the anchor stopped being
+    centred - and needed an anchor at all. Cheaper taps mean more hunts before
+    the map runs dry and has to be reset.
+    """
+
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(("dinosaur",), ring_width=75.0, clock=lambda: 0.0)
+    planner._last_anchor = (120.0, 300.0)      # stale, far from the screen centre
+    planner._anchor_measured = False
+    near = Detection("dinosaur", 450, 640, 0.9)    # 160px from the screen centre
+    far = Detection("dinosaur", 200, 400, 0.99)    # closer to the stale anchor
+
+    target = planner.choose(frame, [near, far])
+
+    assert target is not None
+    assert (target.x, target.y) == (450, 640)
 
 
 def test_hunt_planner_recenters_when_only_own_paths_remain() -> None:
     frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    now = [0.0]
     planner = HuntPlanner(
         ("map_exit_nest_button", "dinosaur"),
-        stalled_recenter_frames=2,
+        stalled_recenter_seconds=10.0,
+        clock=lambda: now[0],
     )
     anchor = Detection("map_center_egg", 450, 800, 1.0)
     own_path = Detection("own_hunt_path", 500, 820, 0.9)
 
     assert planner.choose(frame, [anchor, own_path]) is None
+    now[0] = 10.0
     reset = planner.choose(frame, [own_path])
 
     assert reset is not None and reset.type == "map_exit_nest_button"
     assert reset.detection.metadata["detector"] == "map_landmark_fallback"
+
+
+def test_hunt_planner_escapes_a_stall_with_no_landmark_at_all() -> None:
+    """The stall every other guard is blind to, because they all need a landmark.
+
+    Reproduces the measured episode: a batch recenter arms stage 1, which waits
+    for the nest or forest button, and the screen shows neither - only dinosaur
+    labels. `_choose_map_exit`'s fallback needs an anchor the preceding restart
+    cleared, and the recenter timeout in the hunting branch never runs because
+    it is guarded on `on_collect_map`. One run held this for 519 seconds across
+    two game restarts.
+    """
+
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    now = [0.0]
+    planner = HuntPlanner(
+        ("map_exit_nest_button", "dinosaur"),
+        blind_idle_seconds=20.0,
+        clock=lambda: now[0],
+    )
+    # The state a batch recenter leaves behind, with the anchor cleared by the
+    # restart that preceded it.
+    planner._recenter_stage = 1
+    planner._last_anchor = None
+    blind_screen = [
+        Detection("dinosaur", 500, 620, 0.94),
+        Detection("dinosaur", 300, 700, 0.88),
+        Detection("own_hunt_path", 480, 640, 0.8),
+    ]
+
+    assert planner.choose(frame, blind_screen) is None
+    assert planner.last_stage() == "recenter"
+    assert planner.take_blind_escape() is None, "nothing to report yet"
+
+    now[0] = 19.0
+    assert planner.choose(frame, blind_screen) is None
+    assert planner.take_blind_escape() is None, "still inside the window"
+
+    now[0] = 20.0
+    assert planner.choose(frame, blind_screen) is None
+    escape = planner.take_blind_escape()
+
+    assert escape is not None
+    assert escape["stage"] == "recenter"
+    assert escape["escapes"] == 1
+    assert escape["seconds"] == pytest.approx(20.0)
+    assert planner.take_blind_escape() is None, "reported once, not every cycle"
+    assert planner._recenter_stage == 0, "the parked stage is released"
+
+    # Releasing the stage is not enough by itself. Without an anchor the
+    # hunting branch reads this same screen as "on the map, anchor lost" and
+    # arms the identical recenter again; replaying the measured stall went
+    # round that loop ten times. Adopting the frame centre is what lets the
+    # next cycle act - on a detected dinosaur, not on a blind coordinate.
+    now[0] = 22.0
+    recovered = planner.choose(frame, blind_screen)
+
+    assert recovered is not None and recovered.type == "dinosaur"
+
+
+def test_hunt_planner_blind_escape_re_arms_until_the_stall_ends() -> None:
+    """A release that does not reach the cause has to keep reporting.
+
+    Latching after the first escape would hide exactly the episodes worth
+    knowing about: the ones where nothing the planner can do is enough and the
+    watchdog has to restart the app.
+    """
+
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    now = [0.0]
+    planner = HuntPlanner(
+        ("map_exit_nest_button", "dinosaur"),
+        blind_idle_seconds=20.0,
+        clock=lambda: now[0],
+    )
+    planner._recenter_stage = 1
+    planner._last_anchor = None
+    # Nothing matched at all, so no release can produce a target.
+    blind_screen: list[Detection] = []
+
+    planner.choose(frame, blind_screen)
+    for elapsed, expected in ((20.0, 1), (40.0, 2), (60.0, 3)):
+        now[0] = elapsed
+        assert planner.choose(frame, blind_screen) is None
+        escape = planner.take_blind_escape()
+        assert escape is not None and escape["escapes"] == expected
+
+    # A cycle that plans something ends the episode, so the next one counts
+    # from one again rather than continuing to escalate.
+    now[0] = 61.0
+    assert planner.choose(frame, [Detection("dinosaur", 500, 620, 0.94)]) is not None
+    now[0] = 200.0
+    planner.choose(frame, blind_screen)
+    now[0] = 220.0
+    planner.choose(frame, blind_screen)
+
+    escape = planner.take_blind_escape()
+    assert escape is not None and escape["escapes"] == 1
+
+
+def test_hunt_planner_blind_timer_ignores_deliberate_waits() -> None:
+    """A cooldown the planner set itself is a wait, not a stall."""
+
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    now = [0.0]
+    planner = HuntPlanner(
+        ("dinosaur",),
+        blind_idle_seconds=20.0,
+        capacity_wait_seconds=300.0,
+        clock=lambda: now[0],
+    )
+    capacity_full = [Detection("hunt_capacity_full", 450, 800, 0.99)]
+
+    for elapsed in (0.0, 20.0, 100.0, 280.0):
+        now[0] = elapsed
+        assert planner.choose(frame, capacity_full) is None
+        assert planner.last_stage() == "capacity_wait"
+        assert planner.take_blind_escape() is None
+    assert planner.last_blind_seconds() == 0.0
+
+
+def test_hunt_planner_abandons_a_mail_flow_that_stops_advancing() -> None:
+    """55 consecutive cycles waited for a mailbox that was never on screen.
+
+    `_resume_hunting_after_mail` releases the flow only when a map landmark
+    and a dinosaur are both visible, so a screen with dinosaurs and no landmark
+    satisfies neither the stage nor its escape.
+    """
+
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    now = [0.0]
+    planner = HuntPlanner(
+        ("mailbox_button", "dinosaur"),
+        mail_stage_timeout_seconds=20.0,
+        clock=lambda: now[0],
+    )
+    planner._mail_stage = 1
+    planner._total_hunt_count = 30
+    blind_screen = [Detection("dinosaur", 500, 620, 0.94)]
+
+    assert planner.choose(frame, blind_screen) is None
+    assert planner.last_stage() == "mail"
+
+    now[0] = 19.0
+    assert planner.choose(frame, blind_screen) is None
+    assert planner._mail_stage == 1, "still inside the window"
+
+    now[0] = 20.0
+    assert planner.choose(frame, blind_screen) is None
+
+    assert planner._mail_stage == 0
+    # The counter has to go with the stage: left armed, the next recenter walks
+    # straight back into the same flow.
+    assert planner._total_hunt_count == 0
+    # A stage carrying its own deadline releases itself. Letting the generic
+    # blind timer fire here too would report a handled timeout as an
+    # unexplained stall, snapshot included.
+    assert planner.take_blind_escape() is None
+
+
+def test_hunt_planner_mail_retry_loop_does_not_hold_off_its_own_deadline() -> None:
+    """A re-offered button is a retry, not progress.
+
+    Stage 2 falls back to the mailbox when its own collect-all button is
+    missing, without advancing the stage. Counting any returned target as
+    progress let that fallback tap the mailbox for 117 measured seconds with
+    the deadline never once consulted.
+    """
+
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    now = [0.0]
+    planner = HuntPlanner(
+        ("mailbox_button", "mail_collect_all_button", "dinosaur"),
+        mail_stage_timeout_seconds=20.0,
+        clock=lambda: now[0],
+    )
+    planner._mail_stage = 2
+    planner._total_hunt_count = 30
+    # The collect-all button never appears - an already-emptied mailbox.
+    mailbox_only = [Detection("mailbox_button", 841, 1210, 0.99)]
+
+    for elapsed in (0.0, 6.0, 12.0, 18.0):
+        now[0] = elapsed
+        target = planner.choose(frame, mailbox_only)
+        assert target is not None and target.type == "mailbox_button"
+        assert planner._mail_stage == 2
+
+    now[0] = 20.0
+
+    assert planner.choose(frame, mailbox_only) is None, (
+        "the flow was abandoned, so its buttons stop being pressed"
+    )
+    assert planner._mail_stage == 0
+
+
+def test_hunt_planner_mail_timeout_outranks_the_blind_timer() -> None:
+    """A longer mail deadline has to survive the generic one, or it is fiction."""
+
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    now = [0.0]
+    planner = HuntPlanner(
+        ("mailbox_button", "dinosaur"),
+        mail_stage_timeout_seconds=60.0,
+        blind_idle_seconds=20.0,
+        clock=lambda: now[0],
+    )
+    planner._mail_stage = 1
+    planner._total_hunt_count = 30
+
+    for elapsed in (0.0, 21.0, 45.0, 59.0):
+        now[0] = elapsed
+        assert planner.choose(frame, []) is None
+        assert planner._mail_stage == 1, f"released early at {elapsed}s"
+        assert planner.take_blind_escape() is None
+
+    now[0] = 60.0
+    assert planner.choose(frame, []) is None
+    assert planner._mail_stage == 0
+
+    # Once mail lets go, the generic timer owns the stall again.
+    now[0] = 80.0
+    planner.choose(frame, [])
+    now[0] = 100.0
+    planner.choose(frame, [])
+
+    escape = planner.take_blind_escape()
+    assert escape is not None and escape["stage"] == "hunting"
+
+
+def test_hunt_planner_mail_timeout_measures_progress_not_duration() -> None:
+    """A slow mail flow is not a stalled one, so the clock restarts on progress."""
+
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    now = [0.0]
+    planner = HuntPlanner(
+        ("mailbox_button", "mail_collect_all_button", "dinosaur"),
+        mail_stage_timeout_seconds=20.0,
+        clock=lambda: now[0],
+    )
+    planner._mail_stage = 1
+    mailbox = Detection("mailbox_button", 841, 1210, 0.99)
+    collect_all = Detection("mail_collect_all_button", 450, 1200, 0.99)
+
+    now[0] = 15.0
+    assert planner.choose(frame, [mailbox]) is not None
+    now[0] = 30.0
+    assert planner.choose(frame, [collect_all]) is not None
+
+    assert planner._mail_stage == 3, "35 seconds in and the flow is still advancing"
 
 
 def test_hunt_planner_counts_only_verified_confirmation() -> None:
@@ -550,6 +1340,24 @@ def test_hunt_planner_does_not_assume_mailbox_full_without_dialog_close() -> Non
     )
 
 
+def test_hunt_planner_does_not_recover_blocked_confirmation_without_dialog_close() -> None:
+    planner = HuntPlanner(("hunt_confirm_button", "hunt_dialog_close_button"))
+    confirm = Detection("hunt_confirm_button", 451, 1412, 1.0)
+    failed_target = Target(
+        type=confirm.type,
+        x=confirm.x,
+        y=confirm.y,
+        confidence=confirm.confidence,
+        detection=confirm,
+    )
+
+    assert not planner.on_blocked_action_context(
+        failed_target,
+        [confirm],
+        attempt=2,
+    )
+
+
 def test_hunt_planner_taps_egg_until_map_is_centered() -> None:
     frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
     planner = HuntPlanner(
@@ -631,6 +1439,37 @@ def test_hunt_planner_finishes_visible_hunt_control_before_no_available_warning(
     hunt_button = Detection("hunt_button", 450, 1200, 1.0)
     target = planner.choose(frame, [unavailable, hunt_button])
     assert target is not None and target.type == "hunt_button"
+
+
+def test_hunt_planner_skips_map_confirmed_inert_hunt_button() -> None:
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(("hunt_button", "dinosaur"), safe_margin=80)
+    hunt_button = Detection("hunt_button", 301, 546, 0.9786)
+    anchor = Detection("map_center_egg", 488, 1093, 0.9278)
+    map_exit = Detection("map_exit_nest_button", 841, 1295, 0.95)
+    dinosaur = Detection("dinosaur", 700, 600, 0.9)
+    detections = [hunt_button, anchor, map_exit, dinosaur]
+
+    failed = planner.choose(frame, detections)
+    assert failed is not None and failed.type == "hunt_button"
+
+    planner.on_action_failure_context(failed, frame, detections, attempts=2)
+    assert planner.is_suppressed(failed.type, failed.x, failed.y)
+
+    # A blind-stage release must not revive the same fixed false match.
+    planner._release_stage_machines(frame)
+    assert planner.is_suppressed(failed.type, failed.x, failed.y)
+
+    resumed = planner.choose(frame, detections)
+    assert resumed is not None and resumed.type == "dinosaur"
+
+
+def test_hunt_button_failure_recovery_rescans_for_map_evidence() -> None:
+    planner = HuntPlanner(("hunt_button", "dinosaur"))
+
+    requested = planner.failure_recovery_detection_types("hunt_button")
+
+    assert {"map_center_egg", "map_exit_nest_button", "dinosaur"} <= requested
 
 
 def test_hunt_planner_spreads_targets_away_from_existing_blue_ray() -> None:
@@ -745,6 +1584,30 @@ def test_hunt_team_availability_detector_only_matches_zero_of_eleven() -> None:
     assert detector.detect(team_screen("11 / 11")) == []
 
 
+def test_hatch_autoplace_dialog_detector_matches_level_order_variant() -> None:
+    detector = HatchAutoplaceDialogDetector()
+    image = np.full((1600, 900, 3), 20, dtype=np.uint8)
+    cv2.rectangle(image, (240, 600), (660, 985), (245, 245, 245), -1)
+    cv2.rectangle(image, (330, 675), (430, 695), (70, 115, 235), -1)
+    cv2.rectangle(image, (455, 730), (580, 750), (70, 115, 235), -1)
+    cv2.rectangle(image, (290, 853), (446, 934), (220, 220, 130), -1)
+    cv2.rectangle(image, (460, 853), (612, 934), (110, 120, 255), -1)
+
+    found = detector.detect(Frame(image))
+
+    assert len(found) == 1
+    assert found[0].type == "hatch_autoplace_notice"
+
+
+def test_hatch_autoplace_dialog_detector_rejects_unpaired_cyan_control() -> None:
+    detector = HatchAutoplaceDialogDetector()
+    image = np.full((1600, 900, 3), 20, dtype=np.uint8)
+    cv2.rectangle(image, (330, 675), (430, 695), (70, 115, 235), -1)
+    cv2.rectangle(image, (290, 853), (446, 934), (220, 220, 130), -1)
+
+    assert detector.detect(Frame(image)) == []
+
+
 def test_hunt_capacity_detector_only_matches_ten_at_egg_nest() -> None:
     detector = HuntCapacityDetector()
     egg = cv2.imread(str(Path("assets/templates/map-center-egg-anchor.png")))
@@ -778,6 +1641,61 @@ def test_hunt_capacity_detector_only_matches_ten_at_egg_nest() -> None:
     assert detector.detect(capacity_screen("0/10")) == []
     assert detector.detect(capacity_screen("1/10")) == []
     assert detector.detect(capacity_screen("10/10", show_nest=False)) == []
+
+
+def hud_capacity_screen(label: str) -> Frame:
+    """Draw a dispatched-team counter into the fixed top-right HUD pill."""
+
+    image = np.full((1600, 900, 3), 30, dtype=np.uint8)
+    cv2.putText(
+        image,
+        label,
+        (774, 258),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.7,
+        (255, 255, 255),
+        2,
+        cv2.LINE_AA,
+    )
+    return Frame(image)
+
+
+def test_hunt_capacity_detector_reads_the_hud_when_the_nest_is_off_screen() -> None:
+    # The map pans away from the egg nest for most of a hunt, so a wait that
+    # only the nest can report is invisible when it matters and gets answered
+    # with a game restart instead of patience.
+    detector = HuntCapacityDetector()
+
+    found = detector.detect(hud_capacity_screen("10/10"))
+
+    assert len(found) == 1 and found[0].type == "hunt_capacity_full"
+    assert found[0].metadata["detector"] == "hunt_team_hud"
+
+
+def test_hunt_capacity_hud_is_full_at_any_team_cap() -> None:
+    # The cap rises with a growth pass, and a hard-coded 10 went blind on a
+    # team counter that never reads 10 - the same assumption that already
+    # blinded the availability detector on a single-digit cap.
+    detector = HuntCapacityDetector()
+
+    for label in ("5/5", "8/8", "11/11"):
+        assert len(detector.detect(hud_capacity_screen(label))) == 1, label
+
+
+def test_hunt_capacity_hud_ignores_a_counter_with_teams_left() -> None:
+    detector = HuntCapacityDetector()
+
+    for label in ("6/10", "0/10", "1/11"):
+        assert detector.detect(hud_capacity_screen(label)) == [], label
+
+
+def test_hunt_capacity_hud_compares_pixels_not_glyph_counts() -> None:
+    # "2/5" draws one glyph either side just like "5/5"; only the pixels tell
+    # a full counter from a partial one that happens to be the same shape.
+    detector = HuntCapacityDetector()
+
+    assert detector.detect(hud_capacity_screen("2/5")) == []
+    assert detector.detect(hud_capacity_screen("3/8")) == []
 
 
 def test_target_too_strong_detector_requires_red_warning_and_close_button() -> None:
@@ -874,6 +1792,149 @@ def test_verifier_accepts_expected_next_ui() -> None:
     assert "hunt_button" in result.reason
 
 
+def test_verifier_reports_pixel_change_when_expected_next_ui_is_missing() -> None:
+    """An inert coordinate must be distinguishable from a wrong-screen tap.
+
+    Both fail the same way - the expected successor never appears - so the
+    engine's escalate-to-back guard can only tell them apart by
+    ``pixel_change``, and it skips the check entirely while that stays None.
+    """
+
+    detection = make_detection(type="hatch_egg_pile")
+    target = Target(
+        detection.type,
+        detection.x,
+        detection.y,
+        detection.confidence,
+        detection,
+    )
+    verifier = TargetChangedVerifier(
+        success_transitions={"hatch_egg_pile": ("hatch_incubator_title",)}
+    )
+
+    inert = verifier.verify(
+        make_frame(10), make_frame(10), target, [detection], [detection]
+    )
+    assert not inert.success
+    assert "expected next UI not detected" in inert.reason
+    assert inert.pixel_change == pytest.approx(0.0)
+
+    wrong_screen = verifier.verify(
+        make_frame(0), make_frame(255), target, [detection], [detection]
+    )
+    assert not wrong_screen.success
+    assert wrong_screen.pixel_change is not None
+    assert wrong_screen.pixel_change > 0.5
+
+
+def test_verifier_accepts_expected_frame_structure_without_template_detection() -> None:
+    detection = make_detection(type="hatch_claim_button")
+    target = Target(
+        detection.type,
+        detection.x,
+        detection.y,
+        detection.confidence,
+        detection,
+    )
+    result = TargetChangedVerifier(
+        success_transitions={"hatch_claim_button": ("hatch_incubator_title",)},
+        success_frame_predicates={
+            "hatch_claim_button": lambda frame: int(frame.image[0, 0, 0]) == 42
+        },
+    ).verify(
+        make_frame(10),
+        make_frame(42),
+        target,
+        [detection],
+        [],
+    )
+
+    assert result.success
+    assert "frame structure" in result.reason
+
+
+def test_verifier_accepts_required_previous_ui_disappearance() -> None:
+    target_detection = make_detection(type="hatch_candidate_row")
+    target = Target(
+        target_detection.type,
+        target_detection.x,
+        target_detection.y,
+        target_detection.confidence,
+        target_detection,
+    )
+    select_title = make_detection(type="hatch_select_title")
+    verifier = TargetChangedVerifier(
+        success_transitions={
+            "hatch_candidate_row": ("hatch_select_confirm_prompt",)
+        },
+        success_requires_detection_disappearance={
+            "hatch_candidate_row": ("hatch_select_title",)
+        },
+    )
+
+    transitioned = verifier.verify(
+        make_frame(10),
+        make_frame(20),
+        target,
+        [select_title],
+        [],
+    )
+    unchanged = verifier.verify(
+        make_frame(10),
+        make_frame(20),
+        target,
+        [select_title],
+        [select_title],
+    )
+    missing_before_evidence = verifier.verify(
+        make_frame(10),
+        make_frame(20),
+        target,
+        [],
+        [],
+    )
+
+    assert transitioned.success
+    assert "hatch_select_title" in transitioned.reason
+    assert not unchanged.success
+    assert not missing_before_evidence.success
+    assert verifier.relevant_detection_types(target.type) == frozenset(
+        {"hatch_select_confirm_prompt", "hatch_select_title"}
+    )
+
+
+def test_verifier_requires_forest_target_to_disappear_before_dinosaur_success() -> None:
+    forest = make_detection(type="forest_recenter_button")
+    target = Target(forest.type, forest.x, forest.y, forest.confidence, forest)
+    dinosaur = make_detection(x=120, y=70, type="dinosaur")
+    verifier = TargetChangedVerifier(
+        success_transitions={"forest_recenter_button": ("dinosaur",)},
+        success_requires_target_absence=("forest_recenter_button",),
+    )
+
+    still_visible = verifier.verify(
+        make_frame(10),
+        make_frame(20),
+        target,
+        [forest],
+        [forest, dinosaur],
+    )
+    transitioned = verifier.verify(
+        make_frame(10),
+        make_frame(20),
+        target,
+        [forest],
+        [dinosaur],
+    )
+
+    assert not still_visible.success
+    assert "still visible" in still_visible.reason
+    assert transitioned.success
+    assert verifier.relevant_detection_types(target.type) == frozenset(
+        {"forest_recenter_button", "dinosaur"}
+    )
+
+
 def test_verifier_requires_expected_next_ui() -> None:
     detection = make_detection(type="hunt_button")
     target = Target("hunt_button", detection.x, detection.y, detection.confidence, detection)
@@ -921,6 +1982,28 @@ class AlwaysFailsVerifier:
         return VerificationResult(False, "test failure")
 
 
+class SequenceVerifier:
+    def __init__(self, results: list[VerificationResult]) -> None:
+        self.results = results
+        self.index = 0
+
+    def verify(self, *args, **kwargs) -> VerificationResult:
+        result = self.results[min(self.index, len(self.results) - 1)]
+        self.index += 1
+        return result
+
+
+class RecordingEventLog:
+    def __init__(self) -> None:
+        self.records: list[dict[str, object]] = []
+
+    def emit(self, event: str, **fields: object) -> None:
+        self.records.append({"e": event, **fields})
+
+    def close(self) -> None:
+        return None
+
+
 def test_engine_runs_complete_feedback_loop() -> None:
     capture = SequenceCapture([make_frame(0, 1), make_frame(255, 2)])
     driver = RecordingActionDriver()
@@ -943,6 +2026,112 @@ def test_engine_runs_complete_feedback_loop() -> None:
     assert context.state == BotState.STOPPED
     assert len(driver.actions) == 1
     assert context.last_result is not None and context.last_result.success
+    assert capture.closed
+
+
+def test_engine_recovers_one_adb_action_failure_without_crashing() -> None:
+    class FailingAdbActionDriver:
+        def execute(self, action: ActionCommand, frame: Frame) -> None:
+            del action, frame
+            raise AdbError("ADB exited with 255: swipe transport failed")
+
+    class FailureAwarePlanner(TargetPlanner):
+        def __init__(self) -> None:
+            super().__init__()
+            self.failed: list[str] = []
+
+        def on_action_failure(self, target_type: str) -> None:
+            self.failed.append(target_type)
+
+    target_detection = make_detection()
+    target = Target(
+        target_detection.type,
+        target_detection.x,
+        target_detection.y,
+        target_detection.confidence,
+        target_detection,
+    )
+    planner = FailureAwarePlanner()
+    events = RecordingEventLog()
+    context = BotContext(
+        capture_provider=SequenceCapture([make_frame(0)]),
+        detector=PixelDetector(),
+        planner=planner,
+        action_driver=FailingAdbActionDriver(),  # type: ignore[arg-type]
+        verifier=AlwaysFailsVerifier(),
+        observer=RuntimeMode(),
+        logger=logging.getLogger("test_adb_action_failure"),
+        event_log=events,
+        state=BotState.ACTION,
+        frame=make_frame(0),
+        detections=[target_detection],
+        target=target,
+        action=ActionCommand(ActionKind.SWIPE, 10, 10, 20, 20, 400),
+    )
+
+    assert BotEngine(context).step() == BotState.CAPTURE
+    assert planner.failed == ["resource"]
+    assert context.action_count == 0
+    assert context.target is None and context.action is None
+    assert context.action_transport_failures == 1
+    assert any(record["e"] == "action_transport_failure" for record in events.records)
+
+
+def test_engine_stops_cleanly_after_repeated_adb_action_failures() -> None:
+    class FailingAdbActionDriver:
+        def execute(self, action: ActionCommand, frame: Frame) -> None:
+            del action, frame
+            raise AdbError("ADB exited with 255: swipe transport failed")
+
+    target_detection = make_detection()
+    target = Target(
+        target_detection.type,
+        target_detection.x,
+        target_detection.y,
+        target_detection.confidence,
+        target_detection,
+    )
+    context = BotContext(
+        capture_provider=SequenceCapture([make_frame(0)]),
+        detector=PixelDetector(),
+        planner=TargetPlanner(),
+        action_driver=FailingAdbActionDriver(),  # type: ignore[arg-type]
+        verifier=AlwaysFailsVerifier(),
+        observer=RuntimeMode(),
+        logger=logging.getLogger("test_adb_action_failure_limit"),
+        state=BotState.ACTION,
+        frame=make_frame(0),
+        detections=[target_detection],
+        target=target,
+        action=ActionCommand(ActionKind.SWIPE, 10, 10, 20, 20, 400),
+        action_transport_failures=1,
+    )
+
+    assert BotEngine(context).step() == BotState.STOPPED
+    assert context.action_count == 0
+    assert context.action_transport_failures == 2
+
+
+def test_engine_stops_when_bounded_planner_reports_complete() -> None:
+    class CompletePlanner(TargetPlanner):
+        def is_complete(self) -> bool:
+            return True
+
+    capture = SequenceCapture([make_frame(0, 1)])
+    driver = RecordingActionDriver()
+    context = BotContext(
+        capture_provider=capture,
+        detector=PixelDetector(),
+        planner=CompletePlanner(),
+        action_driver=driver,
+        verifier=TargetChangedVerifier(),
+        observer=RuntimeMode(),
+        logger=logging.getLogger("test_planner_complete"),
+        idle_delay_ms=0,
+    )
+    BotEngine(context).run()
+    assert driver.actions == []
+    assert context.action_count == 0
     assert capture.closed
 
 
@@ -977,6 +2166,143 @@ def test_engine_uses_target_specific_post_action_delay() -> None:
     assert context.action_count == 1
 
 
+def test_engine_adaptive_verification_finishes_before_timeout() -> None:
+    now = [0.0]
+    detection = make_detection()
+    target = Target("resource", detection.x, detection.y, detection.confidence, detection)
+    events = RecordingEventLog()
+    context = BotContext(
+        capture_provider=SequenceCapture([make_frame(10), make_frame(20)]),
+        detector=PixelDetector(),
+        planner=TargetPlanner(),
+        action_driver=RecordingActionDriver(),
+        verifier=SequenceVerifier(
+            [
+                VerificationResult(False, "not ready"),
+                VerificationResult(True, "ready"),
+            ]
+        ),
+        observer=RuntimeMode(),
+        logger=logging.getLogger("test_adaptive_verify_early_success"),
+        click_delay_ms=5000,
+        transition_poll_interval_ms=250,
+        event_log=events,
+        clock=lambda: now[0],
+        state=BotState.ACTION,
+        frame=make_frame(),
+        detections=[detection],
+        target=target,
+        action=ActionCommand.tap(target.x, target.y),
+    )
+
+    def advance(seconds: float) -> bool:
+        now[0] += seconds
+        return False
+
+    with patch.object(context.stop_event, "wait", side_effect=advance):
+        engine = BotEngine(context)
+        assert engine.step() == BotState.VERIFY
+        assert engine.step() == BotState.VERIFY
+        assert engine.step() == BotState.IDLE
+
+    verify_events = [record for record in events.records if record["e"] == "verify"]
+    assert [record["phase"] for record in verify_events] == ["pending", "final"]
+    assert now[0] == pytest.approx(0.5)
+
+
+def test_engine_fast_fails_inert_hunt_button_after_two_checks() -> None:
+    now = [0.0]
+    detection = make_detection(type="hunt_button")
+    target = Target(
+        detection.type,
+        detection.x,
+        detection.y,
+        detection.confidence,
+        detection,
+    )
+    events = RecordingEventLog()
+    context = BotContext(
+        capture_provider=SequenceCapture([make_frame(10), make_frame(10)]),
+        detector=PixelDetector(),
+        planner=HuntPlanner(("hunt_button",)),
+        action_driver=RecordingActionDriver(),
+        verifier=SequenceVerifier(
+            [
+                VerificationResult(False, "no change", pixel_change=0.0),
+                VerificationResult(False, "no change", pixel_change=0.0),
+            ]
+        ),
+        observer=RuntimeMode(),
+        logger=logging.getLogger("test_inert_hunt_button_fast_failure"),
+        click_delay_ms=5000,
+        transition_poll_interval_ms=250,
+        verify_retries=0,
+        event_log=events,
+        clock=lambda: now[0],
+        state=BotState.ACTION,
+        frame=make_frame(),
+        detections=[detection],
+        target=target,
+        action=ActionCommand.tap(target.x, target.y),
+    )
+
+    def advance(seconds: float) -> bool:
+        now[0] += seconds
+        return False
+
+    with patch.object(context.stop_event, "wait", side_effect=advance):
+        engine = BotEngine(context)
+        assert engine.step() == BotState.VERIFY
+        assert engine.step() == BotState.VERIFY
+        assert engine.step() == BotState.IDLE
+
+    verify_events = [record for record in events.records if record["e"] == "verify"]
+    assert [record["phase"] for record in verify_events] == ["pending", "final"]
+    assert now[0] == pytest.approx(0.5)
+
+
+def test_engine_slow_verification_gets_minimum_checks_after_timeout() -> None:
+    now = [0.0]
+    detection = make_detection()
+    target = Target("resource", detection.x, detection.y, detection.confidence, detection)
+    events = RecordingEventLog()
+    context = BotContext(
+        capture_provider=SequenceCapture([make_frame(10)]),
+        detector=PixelDetector(),
+        planner=TargetPlanner(),
+        action_driver=RecordingActionDriver(),
+        verifier=AlwaysFailsVerifier(),
+        observer=RuntimeMode(),
+        logger=logging.getLogger("test_adaptive_verify_minimum_checks"),
+        click_delay_ms=100,
+        transition_poll_interval_ms=250,
+        verification_minimum_checks=2,
+        verify_retries=0,
+        event_log=events,
+        clock=lambda: now[0],
+        state=BotState.ACTION,
+        frame=make_frame(),
+        detections=[detection],
+        target=target,
+        action=ActionCommand.tap(target.x, target.y),
+    )
+
+    def advance(seconds: float) -> bool:
+        now[0] += seconds
+        return False
+
+    with patch.object(context.stop_event, "wait", side_effect=advance):
+        engine = BotEngine(context)
+        assert engine.step() == BotState.VERIFY
+        assert engine.step() == BotState.VERIFY
+        assert engine.step() == BotState.IDLE
+
+    verify_events = [record for record in events.records if record["e"] == "verify"]
+    assert [record["phase"] for record in verify_events] == ["pending", "final"]
+    assert [record["check"] for record in verify_events] == [1, 2]
+    assert now[0] == pytest.approx(0.2)
+
+
 def test_engine_retries_three_times_then_stops() -> None:
     capture = SequenceCapture([make_frame()])
     driver = RecordingActionDriver()
@@ -998,6 +2324,44 @@ def test_engine_retries_three_times_then_stops() -> None:
     BotEngine(context).run()
     assert len(driver.actions) == 4
     assert context.state == BotState.STOPPED
+
+
+def test_engine_short_circuits_repeated_blocked_hunt_confirmation() -> None:
+    class BlockedConfirmationDetector:
+        def detect(self, frame: Frame) -> list[Detection]:
+            return [
+                make_detection(80, 50, "hunt_confirm_button"),
+                make_detection(100, 70, "hunt_dialog_close_button"),
+            ]
+
+    planner = HuntPlanner(
+        ("hunt_confirm_button", "hunt_dialog_close_button"),
+        safe_margin=0,
+    )
+    context = BotContext(
+        capture_provider=SequenceCapture([make_frame()]),
+        detector=BlockedConfirmationDetector(),
+        planner=planner,
+        action_driver=RecordingActionDriver(),
+        verifier=AlwaysFailsVerifier(),
+        observer=RuntimeMode(),
+        logger=logging.getLogger("test_engine_blocked_confirmation"),
+        click_delay_ms=0,
+        idle_delay_ms=0,
+        verify_retries=3,
+    )
+    engine = BotEngine(context)
+
+    for _ in range(30):
+        engine.step()
+        if context.action_count == 2 and context.state == BotState.IDLE:
+            break
+
+    assert context.action_count == 2
+    assert context.attempt == 0
+    assert context.state == BotState.IDLE
+    recovery = planner.choose(make_frame(), BlockedConfirmationDetector().detect(make_frame()))
+    assert recovery is not None and recovery.type == "hunt_dialog_close_button"
 
 
 def test_debug_mode_saves_action_bundle(tmp_path: Path) -> None:
@@ -1154,6 +2518,28 @@ def test_black_screen_recovery_restarts_after_timeout_and_honors_cooldown() -> N
     assert restarter.restart_count == 2
 
 
+def test_manual_game_restart_bypasses_automatic_recovery_cooldown() -> None:
+    now = [100.0]
+    restarter = RecordingRestarter()
+    recovery = BlackScreenRecovery(
+        restarter,
+        logging.getLogger("test_manual_restart_cooldown"),
+        cooldown_seconds=300,
+        launch_wait_seconds=0,
+        clock=lambda: now[0],
+    )
+
+    assert recovery.request_restart("automatic", reason_key="black_screen")
+    now[0] += 1
+    assert not recovery.request_restart("automatic", reason_key="black_screen")
+    assert recovery.request_restart(
+        "manual control request",
+        reason_key="manual_control",
+        bypass_cooldown=True,
+    )
+    assert restarter.restart_count == 2
+
+
 def test_adb_app_restarter_only_restarts_configured_game() -> None:
     client = FakeAdbClient()
     restarter = AdbAppRestarter(client, "game.package", "GameActivity")  # type: ignore[arg-type]
@@ -1162,6 +2548,126 @@ def test_adb_app_restarter_only_restarts_configured_game() -> None:
         ["shell", "am", "force-stop", "game.package"],
         ["shell", "am", "start", "-n", "game.package/GameActivity"],
     ]
+
+
+def test_engine_queues_manual_game_restart_on_bot_thread() -> None:
+    class ManualRecovery:
+        def __init__(self) -> None:
+            self.requests: list[tuple[str, str, bool]] = []
+
+        def observe(self, frame: Frame) -> bool:
+            return False
+
+        def request_restart(
+            self,
+            reason: str,
+            *,
+            reason_key: str,
+            bypass_cooldown: bool = False,
+        ) -> bool:
+            self.requests.append((reason, reason_key, bypass_cooldown))
+            return True
+
+    recovery = ManualRecovery()
+    planner = HuntPlanner(("dinosaur",))
+    planner._awaiting_hunt_button = True
+    context = BotContext(
+        capture_provider=SequenceCapture([make_frame(255)]),
+        detector=PixelDetector(),
+        planner=planner,
+        action_driver=RecordingActionDriver(),
+        verifier=TargetChangedVerifier(),
+        observer=RuntimeMode(),
+        logger=logging.getLogger("test_manual_game_restart"),
+        runtime_recovery=recovery,
+        state=BotState.VERIFY,
+        target=Target("resource", 80, 50, 0.9, make_detection()),
+        attempt=2,
+    )
+    engine = BotEngine(context)
+
+    assert engine.request_game_restart()
+    assert not engine.request_game_restart()
+    assert recovery.requests == []
+
+    assert engine.step() == BotState.IDLE
+    assert recovery.requests == [("manual control request", "manual_control", True)]
+    assert context.target is None
+    assert context.attempt == 0
+    assert not planner._awaiting_hunt_button
+
+
+def test_engine_rejects_manual_game_restart_without_recovery() -> None:
+    context = BotContext(
+        capture_provider=SequenceCapture([make_frame(255)]),
+        detector=PixelDetector(),
+        planner=HuntPlanner(("dinosaur",)),
+        action_driver=RecordingActionDriver(),
+        verifier=TargetChangedVerifier(),
+        observer=RuntimeMode(),
+        logger=logging.getLogger("test_manual_game_restart_unavailable"),
+    )
+
+    assert not BotEngine(context).request_game_restart()
+
+
+def test_engine_restarts_game_after_closing_duplicate_login_dialog() -> None:
+    class DuplicateLoginRecovery:
+        def __init__(self) -> None:
+            self.requests: list[tuple[str, str, bool]] = []
+
+        def observe(self, frame: Frame) -> bool:
+            return False
+
+        def request_restart(
+            self,
+            reason: str,
+            *,
+            reason_key: str,
+            bypass_cooldown: bool = False,
+        ) -> bool:
+            self.requests.append((reason, reason_key, bypass_cooldown))
+            return True
+
+    target_type = "duplicate_login_close_button"
+    detection = make_detection(type=target_type)
+    target = Target(
+        target_type,
+        detection.x,
+        detection.y,
+        detection.confidence,
+        detection,
+    )
+    driver = RecordingActionDriver()
+    recovery = DuplicateLoginRecovery()
+    context = BotContext(
+        capture_provider=SequenceCapture([make_frame(255, 2)]),
+        detector=PixelDetector(),
+        planner=TargetPlanner((target_type,)),
+        action_driver=driver,
+        verifier=TargetChangedVerifier(),
+        observer=RuntimeMode(),
+        logger=logging.getLogger("test_duplicate_login_restart"),
+        click_delay_ms=0,
+        runtime_recovery=recovery,
+        state=BotState.ACTION,
+        frame=make_frame(10, 1),
+        detections=[detection],
+        target=target,
+        action=ActionCommand.tap(target.x, target.y),
+    )
+    engine = BotEngine(context)
+
+    assert engine.step() == BotState.VERIFY
+    assert len(driver.actions) == 1
+    assert recovery.requests == []
+
+    assert engine.step() == BotState.IDLE
+    assert recovery.requests == [
+        ("duplicate login dialog closed", "duplicate_login", True)
+    ]
+    assert context.target is None
+    assert context.action is None
 
 
 def test_engine_clears_transient_state_after_black_screen_recovery() -> None:
@@ -1191,3 +2697,1542 @@ def test_engine_clears_transient_state_after_black_screen_recovery() -> None:
     assert context.target is None
     assert context.attempt == 0
     assert not planner._awaiting_hunt_button
+
+
+def test_engine_escalates_repeated_action_failures_and_opens_restart_fuse() -> None:
+    class EscalationPlanner(TargetPlanner):
+        def __init__(self) -> None:
+            super().__init__(("resource",))
+            self.stage_recoveries: list[tuple[str, str, int]] = []
+
+        def last_stage(self) -> str:
+            return "test_stage"
+
+        def recover_from_action_failures(
+            self,
+            target: Target,
+            stage: str,
+            episodes: int,
+            frame: Frame | None,
+            detections,
+        ) -> bool:
+            assert frame is not None
+            self.stage_recoveries.append((stage, target.type, episodes))
+            return True
+
+    class EscalationRecovery:
+        def __init__(self) -> None:
+            self.requests: list[tuple[str, str]] = []
+
+        def observe(self, frame: Frame) -> bool:
+            return False
+
+        def request_restart(
+            self,
+            reason: str,
+            *,
+            reason_key: str,
+            bypass_cooldown: bool = False,
+        ) -> bool:
+            del bypass_cooldown
+            self.requests.append((reason, reason_key))
+            return True
+
+    detection = make_detection()
+    target = Target(
+        detection.type,
+        detection.x,
+        detection.y,
+        detection.confidence,
+        detection,
+    )
+    planner = EscalationPlanner()
+    recovery = EscalationRecovery()
+    events = RecordingEventLog()
+    context = BotContext(
+        capture_provider=SequenceCapture([make_frame(10)]),
+        detector=PixelDetector(),
+        planner=planner,
+        action_driver=RecordingActionDriver(),
+        verifier=AlwaysFailsVerifier(),
+        observer=RuntimeMode(),
+        logger=logging.getLogger("test_action_failure_escalation"),
+        click_delay_ms=0,
+        idle_delay_ms=0,
+        verify_retries=0,
+        runtime_recovery=recovery,
+        event_log=events,
+    )
+    engine = BotEngine(context)
+
+    def exhaust_once() -> BotState:
+        context.state = BotState.VERIFY
+        context.before_frame = make_frame(10)
+        context.before_detections = [detection]
+        context.target = target
+        context.action = ActionCommand.tap(target.x, target.y)
+        context.action_stage = "test_stage"
+        context.attempt = 1
+        context.attempt_target_type = target.type
+        return engine.step()
+
+    assert exhaust_once() == BotState.IDLE
+    assert planner.stage_recoveries == []
+
+    assert exhaust_once() == BotState.IDLE
+    assert planner.stage_recoveries == [("test_stage", "resource", 2)]
+
+    assert exhaust_once() == BotState.IDLE
+    assert len(recovery.requests) == 1
+    assert context.recovery_restarts_without_progress == 1
+
+    assert exhaust_once() == BotState.IDLE
+    assert exhaust_once() == BotState.IDLE
+    assert len(recovery.requests) == 3
+    assert context.recovery_restarts_without_progress == 3
+
+    assert exhaust_once() == BotState.STOPPED
+    escalation_actions = [
+        record["action"]
+        for record in events.records
+        if record["e"] == "failure_escalation"
+    ]
+    assert escalation_actions == [
+        "local_exhausted",
+        "stage_recovery",
+        "restart_game",
+        "restart_game",
+        "restart_game",
+        "stop_bot",
+    ]
+
+
+def test_engine_passes_verified_success_context_to_planner() -> None:
+    class ContextPlanner:
+        def __init__(self) -> None:
+            self.contexts: list[
+                tuple[Target, Frame, list[Detection], VerificationResult]
+            ] = []
+            self.legacy_successes: list[str] = []
+
+        def choose(self, frame, detections):
+            return None
+
+        def on_action_success_context(self, target, frame, detections, result):
+            self.contexts.append((target, frame, list(detections), result))
+
+        def on_action_success(self, target_type):
+            self.legacy_successes.append(target_type)
+
+    target_detection = make_detection(type="hatch_candidate_row")
+    target = Target(
+        target_detection.type,
+        target_detection.x,
+        target_detection.y,
+        target_detection.confidence,
+        target_detection,
+    )
+    planner = ContextPlanner()
+    result = VerificationResult(True, "previous UI disappeared: hatch_select_title")
+    after = make_frame(255)
+    context = BotContext(
+        capture_provider=SequenceCapture([after]),
+        detector=PixelDetector(),
+        planner=planner,
+        action_driver=RecordingActionDriver(),
+        verifier=SequenceVerifier([result]),
+        observer=RuntimeMode(),
+        logger=logging.getLogger("test_success_context"),
+        click_delay_ms=0,
+        state=BotState.VERIFY,
+        before_frame=make_frame(10),
+        before_detections=[target_detection],
+        target=target,
+        action=ActionCommand.tap(target.x, target.y),
+        attempt=1,
+    )
+
+    assert BotEngine(context).step() == BotState.IDLE
+    assert len(planner.contexts) == 1
+    assert planner.contexts[0][0] == target
+    assert planner.contexts[0][1] is after
+    assert planner.contexts[0][3] == result
+    assert planner.legacy_successes == []
+
+
+def test_engine_productive_milestone_resets_action_failure_fuse() -> None:
+    detection = make_detection(type="hunt_confirm_button")
+    target = Target(
+        detection.type,
+        detection.x,
+        detection.y,
+        detection.confidence,
+        detection,
+    )
+    context = BotContext(
+        capture_provider=SequenceCapture([make_frame(255)]),
+        detector=PixelDetector(),
+        planner=HuntPlanner(("hunt_confirm_button",)),
+        action_driver=RecordingActionDriver(),
+        verifier=SequenceVerifier([VerificationResult(True, "hunt completed")]),
+        observer=RuntimeMode(),
+        logger=logging.getLogger("test_action_failure_progress_reset"),
+        click_delay_ms=0,
+        state=BotState.VERIFY,
+        before_frame=make_frame(10),
+        before_detections=[detection],
+        target=target,
+        action=ActionCommand.tap(target.x, target.y),
+        action_stage="hunt_confirm",
+        attempt=1,
+        action_failure_episodes={("hunt_confirm", target.type): 4},
+        recovery_restarts_without_progress=2,
+    )
+
+    assert BotEngine(context).step() == BotState.IDLE
+    assert context.action_failure_episodes == {}
+    assert context.recovery_restarts_without_progress == 0
+
+
+class RecordingStallSnapshots:
+    def __init__(self) -> None:
+        self.captures: list[dict[str, object]] = []
+
+    def capture(self, frame, detections, *, seconds, stage, escapes):
+        self.captures.append(
+            {
+                "detections": len(detections),
+                "seconds": seconds,
+                "stage": stage,
+                "escapes": escapes,
+            }
+        )
+        return Path("stall.png")
+
+
+def test_engine_records_the_frame_a_blind_stall_could_not_act_on() -> None:
+    """The event stream can only report what matched, which here is the problem.
+
+    These episodes are caused by a screen the detector has no name for, so the
+    frame is the only evidence that can identify it. Without it the diagnosis
+    stops at "17 dinosaur labels and no map control", which fits an overlay, a
+    zoomed-out view and a missing template equally well.
+    """
+
+    class BlindPlanner:
+        def __init__(self) -> None:
+            self.reported = False
+
+        def choose(self, frame: Frame, detections) -> Target | None:
+            return None
+
+        def last_stage(self) -> str:
+            return "recenter"
+
+        def take_blind_escape(self):
+            if self.reported:
+                return None
+            self.reported = True
+            return {"seconds": 20.0, "stage": "recenter", "escapes": 1}
+
+    snapshots = RecordingStallSnapshots()
+    events = RecordingEventLog()
+    context = BotContext(
+        capture_provider=SequenceCapture([make_frame(0)]),
+        detector=PixelDetector(),
+        planner=BlindPlanner(),
+        action_driver=RecordingActionDriver(),
+        verifier=TargetChangedVerifier(),
+        observer=RuntimeMode(),
+        logger=logging.getLogger("test_engine_blind_stall"),
+        idle_delay_ms=0,
+        stall_snapshots=snapshots,
+        event_log=events,
+        state=BotState.CAPTURE,
+    )
+    engine = BotEngine(context)
+    for _ in range(3):
+        engine.step()
+
+    assert snapshots.captures == [
+        {"detections": 1, "seconds": 20.0, "stage": "recenter", "escapes": 1}
+    ]
+    stall_events = [record for record in events.records if record["e"] == "blind_stall"]
+    assert stall_events == [
+        {"e": "blind_stall", "seconds": 20.0, "stage": "recenter", "escapes": 1}
+    ]
+
+
+def test_stall_snapshot_writer_keeps_the_newest_frames_only(tmp_path: Path) -> None:
+    now = [0.0]
+    writer = StallSnapshotWriter(
+        tmp_path / "stalls",
+        logging.getLogger("test_stall_writer"),
+        limit=2,
+        min_interval_seconds=60.0,
+        clock=lambda: now[0],
+        # Naive, so the local-time filename is the same wherever this runs.
+        now=lambda: datetime(2026, 7, 27, 20, int(now[0] // 60), 0),
+    )
+    frame = Frame(np.zeros((160, 90, 3), dtype=np.uint8))
+    detections = [Detection("dinosaur", 45, 80, 0.9), Detection("dinosaur", 20, 30, 0.8)]
+
+    first = writer.capture(frame, detections, seconds=20.0, stage="recenter", escapes=1)
+    assert first is not None
+
+    now[0] = 30.0
+    assert writer.capture(frame, detections, seconds=40.0, stage="recenter", escapes=2) is None, (
+        "an episode re-reports every 20s and must not overwrite itself nine times"
+    )
+
+    for minute in (2, 3):
+        now[0] = minute * 60.0
+        assert writer.capture(
+            frame, detections, seconds=20.0, stage="mail", escapes=1
+        ) is not None
+
+    written = sorted(path.name for path in (tmp_path / "stalls").glob("stall-*.png"))
+    assert written == ["stall-20260727-200200.png", "stall-20260727-200300.png"]
+    assert not (tmp_path / "stalls" / "stall-20260727-200000.json").exists()
+
+    sidecar = json.loads(
+        (tmp_path / "stalls" / "stall-20260727-200300.json").read_text(encoding="utf-8")
+    )
+    assert sidecar["stage"] == "mail"
+    assert sidecar["blind_seconds"] == 20.0
+    # What the detector *did* match is half the evidence: it separates "nothing
+    # was on screen" from "the map was there and the buttons were not".
+    assert sidecar["detections"] == {"dinosaur": 2}
+
+
+def test_dinosaur_failure_snapshot_keeps_before_after_and_tap_metadata(
+    tmp_path: Path,
+) -> None:
+    writer = DinosaurFailureSnapshotWriter(
+        tmp_path / "stalls",
+        logging.getLogger("test_dinosaur_failure_writer"),
+        clock=lambda: 0.0,
+        now=lambda: datetime(2026, 8, 10, 22, 31, 12),
+    )
+    before = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    after = Frame(np.full((1600, 900, 3), 30, dtype=np.uint8))
+    detection = Detection(
+        "dinosaur",
+        477,
+        914,
+        0.704,
+        metadata={
+            "anchor_bbox": {"x": 455, "y": 869, "width": 18, "height": 18}
+        },
+    )
+    target = Target("dinosaur", 477, 914, 0.704, detection)
+
+    path = writer.capture(
+        before,
+        after,
+        target,
+        [Detection("dinosaur", 415, 751, 0.794)],
+        VerificationResult(
+            False,
+            "expected next UI not detected: hunt_button",
+            pixel_change=0.096,
+        ),
+        attempt=1,
+    )
+
+    assert path is not None
+    assert path.name == "dinosaur-tap-20260810-223112.png"
+    assert path.with_name(f"{path.stem}-after.png").exists()
+    sidecar = json.loads(path.with_suffix(".json").read_text(encoding="utf-8"))
+    assert sidecar["target"] == {
+        "x": 477,
+        "y": 914,
+        "confidence": 0.704,
+        "anchor_bbox": {"x": 455, "y": 869, "width": 18, "height": 18},
+    }
+    assert sidecar["verification"]["pixel_change"] == pytest.approx(0.096)
+    assert sidecar["after_detections"][0]["type"] == "dinosaur"
+
+
+def test_capacity_snapshot_saves_the_hud_crop_and_the_glyphs(tmp_path: Path) -> None:
+    writer = CapacitySnapshotWriter(
+        tmp_path / "stalls",
+        logging.getLogger("test_capacity_writer"),
+        clock=lambda: 0.0,
+        now=lambda: datetime(2026, 8, 5, 2, 7, 32),
+    )
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    read = CapacityRead(
+        count=None,
+        text="28?/35O",
+        fraction=None,
+        region=(10, 239, 110, 258),
+        reason="unparsed",
+    )
+
+    path = writer.capture(frame, read, stage="cave_navigate", attempts=3)
+
+    assert path is not None and path.name == "capacity-20260805-020732.png"
+    # The 19px-tall crop is what the glyph matcher saw; unenlarged it is not
+    # something a person can judge, which is the whole point of saving it.
+    hud = cv2.imread(str(path.with_name("capacity-20260805-020732-hud.png")))
+    assert hud is not None
+    assert hud.shape[:2] == ((258 - 239) * HUD_ZOOM, (110 - 10) * HUD_ZOOM)
+
+    sidecar = json.loads(path.with_suffix(".json").read_text(encoding="utf-8"))
+    assert sidecar["reason"] == "unparsed"
+    assert sidecar["glyphs"] == "28?/35O"
+    assert sidecar["region"] == [10, 239, 110, 258]
+    assert sidecar["stage"] == "cave_navigate"
+    assert sidecar["attempts"] == 3
+    assert sidecar["frame"] == {"width": 900, "height": 1600}
+
+
+def test_capacity_snapshot_prunes_whole_episodes_not_half_of_them(
+    tmp_path: Path,
+) -> None:
+    now = [0.0]
+    writer = CapacitySnapshotWriter(
+        tmp_path / "stalls",
+        logging.getLogger("test_capacity_prune"),
+        limit=2,
+        min_interval_seconds=60.0,
+        clock=lambda: now[0],
+        now=lambda: datetime(2026, 8, 5, 2, int(now[0] // 60), 0),
+    )
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    read = CapacityRead(None, "", None, (10, 239, 110, 258), "unparsed")
+
+    for minute in (0, 1, 2):
+        now[0] = minute * 60.0
+        assert writer.capture(frame, read, stage="cave_done", attempts=3) is not None
+
+    stalls = tmp_path / "stalls"
+    # The -hud companion shares the stem: counted as an episode it would halve
+    # the retained set, and missed by the prune it would outlive its frame.
+    assert sorted(path.name for path in stalls.glob("capacity-*.png")) == [
+        "capacity-20260805-020100-hud.png",
+        "capacity-20260805-020100.png",
+        "capacity-20260805-020200-hud.png",
+        "capacity-20260805-020200.png",
+    ]
+    assert not (stalls / "capacity-20260805-020000.json").exists()
+
+
+def test_capacity_snapshot_survives_a_frame_with_no_room_for_the_crop(
+    tmp_path: Path,
+) -> None:
+    writer = CapacitySnapshotWriter(
+        tmp_path / "stalls",
+        logging.getLogger("test_capacity_empty_crop"),
+        now=lambda: datetime(2026, 8, 5, 2, 7, 32),
+    )
+    read = CapacityRead(None, "", None, (10, 239, 110, 258), "region_outside_frame")
+
+    path = writer.capture(
+        Frame(np.zeros((200, 900, 3), dtype=np.uint8)),
+        read,
+        stage="cave_navigate",
+        attempts=1,
+    )
+
+    assert path is not None
+    assert not path.with_name(f"{path.stem}-hud.png").exists()
+
+
+def test_stall_snapshot_failure_never_stops_the_run(tmp_path: Path) -> None:
+    writer = StallSnapshotWriter(
+        tmp_path / "file" / "stalls",
+        logging.getLogger("test_stall_writer_failure"),
+    )
+    tmp_path.joinpath("file").write_text("not a directory", encoding="utf-8")
+
+    result = writer.capture(
+        Frame(np.zeros((160, 90, 3), dtype=np.uint8)),
+        [],
+        seconds=20.0,
+        stage="recenter",
+        escapes=1,
+    )
+
+    assert result is None
+
+
+def test_template_matches_at_half_resolution_in_reference_coordinates(
+    tmp_path: Path,
+) -> None:
+    """Halving the searched image is a 4x cut that must not move the target.
+
+    Measured on a live 900x1600 frame: the full scan costs 1614ms, and every
+    button in it survives being matched at half size - INTER_AREA strips the
+    high-frequency noise that fights the match, so confidence holds or improves.
+    What cannot shift is where the hit lands, because the coordinate is what
+    gets tapped.
+    """
+
+    rng = np.random.default_rng(11)
+    template = rng.integers(0, 256, (40, 40, 3), dtype=np.uint8)
+    image = np.zeros((800, 600, 3), dtype=np.uint8)
+    image[300:340, 200:240] = template
+    assert cv2.imwrite(str(tmp_path / "button.png"), template)
+    (tmp_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "templates": [
+                    {
+                        "type": "button",
+                        "file": "button.png",
+                        "threshold": 0.8,
+                        "match_scale": 0.5,
+                        "click_offset": [20, 20],
+                    }
+                ],
+                "hsv_ranges": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    found = OpenCvDetector(tmp_path / "manifest.json").detect(Frame(image))
+
+    assert len(found) == 1
+    assert found[0].type == "button"
+    # The click offset lands on the centre of the button, in full-size pixels.
+    assert abs(found[0].x - 220) <= 2
+    assert abs(found[0].y - 320) <= 2
+    assert found[0].bbox is not None
+    assert abs(found[0].bbox.width - 40) <= 2, "the box is reported at full size"
+    assert found[0].metadata["match_scale"] == 0.5
+
+
+def test_match_scale_of_one_leaves_a_template_at_full_size(tmp_path: Path) -> None:
+    """The dinosaur label is 18x18 and stays whole.
+
+    Halved it produced fifteen distinct hits where full size found ten, and
+    the five extras scored 0.54-0.58 at full resolution - too marginal to
+    accept sight unseen when a wrong tap costs a failure cooldown.
+    """
+
+    rng = np.random.default_rng(12)
+    template = rng.integers(0, 256, (18, 18, 3), dtype=np.uint8)
+    image = np.zeros((400, 400, 3), dtype=np.uint8)
+    image[100:118, 150:168] = template
+    assert cv2.imwrite(str(tmp_path / "label.png"), template)
+    (tmp_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "templates": [
+                    {
+                        "type": "label",
+                        "file": "label.png",
+                        "threshold": 0.95,
+                        "match_scale": 1.0,
+                    }
+                ],
+                "hsv_ranges": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    detector = OpenCvDetector(tmp_path / "manifest.json")
+    found = detector.detect(Frame(image))
+
+    assert len(found) == 1
+    assert (found[0].x, found[0].y) == (159, 109)
+    assert "match_scale" not in found[0].metadata, "full size is the quiet default"
+
+
+def test_manifest_rejects_a_match_scale_outside_the_unit_range(tmp_path: Path) -> None:
+    rng = np.random.default_rng(13)
+    assert cv2.imwrite(
+        str(tmp_path / "button.png"),
+        rng.integers(0, 256, (10, 10, 3), dtype=np.uint8),
+    )
+    (tmp_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "templates": [
+                    {"type": "button", "file": "button.png", "match_scale": 1.5}
+                ],
+                "hsv_ranges": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(DetectorAssetError):
+        OpenCvDetector(tmp_path / "manifest.json")
+
+
+def test_planning_scan_leaves_out_screens_the_current_stage_cannot_reach() -> None:
+    """The launch dialogs cost a quarter of every scan and cannot appear mid-run.
+
+    Working the map needs none of the login screens, and paying for them on
+    every cycle is what put 41% of a hunt's wall clock into planning detection.
+    """
+
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(("dinosaur",), blocking_types=("duplicate_hunt_alert",))
+    anchor = Detection("map_center_egg", 450, 800, 1.0)
+    dinosaur = Detection("dinosaur", 650, 1200, 0.90)
+
+    assert planner.planning_detection_types() is None, "the first cycle sees it all"
+    assert planner.choose(frame, [anchor, dinosaur]) is not None
+
+    scoped = planner.planning_detection_types()
+
+    assert scoped is not None
+    assert {"dinosaur", "map_center_egg", "own_hunt_path"} <= scoped
+    assert "duplicate_hunt_alert" in scoped, "a blocked tap must still be seen"
+    assert {"hunt_capacity_full", "target_too_strong"} <= scoped
+    assert not scoped & {
+        "device_history_confirm_button",
+        "duplicate_login_close_button",
+    }, "a device-history prompt cannot be raised mid-run"
+    assert "startup_offer_dismiss" in scoped, (
+        "timed promotion cards appear mid-run, not only at launch: one dimmed "
+        "the map at 10:53 on 2026-08-31 and cost the hatch workflow an hour"
+    )
+    assert not scoped & {
+        "mail_collect_all_button",
+        "mail_reward_collect_button",
+        "mail_close_button",
+    }, "the mail overlay only exists inside the mail flow"
+    assert {"startup_growth_result_back", "startup_auto_battle_close"} <= scoped, (
+        "the layout-ratio interrupts cost under a millisecond and stay visible"
+    )
+
+
+def test_planning_scan_widens_again_after_two_cycles_plan_nothing() -> None:
+    """A narrow scan is only trustworthy while it keeps finding work."""
+
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(("dinosaur",), full_scan_after_idle_cycles=2)
+    anchor = Detection("map_center_egg", 450, 800, 1.0)
+    dinosaur = Detection("dinosaur", 650, 1200, 0.90)
+
+    assert planner.planning_detection_types() is None
+    assert planner.choose(frame, [anchor, dinosaur]) is not None
+    assert planner.planning_detection_types() is not None
+    planner.on_action_failure("dinosaur")
+
+    assert planner.choose(frame, [anchor]) is None
+    assert planner.planning_detection_types() is not None, "one empty cycle is normal"
+
+    assert planner.choose(frame, [anchor]) is None
+    assert planner.planning_detection_types() is None, "two in a row widens the scan"
+
+
+def test_planning_scan_does_not_widen_while_map_is_settling() -> None:
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(
+        ("dinosaur",),
+        map_settle_frames=3,
+        full_scan_after_idle_cycles=2,
+    )
+
+    assert planner.planning_detection_types() is None
+    planner.on_action_success("hunt_confirm_button")
+
+    first = Detection("map_center_egg", 420, 800, 1.0)
+    second = Detection("map_center_egg", 450, 800, 1.0)
+    assert planner.choose(frame, [first]) is None
+    assert planner.planning_detection_types() is not None
+    assert planner.choose(frame, [second]) is None
+    assert planner.planning_detection_types() is not None
+
+
+def test_planning_scan_timer_only_widens_after_scoped_scan_goes_idle() -> None:
+    """Productive hunting must not pay an 18-second periodic full scan."""
+
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    now = [0.0]
+    planner = HuntPlanner(
+        ("dinosaur",),
+        full_scan_interval_seconds=30.0,
+        clock=lambda: now[0],
+    )
+    anchor = Detection("map_center_egg", 450, 800, 1.0)
+    dinosaur = Detection("dinosaur", 650, 1200, 0.90)
+
+    assert planner.planning_detection_types() is None
+    assert planner.choose(frame, [anchor, dinosaur]) is not None
+
+    now[0] = 29.0
+    assert planner.planning_detection_types() is not None
+
+    now[0] = 30.0
+    assert planner.planning_detection_types() is not None
+
+    planner.on_action_failure("dinosaur")
+    assert planner.choose(frame, [anchor]) is None
+    assert planner.planning_detection_types() is None
+
+
+def test_failed_dinosaur_recovery_reuses_the_verified_frame() -> None:
+    """A missed tap should re-plan from its final frame without recapturing."""
+
+    class RecoveryDetector:
+        def __init__(self) -> None:
+            self.requests: list[frozenset[str]] = []
+
+        def detect_types(
+            self,
+            frame: Frame,
+            target_types: frozenset[str],
+        ) -> list[Detection]:
+            self.requests.append(target_types)
+            if "dinosaur" not in target_types:
+                return []
+            return [
+                Detection("map_center_egg", 450, 800, 1.0),
+                Detection("map_exit_nest_button", 841, 1295, 1.0),
+                Detection("dinosaur", 500, 900, 0.9),
+            ]
+
+        def detect(self, frame: Frame) -> list[Detection]:
+            raise AssertionError("recovery must not request a full scan")
+
+    before = Frame(np.full((1600, 900, 3), 10, dtype=np.uint8), sequence=1)
+    after = Frame(np.full((1600, 900, 3), 20, dtype=np.uint8), sequence=2)
+    source = Detection("dinosaur", 394, 447, 0.751)
+    target = Target("dinosaur", source.x, source.y, source.confidence, source)
+    capture = SequenceCapture([after])
+    detector = RecoveryDetector()
+    context = BotContext(
+        capture_provider=capture,
+        detector=detector,
+        planner=HuntPlanner(("dinosaur",)),
+        action_driver=RecordingActionDriver(),
+        verifier=AlwaysFailsVerifier(),
+        observer=RuntimeMode(),
+        logger=logging.getLogger("test_failed_dinosaur_reuse"),
+        verify_retries=1,
+        state=BotState.VERIFY,
+        frame=before,
+        before_frame=before,
+        before_detections=[source],
+        target=target,
+        action=ActionCommand.tap(target.x, target.y),
+        attempt=1,
+        attempt_target_type="dinosaur",
+    )
+    engine = BotEngine(context)
+
+    assert engine.step() == BotState.PLANNING
+    assert capture.index == 1, "verification captured once; recovery did not recapture"
+    assert "dinosaur" not in detector.requests[0]
+    assert "dinosaur" in detector.requests[1]
+
+    assert engine.step() == BotState.ACTION
+    assert context.target is not None and context.target.type == "dinosaur"
+
+
+def test_dinosaur_manifest_clicks_deeper_inside_the_body() -> None:
+    manifest = json.loads(Path("assets/manifest.json").read_text(encoding="utf-8"))
+    dinosaur = next(
+        item for item in manifest["templates"] if item["type"] == "dinosaur"
+    )
+
+    assert dinosaur["click_offset"] == [22, 45]
+
+
+def test_restarting_the_game_forces_a_full_planning_scan() -> None:
+    """A relaunch walks back through the very dialogs a scoped scan omits."""
+
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(("dinosaur",))
+    anchor = Detection("map_center_egg", 450, 800, 1.0)
+    dinosaur = Detection("dinosaur", 650, 1200, 0.90)
+
+    assert planner.planning_detection_types() is None
+    assert planner.choose(frame, [anchor, dinosaur]) is not None
+    assert planner.planning_detection_types() is not None
+
+    planner.reset_workflow()
+
+    assert planner.planning_detection_types() is None
+
+
+def test_disabling_stage_scoped_scan_always_asks_for_everything() -> None:
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(("dinosaur",), stage_scoped_scan=False)
+    anchor = Detection("map_center_egg", 450, 800, 1.0)
+    dinosaur = Detection("dinosaur", 650, 1200, 0.90)
+
+    assert planner.planning_detection_types() is None
+    assert planner.choose(frame, [anchor, dinosaur]) is not None
+    assert planner.planning_detection_types() is None
+
+
+def test_every_recenter_names_the_reason_that_started_it() -> None:
+    """Without the reason, a starved map and a scheduled sweep look identical.
+
+    They are not: the scheduled one is policy, the starved one is throughput
+    leaking away, and telling them apart is what the tuning record runs on.
+    """
+
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(
+        ("map_exit_nest_button", "hunt_confirm_button", "dinosaur"),
+        recenter_every=1,
+        map_settle_frames=1,
+        safe_margin=80,
+    )
+    anchor = Detection("map_center_egg", 450, 800, 1.0)
+    exit_button = Detection("map_exit_nest_button", 841, 1295, 1.0)
+    dinosaur = Detection("dinosaur", 500, 820, 0.9)
+    confirm = Detection("hunt_confirm_button", 451, 1412, 1.0)
+
+    assert planner.choose(frame, [anchor, exit_button, dinosaur]).type == "dinosaur"  # type: ignore[union-attr]
+    assert planner.choose(frame, [confirm]).type == "hunt_confirm_button"  # type: ignore[union-attr]
+    planner.on_action_success("hunt_confirm_button")
+    target = planner.choose(frame, [anchor, exit_button])
+
+    assert target is not None and target.type == "map_exit_nest_button"
+    assert planner.last_recenter_reason() == "batch", (
+        "a scheduled sweep must not read as a starved map"
+    )
+
+
+def test_hunt_recovery_from_repeated_failures_survives_its_own_log_line() -> None:
+    # 這條升級路徑先前必定 AttributeError:planner 沒有 logger,而恢復動作
+    # 做完後的那行 warning 直接把整個 run 帶下去。實測 s13 每次卡住之後
+    # 都是這樣停機的,不是自然結束。
+    planner = HuntPlanner(("dinosaur",))
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    target = Target("dinosaur", 300, 700, 1.0, None)
+
+    assert planner.recover_from_action_failures(target, "hunt", 3, frame, [])
+
+
+def test_hunt_sheet_with_no_team_is_closed_by_its_own_button() -> None:
+    """實測 s13 的死結:隊伍湊不出來,「狩獵」鈕變灰因而比對不到,面板卻仍蓋著
+    地圖右下的離開鈕。畫面上唯一按得動的是面板自己的紅色 X,而 planner 每一幀
+    都認得出它,卻一直去點被面板蓋住的那個座標,繞了 100 秒。"""
+
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(HUNT_TARGET_TYPES)
+    # 面板只蓋住下方,上方地圖仍露出來,所以我方路徑照樣看得到——正是這個
+    # 證據讓固定座標的離開鈕 fallback 誤以為畫面是一張乾淨的地圖。
+    sheet = [
+        Detection("dinosaur", 265, 532, 0.78),
+        Detection("hunt_dialog_close_button", 754, 1690, 0.95),
+        Detection("own_hunt_path", 300, 400, 0.9),
+    ]
+
+    target = planner.choose(frame, sheet)
+
+    assert target is not None and target.type == "hunt_dialog_close_button"
+    assert planner.last_stage() == "close_hunt_dialog"
+
+
+def test_a_usable_hunt_sheet_is_never_closed_from_under_the_hunt() -> None:
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(HUNT_TARGET_TYPES)
+    usable = [
+        Detection("hunt_button", 517, 536, 0.98),
+        Detection("hunt_dialog_close_button", 754, 1690, 0.95),
+        Detection("own_hunt_path", 300, 400, 0.9),
+    ]
+
+    target = planner.choose(frame, usable)
+
+    assert target is not None and target.type == "hunt_button"
+
+
+# 與 config 的 planner.target_types 同序:面板的關閉鈕本來就在裡面。
+HUNT_TARGET_TYPES = (
+    "hunt_dialog_close_button",
+    "hunt_button",
+    "dinosaur",
+)
+
+
+def test_nest_autoplace_prompt_is_refused_then_waited_out() -> None:
+    """選到巢裡的親代時,遊戲會問「要進行巢的自動配置並繼續行動嗎?」。
+
+    答「是」會把孵蛋側辛苦篩出來的親代重新洗牌,所以一律按取消。先前沒有任何
+    規則認得這個框:確認鍵看起來只是點了沒反應,於是走進「信箱一定滿了」那條
+    恢復路徑——25 趟空信箱、14 分鐘、0 次狩獵。
+    """
+
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(
+        (*HUNT_TARGET_TYPES, "hunt_autoplace_cancel_button"),
+        autoplace_refused_wait_seconds=180.0,
+    )
+    prompt = [
+        Detection("hunt_autoplace_cancel_button", 668, 1117, 0.99),
+        Detection("hunt_confirm_button", 541, 1693, 0.87),
+        Detection("hunt_dialog_close_button", 754, 1691, 0.96),
+    ]
+
+    target = planner.choose(frame, prompt)
+    assert target is not None and target.type == "hunt_autoplace_cancel_button"
+    assert planner.last_stage() == "refuse_nest_autoplace"
+
+    planner.on_action_success("hunt_autoplace_cancel_button")
+
+    # 框沒了,底下的隊伍面板還在,而「狩獵」鍵看起來仍可按——再按一次只會把
+    # 同一個框叫回來,所以這裡必須改成離開面板。
+    sheet = [
+        Detection("hunt_confirm_button", 541, 1693, 0.87),
+        Detection("hunt_dialog_close_button", 754, 1691, 0.96),
+    ]
+    target = planner.choose(frame, sheet)
+    assert target is not None and target.type == "hunt_dialog_close_button"
+
+    planner.on_action_success("hunt_dialog_close_button")
+
+    # 現在才進入等待:場上唯一能組的隊伍就是遊戲不肯放行的那一組。
+    assert planner.last_stage() == "capacity_wait"
+    assert 0 < planner.next_ready_delay_ms() <= 180_000
+    assert planner.choose(frame, [Detection("dinosaur", 400, 800, 0.9)]) is None
+
+
+def test_the_autoplace_prompt_is_watched_for_on_every_hunt_scan() -> None:
+    # 這個框可以在任何一次狩獵確認後跳出來;掃描漏掉它就等於看不見。
+    planner = HuntPlanner((*HUNT_TARGET_TYPES, "hunt_autoplace_cancel_button"))
+
+    assert "hunt_autoplace_cancel_button" in planner.full_detection_types()
+
+    # 收窄成 scoped 掃描之後仍必須留著它:框正是在狩獵確認之後才跳出來的。
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    on_map = [
+        Detection("map_center_egg", 450, 800, 1.0),
+        Detection("dinosaur", 650, 1200, 0.90),
+    ]
+    assert planner.choose(frame, on_map) is not None
+    # 掃描寬窄會隨週期交替,取第一個收窄後的集合來檢查。
+    scoped = None
+    for _ in range(6):
+        planner.choose(frame, on_map)
+        scoped = planner.planning_detection_types()
+        if scoped is not None:
+            break
+    assert scoped is not None
+    assert "hunt_autoplace_cancel_button" in scoped
+
+
+def test_hunt_team_availability_detector_handles_a_single_digit_team_cap() -> None:
+    """S13 的隊伍上限是 5,計數器因而是「0 / 5」——三個字形,不是四個。
+
+    偵測器原本要求剛好四個字形(「0 / 11」),對個位數上限完全失明。S13 因此
+    從來沒有進入過「沒有可用恐龍」的 30 秒冷卻,而是一隻恐龍換一隻地開面板、
+    發現組不出隊、關掉、再開,21 分鐘只打成 29 次。
+    """
+
+    detector = HuntTeamAvailabilityDetector()
+
+    def team_screen(label: str) -> Frame:
+        image = np.full((1600, 900, 3), 30, dtype=np.uint8)
+        image[850:1500] = 255
+        cv2.putText(
+            image,
+            label,
+            (410, 960),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.9,
+            (0, 0, 0),
+            2,
+            cv2.LINE_AA,
+        )
+        cv2.rectangle(image, (592, 1372), (664, 1447), (50, 80, 255), -1)
+        return Frame(image)
+
+    unavailable = detector.detect(team_screen("0 / 5"))
+    assert len(unavailable) == 1
+    assert unavailable[0].type == "no_available_dinosaurs"
+    # 點擊點仍是面板自己的關閉鈕,後面接的是既有的 30 秒動作冷卻。
+    assert (unavailable[0].x, unavailable[0].y) == (628, 1409)
+
+    # 還有隊伍可派時絕不能誤判:那會取消一次本來打得成的狩獵。
+    for label in ("1 / 5", "3 / 5", "5 / 5"):
+        assert detector.detect(team_screen(label)) == [], label
+
+
+def _completed(returncode: int = 0, stderr: bytes = b"") -> subprocess.CompletedProcess[bytes]:
+    return subprocess.CompletedProcess(
+        args=["adb"], returncode=returncode, stdout=b"", stderr=stderr
+    )
+
+
+def _timeout_client(monkeypatch: pytest.MonkeyPatch, outcomes: list[object]) -> AdbClient:
+    monkeypatch.setattr(AdbClient, "_resolve_executable", staticmethod(lambda _: "adb"))
+    monkeypatch.setattr("dino_bot.actions.time.sleep", lambda _: None)
+    client = AdbClient(AdbConfig(serial="127.0.0.1:16416", timeout=1.0))
+    calls: list[list[str]] = []
+
+    def fake_run(command, **kwargs):
+        calls.append(list(command))
+        outcome = outcomes.pop(0)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr("dino_bot.actions.subprocess.run", fake_run)
+    client._test_calls = calls  # type: ignore[attr-defined]
+    return client
+
+
+def test_screencap_timeout_reconnects_and_retries_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A timed-out screencap must recover instead of killing the run."""
+
+    client = _timeout_client(
+        monkeypatch,
+        [
+            subprocess.TimeoutExpired(cmd="adb", timeout=1.0),  # screencap hangs
+            _completed(),  # reconnect
+            _completed(),  # connect
+            _completed(),  # retried screencap succeeds
+        ],
+    )
+
+    client.run(["exec-out", "screencap", "-p"], binary=True)
+
+    calls = client._test_calls  # type: ignore[attr-defined]
+    assert [call[-1] for call in calls] == [
+        "-p",  # screencap times out
+        "reconnect",
+        "127.0.0.1:16416",  # connect
+        "-p",  # retried exactly once, and succeeds
+    ]
+
+
+def test_screencap_timeout_twice_raises_adb_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A second timeout is genuine and surfaces as a plain AdbError."""
+
+    client = _timeout_client(
+        monkeypatch,
+        [
+            subprocess.TimeoutExpired(cmd="adb", timeout=1.0),
+            _completed(),  # reconnect
+            _completed(),  # connect
+            subprocess.TimeoutExpired(cmd="adb", timeout=1.0),  # retry also hangs
+        ],
+    )
+
+    with pytest.raises(AdbError) as excinfo:
+        client.run(["exec-out", "screencap", "-p"], binary=True)
+    assert "reconnect was attempted once" in str(excinfo.value)
+    assert type(excinfo.value) is AdbError
+
+
+def test_recovery_command_timeout_does_not_mask_the_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A hung `reconnect` must still let the original command be retried."""
+
+    client = _timeout_client(
+        monkeypatch,
+        [
+            subprocess.TimeoutExpired(cmd="adb", timeout=1.0),  # screencap hangs
+            subprocess.TimeoutExpired(cmd="adb", timeout=1.0),  # reconnect hangs too
+            _completed(),  # connect
+            _completed(),  # retried screencap still succeeds
+        ],
+    )
+
+    client.run(["exec-out", "screencap", "-p"], binary=True)
+
+
+def test_non_device_command_timeout_is_not_retried(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only shell/exec-out commands are recoverable; `devices` is not."""
+
+    client = _timeout_client(
+        monkeypatch, [subprocess.TimeoutExpired(cmd="adb", timeout=1.0)]
+    )
+
+    with pytest.raises(AdbError):
+        client.run(["devices", "-l"], use_serial=False)
+    assert len(client._test_calls) == 1  # type: ignore[attr-defined]
+
+
+def test_offline_device_reconnects_instead_of_killing_the_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`error: device offline` is recoverable, exactly like `error: closed`.
+
+    The emulator stays listed while its connection is gone.  Only the literal
+    string `error: closed` was treated as recoverable, so a screencap that hit
+    this state raised straight out as a fatal CaptureError: S9 died at 14:58
+    on 2026-08-31 after 4970 actions, 3.5 hours into an otherwise clean run.
+    """
+
+    client = _timeout_client(
+        monkeypatch,
+        [
+            _completed(returncode=1, stderr=b"error: device offline"),
+            _completed(),  # reconnect
+            _completed(),  # connect
+            _completed(),  # retry succeeds
+        ],
+    )
+
+    client.run(["exec-out", "screencap", "-p"], binary=True)
+
+    assert any("reconnect" in call for call in client._test_calls)  # type: ignore[attr-defined]
+
+
+def test_closed_transport_still_reconnects_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The pre-existing `error: closed` recovery keeps working."""
+
+    client = _timeout_client(
+        monkeypatch,
+        [
+            _completed(returncode=1, stderr=b"error: closed"),
+            _completed(),  # reconnect
+            _completed(),  # connect
+            _completed(),  # retry succeeds
+        ],
+    )
+
+    client.run(["shell", "input", "tap", "1", "2"])
+    assert any("reconnect" in call for call in client._test_calls)  # type: ignore[attr-defined]
+
+
+def test_half_resolution_templates_keep_their_margin_on_a_real_screen() -> None:
+    """A halved template must still clear its threshold on an actual screen.
+
+    Synthetic validation is not enough to justify ``match_scale``: pasting a
+    template into a blank frame scored hatch_nest_gear at 0.982, while the same
+    template against a real diagnostic snapshot scored 0.870 under its 0.88
+    threshold.  Halving it there would have stopped the nest gear being
+    detected at all, with no error anywhere.  Anything already searched at half
+    resolution has to keep a real margin on a real frame.
+    """
+
+    import cv2
+
+    from dino_bot.detection import OpenCvDetector
+    from dino_bot.models import Frame
+
+    root = Path(__file__).parent.parent
+    snapshot = root / "debug/dino-diagnostic-20260822-154049/snapshot.png"
+    if not snapshot.exists():  # pragma: no cover - snapshot is optional locally
+        pytest.skip("diagnostic snapshot not available")
+
+    image = cv2.imread(str(snapshot))
+    assert image is not None
+    detector = OpenCvDetector(root / "assets/hatch/manifest.json")
+    halved = {
+        asset.type for asset in detector.templates if asset.match_scale < 1.0
+    }
+    assert halved, "expected at least one half-resolution hatch template"
+
+    found = {item.type: item.confidence for item in detector.detect(Frame(image))}
+    thresholds = {asset.type: asset.threshold for asset in detector.templates}
+    for name in ("hatch_home_anchor", "hatch_autoplace_button", "hatch_nest_gear"):
+        assert name in found, f"{name} disappeared from the real snapshot"
+        if name in halved:
+            assert found[name] >= thresholds[name] + 0.03, (
+                f"{name} has no margin left at half resolution"
+            )
+
+
+def test_missing_configured_device_reconnects_only_that_serial(monkeypatch):
+    client = _timeout_client(monkeypatch, [
+        _completed(255, b"error: device '127.0.0.1:16416' not found"),
+        _completed(), _completed(), _completed(),
+    ])
+    client.run(['exec-out', 'screencap', '-p'], binary=True)
+    assert client._test_calls == [
+        ['adb', '-s', '127.0.0.1:16416', 'exec-out', 'screencap', '-p'],
+        ['adb', '-s', '127.0.0.1:16416', 'reconnect'],
+        ['adb', 'connect', '127.0.0.1:16416'],
+        ['adb', '-s', '127.0.0.1:16416', 'exec-out', 'screencap', '-p'],
+    ]
+
+
+@pytest.mark.parametrize('message', [
+    b"error: device '127.0.0.1:5555' not found",
+    b'error: device unauthorized', b'error: more than one device/emulator',
+])
+def test_unrelated_adb_errors_do_not_select_or_reconnect_devices(monkeypatch, message):
+    client = _timeout_client(monkeypatch, [_completed(255, message)])
+    with pytest.raises(AdbError):
+        client.run(['exec-out', 'screencap', '-p'], binary=True)
+    assert len(client._test_calls) == 1
+
+
+@pytest.mark.parametrize('initial_state', [BotState.CAPTURE, BotState.VERIFY])
+def test_capture_disconnect_discards_old_action_and_recovers_from_a_new_frame(initial_state):
+    from dino_bot.capture import AdbCaptureError
+
+    class IntermittentCapture(SequenceCapture):
+        def capture(self):
+            if self.index == 0:
+                self.index += 1
+                raise AdbCaptureError("device '127.0.0.1:5555' not found")
+            return super().capture()
+
+    item = make_detection()
+    events = RecordingEventLog()
+    context = BotContext(
+        capture_provider=IntermittentCapture([make_frame(0)]),
+        detector=PixelDetector(), planner=TargetPlanner(['resource']),
+        action_driver=RecordingActionDriver(), verifier=AlwaysFailsVerifier(),
+        observer=RuntimeMode(), logger=logging.getLogger('capture_retry_test'),
+        event_log=events, state=initial_state, frame=make_frame(0),
+        before_frame=make_frame(0), before_detections=[item], detections=[item],
+        target=Target(item.type, item.x, item.y, item.confidence, item),
+        action=ActionCommand(ActionKind.TAP, item.x, item.y),
+        reuse_verified_detections=True, capture_transport_retry_delay_ms=0,
+    )
+    engine = BotEngine(context)
+    assert engine.step() == BotState.CAPTURE
+    assert context.capture_transport_failures == 1
+    assert context.frame is None and context.before_frame is None
+    assert context.target is None and context.action is None
+    assert context.detections == [] and not context.reuse_verified_detections
+    assert context.action_count == 0
+    assert engine.step() == BotState.DETECT
+    assert context.capture_transport_failures == 0
+    assert context.frame is not None
+    assert any(row['e'] == 'capture_transport_failure' for row in events.records)
+    assert any(row['e'] == 'capture_transport_recovered' for row in events.records)
+
+
+@pytest.mark.parametrize('cancel', [False, True])
+def test_persistent_capture_disconnect_stops_cleanly_or_obeys_stop(cancel):
+    from dino_bot.capture import AdbCaptureError
+
+    class MissingDeviceCapture(SequenceCapture):
+        def capture(self):
+            raise AdbCaptureError('device offline')
+
+    capture = MissingDeviceCapture([make_frame(0)])
+    context = BotContext(
+        capture_provider=capture, detector=PixelDetector(),
+        planner=TargetPlanner(['resource']), action_driver=RecordingActionDriver(),
+        verifier=AlwaysFailsVerifier(), observer=RuntimeMode(),
+        logger=logging.getLogger('capture_retry_exhausted_test'),
+        state=BotState.CAPTURE, capture_transport_failure_limit=2,
+        capture_transport_retry_delay_ms=0,
+    )
+    if cancel:
+        context.stop_event.set()
+    engine = BotEngine(context)
+    engine.run()
+    assert context.state == BotState.STOPPED
+    assert context.capture_transport_failures == (1 if cancel else 2)
+    assert context.action_count == 0 and capture.closed
+
+
+def test_non_transport_capture_errors_are_not_hidden_by_retries():
+    from dino_bot.capture import CaptureError
+
+    class InvalidCapture(SequenceCapture):
+        def capture(self):
+            raise CaptureError('invalid PNG screenshot')
+
+    context = BotContext(
+        capture_provider=InvalidCapture([make_frame(0)]), detector=PixelDetector(),
+        planner=TargetPlanner(['resource']), action_driver=RecordingActionDriver(),
+        verifier=AlwaysFailsVerifier(), observer=RuntimeMode(),
+        logger=logging.getLogger('invalid_capture_test'), state=BotState.CAPTURE,
+    )
+    with pytest.raises(CaptureError, match='invalid PNG'):
+        BotEngine(context).step()
+    assert context.capture_transport_failures == 0
+
+
+def test_screencap_reports_transport_failure_separately_from_bad_image():
+    from dino_bot.capture import AdbCaptureError, AdbScreencapCapture, CaptureError
+
+    class MissingDevice:
+        def screencap_png(self):
+            raise AdbError("error: device '127.0.0.1:5555' not found")
+
+    capture = AdbScreencapCapture(MissingDevice())
+    capture._raw_supported = False
+    with pytest.raises(AdbCaptureError) as raised:
+        capture.capture()
+    assert isinstance(raised.value.__cause__, AdbError)
+
+    class BadImage:
+        def screencap_png(self):
+            return b'not a PNG'
+
+    capture = AdbScreencapCapture(BadImage())
+    capture._raw_supported = False
+    with pytest.raises(CaptureError) as raised:
+        capture.capture()
+    assert not isinstance(raised.value, AdbCaptureError)
+
+
+def _hatch_engine_watchdog(tmp_path: Path, feature: str):
+    """Build one hatch-family engine and report the watchdog it was wired with.
+
+    Everything that needs a device is stubbed; the wiring decision under test
+    happens before any of it is used. ``configure_logging`` is stubbed too - it
+    detaches the shared logger from propagation, which would leave every later
+    test in the session unable to capture a log record.
+    """
+
+    config = AppConfig(root=tmp_path)
+    captured: dict[str, object] = {}
+    real_context = application_module.BotContext
+
+    def capture_context(*args, **kwargs):
+        captured["hunt_progress_recovery"] = kwargs.get("hunt_progress_recovery")
+        return real_context(*args, **kwargs)
+
+    with patch.object(application_module, "BotContext", capture_context), \
+            patch.object(
+                application_module,
+                "configure_logging",
+                return_value=logging.getLogger("dino_bot"),
+            ), \
+            patch.object(application_module, "AdbClient"), \
+            patch.object(application_module, "AdbScreencapCapture"), \
+            patch.object(application_module, "MssEmulatorCapture"), \
+            patch.object(application_module, "AdbActionDriver"):
+        application_module.create_engine(config, feature=feature)
+
+    return captured["hunt_progress_recovery"]
+
+
+def test_hatch_hunt_gets_the_hunt_progress_watchdog(tmp_path: Path) -> None:
+    """The combined modes hunt, so the stall backstop has to be present.
+
+    Without it an undetected modal that swallows the back key leaves the bot
+    blind with nothing to rescue it - s9 sat on one for seven hours.
+    """
+
+    for feature in ("hatch-hunt", "custom-workflow"):
+        watchdog = _hatch_engine_watchdog(tmp_path, feature)
+        assert isinstance(watchdog, HuntProgressWatchdog), feature
+
+
+def test_pure_hatch_keeps_the_hunt_progress_watchdog_off(tmp_path: Path) -> None:
+    """A session that never hunts would look permanently stalled to it."""
+
+    assert _hatch_engine_watchdog(tmp_path, "hatch-full") is None
+
+
+class _StubRestart:
+    """Stands in for BlackScreenRecovery, recording restart requests."""
+
+    def __init__(self) -> None:
+        self.restarts: list[str] = []
+
+    def request_restart(self, reason: str, *, reason_key: str) -> bool:
+        self.restarts.append(reason)
+        return True
+
+
+def _watchdog_with_clock(restart: _StubRestart, now: list[float]):
+    return HuntProgressWatchdog(
+        restart,
+        logging.getLogger("dino_bot.test"),
+        timeout_seconds=90.0,
+        suspend_budget_seconds=120.0,
+        hatch_suspend_budget_seconds=420.0,
+        clock=lambda: now[0],
+    )
+
+
+def test_watchdog_lets_a_hatch_screening_pass_run_to_completion() -> None:
+    """A screening pass hunts nothing for minutes and is not a stall.
+
+    s9 restarted five times in ten minutes, each one a second after a verified
+    tap inside auto-place, because no confirmed hunt can happen there.
+    """
+
+    restart = _StubRestart()
+    now = [0.0]
+    watchdog = _watchdog_with_clock(restart, now)
+    screening = [Detection(type="hatch_place_sort_hp", x=451, y=771, confidence=1.0)]
+
+    for _ in range(78):  # 155s at one observation every 2s, the measured pass
+        now[0] += 2.0
+        assert watchdog.observe(screening, None) is False
+
+    assert restart.restarts == []
+
+
+def test_watchdog_still_fires_when_a_hatch_screen_never_leaves() -> None:
+    """The budget ceiling is what stops the exemption becoming a deadlock."""
+
+    restart = _StubRestart()
+    now = [0.0]
+    watchdog = _watchdog_with_clock(restart, now)
+    stuck = [Detection(type="hatch_button", x=450, y=800, confidence=1.0)]
+
+    fired = False
+    for _ in range(600):  # well past budget + timeout
+        now[0] += 2.0
+        if watchdog.observe(stuck, None):
+            fired = True
+            break
+
+    assert fired, "a hatch screen that never advances must still be rescued"
+    assert restart.restarts
+
+
+def test_watchdog_keeps_the_shorter_budget_for_hunt_side_waits() -> None:
+    """Only hatch gets the wider ceiling; hunt-side waits are short."""
+
+    restart = _StubRestart()
+    now = [0.0]
+    watchdog = _watchdog_with_clock(restart, now)
+    waiting = [Detection(type="mail_close_button", x=100, y=100, confidence=1.0)]
+
+    fired_at: float | None = None
+    for _ in range(600):
+        now[0] += 2.0
+        if watchdog.observe(waiting, None):
+            fired_at = now[0]
+            break
+
+    assert fired_at is not None
+    # 120s budget then a 90s timeout; must not have waited for the hatch one.
+    assert fired_at < 420.0
+
+
+def test_watchdog_does_not_restart_when_the_game_refuses_the_hunt() -> None:
+    """"Too strong" and "none available" are replies, not deadlocks.
+
+    s9 restarted twice in four minutes while every dinosaur was on cooldown,
+    interrupting live work to fix something a restart cannot change.
+    """
+
+    for refusal in ("target_too_strong", "no_available_dinosaurs"):
+        restart = _StubRestart()
+        now = [0.0]
+        watchdog = _watchdog_with_clock(restart, now)
+        refused = [Detection(type=refusal, x=628, y=1409, confidence=0.99)]
+
+        for _ in range(300):  # 600s, far past budget + timeout
+            now[0] += 2.0
+            assert watchdog.observe(refused, None) is False
+
+        assert restart.restarts == [], refusal
+
+
+def test_watchdog_still_fires_once_the_refusals_stop() -> None:
+    """A reset is not immunity: silence after the reply still ages out."""
+
+    restart = _StubRestart()
+    now = [0.0]
+    watchdog = _watchdog_with_clock(restart, now)
+    refused = [Detection(type="target_too_strong", x=628, y=1409, confidence=0.99)]
+    silent = [Detection(type="dinosaur", x=100, y=100, confidence=0.9)]
+
+    for _ in range(10):
+        now[0] += 2.0
+        watchdog.observe(refused, None)
+
+    fired = False
+    for _ in range(300):
+        now[0] += 2.0
+        if watchdog.observe(silent, None):
+            fired = True
+            break
+
+    assert fired, "a real stall after a refusal must still be rescued"
+
+
+def test_verified_actions_keep_the_suspend_budget_from_expiring() -> None:
+    """Alternating screens must not exhaust the budget while work happens.
+
+    s9 hit "budget exhausted after 513s" against a 420s ceiling while tapping
+    successfully throughout: the budget ran from the first exempt frame and
+    cleared only on a frame with no exempt type at all, which a run that
+    alternates between hatch and hunt screens never produces.
+    """
+
+    restart = _StubRestart()
+    now = [0.0]
+    watchdog = _watchdog_with_clock(restart, now)
+    hatch_screen = [Detection(type="hatch_nest_title", x=450, y=200, confidence=1.0)]
+
+    for _ in range(400):  # 800s, well past the 420s hatch ceiling
+        now[0] += 2.0
+        assert watchdog.observe(hatch_screen, None) is False
+        watchdog.on_verified_action()
+
+    assert restart.restarts == []
+
+
+def test_a_screen_that_stops_moving_still_exhausts_the_budget() -> None:
+    """Refreshing on action is not immunity: a frozen screen still ages out."""
+
+    restart = _StubRestart()
+    now = [0.0]
+    watchdog = _watchdog_with_clock(restart, now)
+    hatch_screen = [Detection(type="hatch_nest_title", x=450, y=200, confidence=1.0)]
+
+    for _ in range(10):
+        now[0] += 2.0
+        watchdog.observe(hatch_screen, None)
+        watchdog.on_verified_action()
+
+    fired = False
+    for _ in range(400):  # nothing verifies any more
+        now[0] += 2.0
+        if watchdog.observe(hatch_screen, None):
+            fired = True
+            break
+
+    assert fired, "a screen that stops responding must still be rescued"
+
+
+def test_a_long_screening_pass_of_verified_taps_is_never_restarted() -> None:
+    """Minutes of verified taps completing no hunt is work, not a stall.
+
+    s9 was restarted 280s into a growth screening pass, two seconds after
+    logging "completed growth screening 2", with every step of the pass
+    verifying. That destroys real work to fix nothing.
+    """
+
+    restart = _StubRestart()
+    now = [0.0]
+    watchdog = _watchdog_with_clock(restart, now)
+    # A real pass moves between nest, auto-place and the home map, so some
+    # frames carry no exempt type at all - which is what made the stall timer
+    # rather than the budget the thing that fired.
+    screening = [Detection(type="hatch_nest_title", x=450, y=200, confidence=1.0)]
+    between = [Detection(type="dinosaur", x=100, y=100, confidence=0.9)]
+
+    for i in range(300):  # 600s, far longer than any measured pass
+        now[0] += 2.0
+        frame = between if i % 5 == 0 else screening
+        assert watchdog.observe(frame, None) is False, f"restarted at {now[0]:.0f}s"
+        watchdog.on_verified_action()
+
+    assert restart.restarts == []
+
+
+def test_actions_that_stop_verifying_are_still_rescued() -> None:
+    """The backstop: a bot that can no longer drive the game gets restarted."""
+
+    restart = _StubRestart()
+    now = [0.0]
+    watchdog = _watchdog_with_clock(restart, now)
+    screen = [Detection(type="dinosaur", x=100, y=100, confidence=0.9)]
+
+    for _ in range(5):
+        now[0] += 2.0
+        watchdog.observe(screen, None)
+        watchdog.on_verified_action()
+
+    fired = False
+    for _ in range(200):  # taps stop verifying from here
+        now[0] += 2.0
+        if watchdog.observe(screen, None):
+            fired = True
+            break
+
+    assert fired, "a bot that cannot act any more must still be rescued"
