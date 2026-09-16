@@ -42,7 +42,11 @@
       "type": "hatch_home_anchor",
       "file": "templates/hatch-home-anchor.png",
       "threshold": 0.78,
-      "match_scale": 0.5
+      "match_scale": 0.5,
+      "click_offset": [
+        9,
+        22
+      ]
     },
     {
       "type": "hatch_tag_all",

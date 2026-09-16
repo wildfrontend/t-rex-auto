@@ -1275,11 +1275,19 @@ def test_full_hatch_scopes_detection_by_workflow_phase() -> None:
 
 
 def test_s9_live_home_anchor_variants_are_recognized() -> None:
-    """Real S9 entrance frames varied from 0.833 down to 0.809."""
+    """Real S9 entrance frames must clear the threshold with room to spare.
+
+    These frames scored 0.833 and 0.809 against a 0.78 threshold while the
+    template still carried its left edge.  That ~0.03 margin vanished once a
+    dinosaur wandered over that edge: the live score fell to 0.781, the anchor
+    stopped being detected, and `open_nest` returned no target for minutes on
+    end.  The template now starts past the occluded strip, so the same frames
+    clear 0.95 and a wandering dinosaur no longer decides whether S9 runs.
+    """
 
     fixtures = {
-        "s9-home-anchor-20260816.png.b64": (0.82, 0.85),
-        "s9-home-anchor-20260816-late.png.b64": (0.79, 0.82),
+        "s9-home-anchor-20260816.png.b64": (0.95, 0.98),
+        "s9-home-anchor-20260816-late.png.b64": (0.94, 0.97),
     }
     detector = OpenCvDetector(REPO / "assets" / "hatch" / "manifest.json")
     for fixture, expected_range in fixtures.items():
@@ -1297,6 +1305,39 @@ def test_s9_live_home_anchor_variants_are_recognized() -> None:
         assert len(found) == 1, fixture
         assert (found[0].x, found[0].y) == (49, 562)
         assert expected_range[0] <= found[0].confidence < expected_range[1]
+
+
+def test_home_anchor_survives_a_dinosaur_parked_on_its_left_edge() -> None:
+    """S9 v0.0.83 stall: a wandering dinosaur switched the anchor off.
+
+    The live frame scored 0.781 against a 0.78 threshold - passing by 0.001,
+    so detection flipped frame to frame and mostly failed.  `open_nest` bailed
+    at `anchor is None` before any centred-home check, reported no actionable
+    target, and the idle timer ran recovery in a loop: 16 minutes, zero hunts.
+    Earlier builds cleared 0.885-0.991 on this screen; the margin was spent by
+    halving the search resolution, which blurred away the difference between an
+    occluded anchor and a clean one.
+    """
+
+    encoded = (FIXTURES / "s9-home-anchor-occluded-20260916.png.b64").read_text(
+        encoding="ascii"
+    )
+    crop = cv2.imdecode(
+        np.frombuffer(base64.b64decode(encoded), dtype=np.uint8),
+        cv2.IMREAD_COLOR,
+    )
+    assert crop is not None
+    image = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    image[540:585, 24:74] = crop
+
+    detector = OpenCvDetector(REPO / "assets" / "hatch" / "manifest.json")
+    found = detector.detect_types(Frame(image), {hatch.HOME_ANCHOR})
+
+    assert len(found) == 1
+    # The tap point must not move when the template is trimmed.
+    assert (found[0].x, found[0].y) == (49, 562)
+    # Comfortably clear, not the 0.001 coin flip that stalled the run.
+    assert found[0].confidence >= 0.90
 
 
 def test_open_nest_visual_match_requires_unobscured_centered_home() -> None:
