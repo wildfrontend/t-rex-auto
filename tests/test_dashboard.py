@@ -566,11 +566,42 @@ def test_dashboard_saves_a_canonical_per_instance_custom_workflow(
     assert controller.custom_workflow(controller.instances[0]) == result["custom_workflow"]
 
 
+def test_dashboard_saves_a_custom_workflow_without_hunt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unchecking 狩獵 must persist a hatch-only cycle, not be rejected."""
+
+    app = tmp_path / "app"
+    app.mkdir()
+    config_path = app / "config.json"
+    config_path.write_text("{}", encoding="utf-8")
+    controller = DashboardController(tmp_path, app / "logs", config_path=config_path)
+    monkeypatch.setattr(controller, "discover", lambda instance_id=None: {"running": False})
+
+    result = controller.set_custom_workflow("main", ["cave", "hatch", "collect"])
+
+    assert result["custom_workflow"]["stages"] == ["collect", "cave", "hatch"]
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["workflow"]["custom_stages"] == ["collect", "cave", "hatch"]
+    assert "hunt" not in saved["workflow"]["custom_stages"]
+
+
+def test_dashboard_rejects_a_workflow_that_cannot_clear_a_full_nest(
+    tmp_path: Path,
+) -> None:
+    """Dropping both cave and hunt would strand hatching at the limit."""
+
+    controller = DashboardController(tmp_path, tmp_path / "logs")
+
+    with pytest.raises(ValueError, match="洞穴淘汰 or 狩獵"):
+        controller.set_custom_workflow("main", ["collect", "hatch"])
+
+
 @pytest.mark.parametrize(
     "stages",
     [
         [],
-        ["collect", "hatch"],
         ["collect", "hunt"],
         ["collect", "hatch", "hunt", "hunt"],
         ["collect", "unknown", "hatch", "hunt"],

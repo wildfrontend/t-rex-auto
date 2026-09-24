@@ -994,9 +994,16 @@ def _validate(config: AppConfig) -> None:
             "workflow.custom_stages contains unsupported stages: "
             + ", ".join(sorted(unknown_custom_stages))
         )
-    if "hatch" not in custom_stages or "hunt" not in custom_stages:
+    if "hatch" not in custom_stages:
+        raise ConfigError("workflow.custom_stages must include hatch")
+    if "cave" not in custom_stages and "hunt" not in custom_stages:
+        # A full nest has exactly two ways out: cull it in the cave, or hand
+        # the map to the hunt planner, whose capacity refresh is the only
+        # non-restart path that clears `_capacity_blocked`. Without either,
+        # hatching stops at the capacity limit and nothing can resume it.
         raise ConfigError(
-            "workflow.custom_stages must include hatch and hunt for cooldown cycling"
+            "workflow.custom_stages must include cave or hunt so a full nest"
+            " can be cleared"
         )
     if config.planner.dedup_radius < 0 or config.planner.history_limit <= 0:
         raise ConfigError("planner dedup_radius/history_limit are invalid")

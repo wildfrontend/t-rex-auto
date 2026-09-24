@@ -714,8 +714,13 @@ class DashboardController:
             raise ValueError(
                 "unsupported custom workflow stages: " + ", ".join(sorted(unknown))
             )
-        if "hatch" not in stages or "hunt" not in stages:
-            raise ValueError("custom workflow must include hatch and hunt")
+        if "hatch" not in stages:
+            raise ValueError("custom workflow must include hatch")
+        if "cave" not in stages and "hunt" not in stages:
+            raise ValueError(
+                "custom workflow must include 洞穴淘汰 or 狩獵 so a full nest"
+                " can be cleared"
+            )
         selected = set(stages)
         ordered = [stage for stage in CUSTOM_WORKFLOW_STAGE_ORDER if stage in selected]
 

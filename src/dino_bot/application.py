@@ -82,7 +82,10 @@ def create_engine(
             config,
             verbose=verbose,
             full=True,
-            hunt_during_cooldown=True,
+            # Hunting is now an opt-in stage like any other. Unchecking it
+            # yields a hatch-only cycle, so the hunt planner, its detectors and
+            # its progress watchdog must all stay out of the engine.
+            hunt_during_cooldown="hunt" in config.workflow.custom_stages,
             enabled_stages=tuple(
                 stage for stage in config.workflow.custom_stages if stage != "hunt"
             ),
@@ -366,8 +369,13 @@ def _create_hatch_engine(
         )
     elif enabled_stages is not None:
         logger.info(
-            "Feature | custom-workflow | stages=%s | cooldown cycle | handoff=30s",
-            ",".join((*enabled_stages, "hunt")),
+            "Feature | custom-workflow | stages=%s | %s",
+            ",".join(
+                (*enabled_stages, "hunt") if hunt_during_cooldown else enabled_stages
+            ),
+            "cooldown cycle | handoff=30s"
+            if hunt_during_cooldown
+            else "hatch-only cycle | no hunting",
         )
     elif hunt_during_cooldown:
         logger.info(

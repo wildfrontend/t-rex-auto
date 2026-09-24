@@ -167,7 +167,6 @@ def test_config_accepts_selected_custom_workflow_in_safe_order(tmp_path: Path) -
     "stages",
     [
         [],
-        ["collect", "hatch"],
         ["collect", "hunt"],
         ["collect", "hatch", "hunt", "hunt"],
         ["collect", "dance", "hatch", "hunt"],
@@ -185,6 +184,47 @@ def test_config_rejects_unsafe_custom_workflow(
 
     with pytest.raises(ConfigError, match="workflow.custom_stages"):
         load_config(config_file)
+
+
+def test_config_rejects_a_workflow_that_cannot_clear_a_full_nest(
+    tmp_path: Path,
+) -> None:
+    """Without cave or hunt a full nest blocks hatching with no way back."""
+
+    config_file = tmp_path / "config.json"
+    config_file.write_text(
+        json.dumps({"workflow": {"custom_stages": ["mass", "collect", "hatch"]}}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="cave or hunt"):
+        load_config(config_file)
+
+
+@pytest.mark.parametrize(
+    "stages",
+    [
+        ["collect", "cave", "hatch"],
+        ["cave", "hatch"],
+        ["mass", "collect", "cave", "hatch"],
+    ],
+)
+def test_config_accepts_custom_workflow_without_hunt(
+    tmp_path: Path,
+    stages: list[str],
+) -> None:
+    """Hunting is opt-in: a hatch-only cycle is a legitimate workflow."""
+
+    config_file = tmp_path / "config.json"
+    config_file.write_text(
+        json.dumps({"workflow": {"custom_stages": stages}}),
+        encoding="utf-8",
+    )
+
+    config = load_config(config_file)
+
+    assert config.workflow.custom_stages == tuple(stages)
+    assert "hunt" not in config.workflow.custom_stages
 
 
 def test_cli_fast_speed_profile_reduces_hunt_delays() -> None:
