@@ -1,5 +1,26 @@
 # 版本紀錄
 
+## v0.0.85 — 2026-09-24
+
+- 自訂循環流程的「狩獵」改為非強制勾選，可以組出純孵蛋循環。原本孵蛋與狩獵
+  在四個地方被鎖死：前端 checkbox `disabled`、`config.py` 與 `dashboard.py`
+  兩道驗證，以及 `application.py` 寫死的 `hunt_during_cooldown=True`。最後這
+  個是真正的關鍵——即使前三關放行，`custom-workflow` 仍會無條件建立
+  `HatchHuntPlanner`，取消勾選在執行期完全沒有作用。現在這個旗標跟著
+  `custom_stages` 走，關掉狩獵時 planner、偵測器與狩獵進度 watchdog 一併不
+  載入，落回既有的純孵蛋路徑。
+- 同時補上一道新的守衛：洞穴淘汰與狩獵至少要勾一個。巢滿時只有這兩條出路，
+  `_start_cave_cleanup()` 在洞穴關閉時會設 `_capacity_blocked` 並「改去狩
+  獵」，而該旗標唯一的執行期解除點 `begin_hunt_map_capacity_refresh()` 只有
+  `HatchHuntPlanner` 會呼叫。兩個都不勾的話，巢一滿就孵蛋停止、狩獵不存在、
+  log 還會寫「switching to hunt」但無處可去，只能手動重啟。這個組合在狩獵解
+  鎖後才變得可選，因此與解鎖一併擋下。
+- 啟動日誌不再無條件補上 `hunt`，改為誠實反映實際流程：
+  `stages=mass,collect,cave,hatch | hatch-only cycle | no hunting`。
+- 現在的規則只剩兩條：必須包含孵蛋、必須包含洞穴淘汰或狩獵之一。其餘五個階段
+  （攻擊親代、HP 親代、頂尖配置、量產配置、收集巢蛋）可任意組合；窮舉 128 種
+  組合驗證，96 種通過，被擋的 32 種全部是上述死鎖組合。
+
 ## v0.0.84 — 2026-09-16
 
 - 修正恐龍走過首頁蛋巢圖示時，`hatch_home_anchor` 就偵測不到、整個孵化流程停擺
