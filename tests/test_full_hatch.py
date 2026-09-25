@@ -1063,7 +1063,38 @@ def make_full_planner() -> FullHatchPlanner:
     )
 
 
-def test_unreadable_cleanup_capacity_blocks_hatch_instead_of_restarting() -> None:
+def test_standalone_hatch_retries_an_unreadable_panel_without_a_refresh_owner() -> None:
+    """A pure-hatch run has no camera refresh, so it must not wait for one.
+
+    The refresh is only reachable through HatchHuntPlanner. Pausing for it in a
+    standalone run would latch `_capacity_blocked` forever - the same dead end
+    the timed retry exists to avoid.
+    """
+
+    planner = make_full_planner()
+    assert not planner.capacity_camera_refresh_available
+
+    planner._begin_capacity_preflight("unreadable panel")
+    planner._capacity_child._complete = True
+    planner._capacity_child._capacity_readable = False
+
+    assert planner.choose(frame(), [detection(hatch.HOME_ANCHOR, 59, 561)]) is None
+
+    assert not planner._capacity_blocked
+    assert not planner.is_hatch_blocked()
+    assert planner.capacity_retry_pending
+
+
+def test_unreadable_cleanup_capacity_retries_instead_of_restarting() -> None:
+    """An unreadable panel must not restart Phase A - nor latch forever.
+
+    Whatever hid the HUD (a promo modal over the cave entrance, in the S16
+    trace that prompted this) is gone minutes later, so the run schedules a
+    fresh preflight. The old behaviour latched `_capacity_blocked`, which only
+    a restart cleared: S16 sat at 273/300 for fifteen hours, hunting, with the
+    nest over its cull threshold the whole time.
+    """
+
     planner = make_full_planner()
     cave = CaveCullPlanner(DigitReader(GLYPHS), threshold=330)
     cave._complete = True
@@ -1076,11 +1107,13 @@ def test_unreadable_cleanup_capacity_blocks_hatch_instead_of_restarting() -> Non
 
     assert planner.choose(frame(), []) is None
 
-    assert planner.is_hatch_blocked()
-    assert planner._capacity_blocked
+    # Phase A still does not restart on the stale estimate...
     assert not planner._capacity_checked
-    assert planner._stage == "capacity_blocked"
     assert planner.completed_management_cycles == 0
+    # ...but the run stays alive and re-reads capacity later.
+    assert not planner._capacity_blocked
+    assert not planner.is_hatch_blocked()
+    assert planner.capacity_retry_pending
 
 
 @pytest.mark.parametrize(
@@ -1478,7 +1511,7 @@ def test_full_hatch_preflight_starts_initial_screening_before_first_egg_pile_tap
 
 
 @pytest.mark.parametrize("readable_after_move", [False, True])
-def test_custom_preflight_recovers_occluded_hud_or_keeps_capacity_fuse(
+def test_custom_preflight_recovers_occluded_hud_or_retries_later(
     readable_after_move: bool,
 ) -> None:
     planner = FullHatchPlanner(
@@ -1509,9 +1542,13 @@ def test_custom_preflight_recovers_occluded_hud_or_keeps_capacity_fuse(
         assert planner._capacity_checked and not planner.is_hatch_blocked()
         assert planner._screening_stages == ("attack", "top")
     else:
+        # Still unreadable: never hatch on a guess, but keep the run alive so a
+        # later preflight can re-read once whatever covered the HUD is gone.
         assert target is None
-        assert planner._capacity_blocked and not planner._capacity_checked
-        assert planner.is_hatch_blocked()
+        assert not planner._capacity_checked
+        assert not planner._capacity_blocked
+        assert not planner.is_hatch_blocked()
+        assert planner.capacity_retry_pending
 
 
 def test_full_capacity_preflight_screens_before_required_cull(monkeypatch) -> None:

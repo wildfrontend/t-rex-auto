@@ -2876,9 +2876,14 @@ class FullHatchPlanner:
         self._capacity_blocked = False
         # A combined Hatch+Hunt run may make one bounded map round-trip after
         # a failed capacity preflight. The hunt map recentres a HUD that can be
-        # obscured by home-map scenery. Custom runs without culling can then
-        # spend a retry interval hunting; other runs retain the capacity fuse.
+        # obscured by home-map scenery. Once that single attempt is spent, an
+        # unreadable panel falls through to the timed retry rather than
+        # latching the fuse for the rest of the run.
         self._capacity_camera_refresh_used = False
+        # Set by HatchHuntPlanner when it wraps this planner. A standalone
+        # hatch run has no handoff owner, so its camera refresh is unreachable
+        # and an unreadable panel must fall straight through to a timed retry.
+        self.capacity_camera_refresh_available = False
         self.population_limit_reached = False
         self.capacity_retry_pending = False
         # A visually proven maximum-population modal is stronger than a stale
@@ -4124,17 +4129,25 @@ class FullHatchPlanner:
                     self._hatch_capacity_check_pending = False
                     self._capacity_checked = False
                     if (
-                        self._custom_cycle and not self._cave_enabled
-                        and self._capacity_camera_refresh_used
+                        self.capacity_camera_refresh_available
+                        and not self._capacity_camera_refresh_used
                     ):
-                        self._start_capacity_retry_wait()
+                        # The combined workflow still has its one free camera
+                        # refresh: it can fix the read within seconds, so spend
+                        # it before falling back to the slower timed retry.
+                        self.logger.error(
+                            "Hatch capacity | preflight failed; configured capacity"
+                            " unreadable; hatching paused"
+                        )
+                        self._capacity_blocked = True
+                        self._stage = "capacity_blocked"
                         return None
-                    self.logger.error(
-                        "Hatch capacity | preflight failed; configured capacity unreadable; "
-                        "hatching stopped safely"
-                    )
-                    self._capacity_blocked = True
-                    self._stage = "capacity_blocked"
+                    # The refresh is spent, and an unreadable panel used to
+                    # latch here for the rest of the run. Whatever hid the HUD
+                    # - a promo modal, a stray dinosaur, a mid-animation frame
+                    # - is almost always gone minutes later, so schedule
+                    # another preflight instead of waiting for a restart.
+                    self._start_capacity_retry_wait()
                     return None
                 self.capacity_retry_pending = False
                 cleanup_required = (
@@ -4338,13 +4351,14 @@ class FullHatchPlanner:
                     return self._choose_current(frame, detections)
                 if not self._cave_child.capacity_readable:
                     self._capacity_checked = False
-                    self._capacity_blocked = True
-                    self._stage = "capacity_blocked"
-                    self._no_target_since = None
-                    self.logger.error(
-                        "Hatch full | cleanup capacity unreadable"
-                        " | blocking hatch instead of restarting Phase A"
-                    )
+                    # An unreadable panel is a statement about this frame, not
+                    # about the account: a promo modal over the cave entrance
+                    # reads exactly like a permanent failure. S16 latched here
+                    # at 273/300, the modal cleared minutes later, and hatching
+                    # still never resumed - fifteen hours of hunting with the
+                    # nest over its cull threshold. Schedule another preflight
+                    # instead, the way every other unreadable read already does.
+                    self._start_capacity_retry_wait()
                     return None
                 expected = self._cave_child.expected_population
                 self._finish_cave_management(expected)

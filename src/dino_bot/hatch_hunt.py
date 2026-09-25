@@ -101,6 +101,12 @@ class HatchHuntPlanner:
         self.clock = clock or time.monotonic
         self.hatch = hatch
         self.hunt = hunt
+        # Tell the hatch side a hunt handoff owner exists. Only then is the
+        # one-shot camera refresh reachable, so only then may an unreadable
+        # panel pause for it; a standalone hatch run must go straight to the
+        # timed retry instead of waiting for a refresh that never comes.
+        if hasattr(hatch, "capacity_camera_refresh_available"):
+            hatch.capacity_camera_refresh_available = True
         self.handoff_ms = max(0, round(handoff_seconds * 1000))
         # Handoff ends on a measurement, not on a countdown, so a measurement
         # that can never succeed has no exit at all: one observed run spent 14
