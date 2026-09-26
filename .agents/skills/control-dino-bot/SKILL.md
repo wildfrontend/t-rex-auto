@@ -1,106 +1,107 @@
 ---
 name: control-dino-bot
-description: Safely inspect and operate the local Dino Mutant Bot through its allowlisted status API and control-windows.ps1 entrypoint. Use when the user asks for hunting progress, current Bot status, failures, recent actions, health checks, diagnostic bundles, screenshots, environment diagnostics, starting, stopping, restarting, changing the fast/safe launch profile, or using a non-default local status port. Never use this skill for arbitrary ADB actions, game exploration, or unrequested process control.
+description: Precisely monitor and safely operate one or more Dino Mutant Bot instances (such as main and S13) from a remote Codex session through the localhost multi-instance Dashboard API, exact instances.json identity, verified Windows process/config/port guards, direct Bot status APIs, and instance-aware shared-log fallback. Use for running/stopped checks, cross-instance device-collision checks, hunting or hatch progress, current stage, recent actions, failures, health, screenshots, diagnostics, start/stop/restart, game restart, single-stage hatch runs, speed profile, WSL/Windows connectivity, or status-port questions. Never expose localhost services externally or use arbitrary ADB, game exploration, raw process killing, or unrequested state changes.
 ---
 
 # Control Dino Mutant Bot
 
-Use only the Bot's structured localhost API and the fixed Windows controller. Keep all access on
-`127.0.0.1`; never expose the service to a LAN or public address.
+Treat “remote” as an authenticated Codex session executing on the Bot host. Keep Dashboard and Bot
+APIs bound to loopback. Never create a public bind, tunnel, proxy, firewall rule, or port forward.
 
-## Resolve the controller
+## Prefer the multi-instance Dashboard
 
-Resolve the skill directory, then go up three directories to get `BOT_ROOT`. Use the first existing
-path below without searching elsewhere:
-
-1. `BOT_ROOT/app/scripts/control-windows.ps1` for a deployed Bot folder.
-2. `BOT_ROOT/scripts/control-windows.ps1` for a source checkout.
-
-If neither path exists, stop and report that the Bot controller is missing. In WSL, convert this
-exact path with `wslpath -w` before passing it to `powershell.exe`; do not scan the filesystem.
-
-Use this command shape:
+Use the bundled Windows-side wrapper. Convert its exact WSL path with `wslpath -w` and invoke it
+through `powershell.exe` so `127.0.0.1` refers to Windows:
 
 ```powershell
 powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
-  -File <control-windows.ps1> -Action <action> -StatusPort <port>
+  -File <dashboard-control.ps1> -Action status -Instance all
 ```
 
-Use port `8765` unless the user gives another port or the interactive launcher reports a different
-one. Never probe or scan ports. If the API is unavailable, report the attempted URL and ask the user
-for the configured port.
+The Dashboard must identify itself as `dino-dashboard` on `127.0.0.1:8780`. It resolves each
+instance from the deployed `instances.json`, including its exact config, status port, allowed modes,
+ADB serial, logs, and process. Never guess these values from the instance name.
 
-## Read-only requests
+For every multi-instance status check:
 
-For progress, status, failure, stuck, black-screen, settings, or recent-action questions, run:
+1. Query `-Action status -Instance all`, even if the user asks about one side, when collision could
+   explain the symptom.
+2. Compare running instances' non-empty ADB serials. If two use the same serial, report the
+   collision and do not mutate either one until the user chooses what to stop or fixes the mapping.
+3. Report the requested instance's port, serial, running state, feature, workflow/current stage,
+   last-log time, last action, successful hunts, total actions, verification failures, black-screen
+   detections, game restarts, and last successful hunt.
+4. Use a second snapshot before calling a run stuck. Slow capture/detection with newer timestamps is
+   activity; repeated recovery without workflow advancement is running but not progressing.
+
+Dashboard status is strong read-only evidence but does not independently prove Windows port
+ownership. A successful Dashboard stop/restart is stronger: the Dashboard verifies API PID,
+Windows port owner, `python.exe`, `main.py`, exact instance config, and status-port arguments before
+forwarding control.
+
+## Allowlisted actions
+
+Only perform a state-changing action when explicitly requested in the current turn. Pass `-Confirm`
+only after that authorization:
 
 ```powershell
-... -Action status -StatusPort 8765
+... -Action start-hunt       -Instance main -Confirm
+... -Action start-hatch-hunt -Instance s13  -Confirm
+... -Action start-custom-workflow -Instance s13 -Confirm
+... -Action start-stage-hp   -Instance s13  -Confirm
+... -Action stop             -Instance s13  -Confirm
+... -Action restart-bot      -Instance main -Confirm
+... -Action restart-game     -Instance main -Confirm
 ```
 
-Treat `successful_hunts` as confirmed hunts. Report `current_stage`, `successful_hunts`,
-`total_actions`, `verification_failures`, `black_screen_detections`, `game_restarts`, and
-`last_successful_hunt`. Do not infer that the Bot is stuck from one snapshot alone; use timestamps
-and request another status check if the last log may still be advancing.
+Allowed single stages are `hatch`, `attack`, `hp`, `collect`, and `cave`; the instance's
+`allowed_modes` remains authoritative. `scan-adb` is read-only. Run `snapshot` or `diagnostics` only
+when requested. After start or restart, query status once and report the Dashboard operation state.
 
-Run `-Action doctor` only when the user asks to diagnose prerequisites or connectivity. Run
-`-Action snapshot` only when the user explicitly asks for a current screenshot; report the returned
-file path.
+Do not use the legacy `control-windows.ps1` to start a non-default instance: that controller may be
+hard-wired to `app/config.json`. Use it only when the resolved instance config is exactly that file.
 
-Run `-Action diagnostics` only when the user explicitly asks to create or export a diagnostic bundle.
-It creates a sanitized ZIP without a screenshot or any remote connection. Report the returned file
-path and tell the user they can inspect it before uploading it to Codex or a maintainer.
+## Fallback when Dashboard is unavailable
 
-## State-changing requests
+An unreachable Dashboard does not mean a Bot is stopped. For read-only evidence, run the
+instance-aware log inspector:
 
-Only start, stop, or restart when the user explicitly requests that action in the current turn.
-Never infer permission from a status request, a failure, a black screen, or an earlier conversation.
-
-The controller enforces confirmation. Pass `-Confirm` only after verifying explicit intent:
-
-```powershell
-... -Action start   -Speed fast -StatusPort 8765 -Confirm
-... -Action stop                -StatusPort 8765 -Confirm
-... -Action restart -Speed fast -StatusPort 8765 -Confirm
+```bash
+python3 <skill-root>/scripts/inspect_runtime.py \
+  --runtime-root /mnt/d/DinoMutantBot-App --instance main --mode auto
 ```
 
-Allow only `fast` or `safe`. Use the user's stated profile; otherwise preserve the known current
-profile, or use `fast` only for a new start when no current profile is known. A restart may take up
-to 20 seconds. After a start or restart, query status once and report the result.
+Interpret states exactly:
 
-For custom millisecond timings or changing the port interactively, direct the user to the Chinese
-control window: `[T]` changes timings and `[P]` changes the local API port. Do not edit
-`config.json` or source code as a substitute for a runtime control request. Port cleanup is also a
-human-only launcher action: tell the user to use `[K]` when it is offered and enter the displayed
-confirmation token themselves; never reproduce that action with process commands.
+- `active_recently`: log activity within 30 seconds; strong activity evidence, no process identity.
+- `stopped_by_log`: the selected instance's last session marker is stop; historical evidence only.
+- `unknown`: stale or incomplete evidence.
 
-## Allowed HTTP surface
+If Windows interop works and the exact status port is known from `instances.json`, a direct
+`control-windows.ps1 -Action status` may supplement read-only evidence. Its status action verifies
+the Dino API service but not full process/config ownership. Never use log inference, direct HTTP, or
+file edits as a substitute for an authorized mutation.
 
-Use only these loopback routes:
+## Monitoring
 
-- `GET /health`
-- `GET /status`
-- `GET /actions`
-- `GET /settings`
-- `POST /control/stop`, only after explicit stop or restart intent
-
-Do not try other routes, methods, parameters, hosts, or payloads.
+For “watch” or “monitor,” take compact Dashboard snapshots periodically and compare timestamps,
+counters, workflow stage, and last action. Keep the user updated at least once per minute. Stop
+monitoring when the requested terminal condition occurs, the Bot stops, identity becomes ambiguous,
+or the user asks to stop. Do not treat unchanged state alone as failure before its configured stall
+window expires.
 
 ## Hard boundaries
 
-- Do not run `adb`, `taskkill`, `Stop-Process`, or arbitrary shell commands.
-- Do not click, tap, swipe, or explore the game UI directly.
-- Do not change source files, configuration, templates, or detector assets. The `diagnostics` action
-  may only create its timestamped ZIP under the app's `diagnostics` directory.
-- Do not expose, tunnel, or bind the API beyond `127.0.0.1`.
-- Do not guess ports, runtime folders, credentials, or device identifiers.
-- Stop on `confirmation_required`, `status_api_unavailable`, or an unknown response; report it
-  instead of finding another route. Treat `status_api_identity_mismatch`,
-  `status_api_process_identity_missing`, and `status_api_process_identity_mismatch` the same way:
-  do not send a control request and tell the user that the configured port is not a verified Bot.
+- Never run raw `adb`, `taskkill`, `Stop-Process`, taps, swipes, or arbitrary process commands.
+- Never expose ports 8780, 8765, 8775, or any Bot/Dashboard port beyond loopback.
+- Never guess runtime roots, instance IDs, ports, configs, serials, package names, or PID identity.
+- Never mutate config/source/templates as a substitute for runtime control.
+- Stop mutations on missing confirmation, Dashboard/API identity failure, serial collision, unknown
+  instance, occupied unverified port, or process/config/port mismatch.
+- Port cleanup and any launcher-displayed confirmation token remain human-only.
 
-## Report results
+## Report
 
-Answer in the user's language. State the action performed, port used when applicable, whether it
-succeeded, and the key status counts or diagnostic bundle path. Mention that the interface is
-local-only when explaining connection behavior.
+State the resolved instance, serial, mode, port, evidence method, whether process ownership was
+verified, action result, operation state, and key counters. Distinguish `Dashboard unreachable`,
+`Bot API unreachable`, `log says stopped`, and `process verified stopped`.

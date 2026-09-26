@@ -1,0 +1,95 @@
+{
+  "needs_attention": true,
+  "issues": [
+    {
+      "code": "hunt_output_stalled",
+      "severity": "warning",
+      "evidence": {
+        "longest_stall_seconds": 1493.0,
+        "confirmed_hunts": 90
+      }
+    },
+    {
+      "code": "target_replanned_without_progress",
+      "severity": "error",
+      "evidence": {
+        "target": "forest_recenter_button",
+        "x": 841,
+        "y": 1295,
+        "count": 53
+      }
+    }
+  ],
+  "optimization": {
+    "available": true,
+    "events": 2000,
+    "cycles": 406,
+    "span_seconds": 1652.9,
+    "sessions": 0,
+    "recoveries": 3,
+    "hunts_confirmed": 59,
+    "hunts_per_hour": 128.5,
+    "planning_cycles": 581,
+    "action_cycles": 114,
+    "action_rate": 0.196,
+    "stage_cycles": {
+      "recenter": 163,
+      "hunt_control": 120,
+      "hunting": 110,
+      "mail": 107,
+      "map_settle": 73,
+      "interrupt": 8
+    },
+    "rejections": {
+      "anchor_window": 422,
+      "own_path_marker": 264,
+      "screen_margin": 219,
+      "own_path_angle": 206,
+      "screen_center": 76,
+      "exclusion_zone": 61,
+      "failure_cooldown": 14
+    },
+    "capture_ms": {
+      "samples": 405,
+      "p50": 325.0,
+      "p95": 545.0,
+      "max": 1047.0
+    },
+    "detect_ms": {
+      "samples": 405,
+      "p50": 2383.0,
+      "p95": 2965.0,
+      "max": 3535.0
+    },
+    "verify": {
+      "checks_total": 376,
+      "pending": 146,
+      "total": 230,
+      "failed": 18,
+      "failure_rate": 0.078,
+      "retry_exhausted": 0
+    },
+    "suggestions": [
+      {
+        "code": "time_spent_in_recenter",
+        "severity": "info",
+        "evidence": {
+          "stage": "recenter",
+          "cycles": 163,
+          "planning_cycles": 581,
+          "share": 0.281
+        },
+        "tuning": "planner.recenter_every, planner.stalled_recenter_frames"
+      },
+      {
+        "code": "detection_latency_limits_cycle_rate",
+        "severity": "info",
+        "evidence": {
+          "detect_ms_p95": 2965.0,
+          "limit_ms": 400
+        },
+        "tuning": "template count and scales in assets/manifest.json, capture backend in capture.backend"
+      }
+    ]
+  }
+}
