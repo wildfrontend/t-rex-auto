@@ -1367,6 +1367,27 @@ class DashboardController:
     def restart_game(self, instance_id: str | None = None) -> dict[str, Any]:
         return self._active_control("restart-game", instance_id)
 
+    def stop_game(self, instance_id: str | None = None) -> dict[str, Any]:
+        instance = self._instance(instance_id)
+        before = self.discover(instance.instance_id)
+        status = before.get("status") or {}
+        previous_stops = int(status.get("game_stops", 0) or 0)
+        previous_failures = int(status.get("game_stop_failures", 0) or 0)
+        response = self._active_control("stop-game", instance.instance_id)
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            time.sleep(0.25)
+            current = self.discover(instance.instance_id)
+            current_status = current.get("status") or {}
+            if int(current_status.get("game_stop_failures", 0) or 0) > previous_failures:
+                raise RuntimeError("game_stop_failed")
+            if int(current_status.get("game_stops", 0) or 0) > previous_stops:
+                return {
+                    **response,
+                    "result": "game_stopped",
+                }
+        raise RuntimeError("game_stop_confirmation_timeout")
+
     def restart_bot(self, instance_id: str | None = None) -> dict[str, Any]:
         instance = self._instance(instance_id)
         active = self.discover(instance.instance_id)
@@ -1767,6 +1788,8 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 result = self.server.controller.scan_adb(instance_id)
             elif action == "restart-game":
                 result = self.server.controller.restart_game(instance_id)
+            elif action == "stop-game":
+                result = self.server.controller.stop_game(instance_id)
             elif action == "restart-bot":
                 result = self.server.controller.restart_bot(instance_id)
             elif action == "shutdown-dashboard":

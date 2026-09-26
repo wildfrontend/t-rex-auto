@@ -242,6 +242,8 @@ def build_runtime_status(logs_dir: Path, recent_action_limit: int = 10) -> dict[
             "retry_exhausted": 0,
             "black_screen_detections": 0,
             "black_screen_persisted": 0,
+            "game_stops": 0,
+            "game_stop_failures": 0,
             "game_restarts": 0,
             "game_restart_failures": 0,
             "timing": timing,
@@ -260,6 +262,8 @@ def build_runtime_status(logs_dir: Path, recent_action_limit: int = 10) -> dict[
     retry_exhausted = 0
     black_screen_detections = 0
     black_screen_persisted = 0
+    game_stops = 0
+    game_stop_failures = 0
     game_restarts = 0
     game_restart_failures = 0
     last_successful_hunt: str | None = None
@@ -303,6 +307,10 @@ def build_runtime_status(logs_dir: Path, recent_action_limit: int = 10) -> dict[
             black_screen_detections += 1
         if "Recovery | black screen persisted" in message:
             black_screen_persisted += 1
+        if "Control | game stopped" in message:
+            game_stops += 1
+        if "Control | game stop failed:" in message:
+            game_stop_failures += 1
         if "Recovery | game restarted;" in message:
             game_restarts += 1
         if "Recovery | game restart failed:" in message:
@@ -325,6 +333,8 @@ def build_runtime_status(logs_dir: Path, recent_action_limit: int = 10) -> dict[
         "retry_exhausted": retry_exhausted,
         "black_screen_detections": black_screen_detections,
         "black_screen_persisted": black_screen_persisted,
+        "game_stops": game_stops,
+        "game_stop_failures": game_stop_failures,
         "game_restarts": game_restarts,
         "game_restart_failures": game_restart_failures,
         "timing": timing,

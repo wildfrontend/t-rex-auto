@@ -531,6 +531,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.status_port > 0:
             control_handlers = {"stop": engine.stop}
             if engine.context.runtime_recovery is not None:
+                control_handlers["stop-game"] = engine.request_game_stop
                 control_handlers["restart-game"] = engine.request_game_restart
             status_server = LocalStatusServer(
                 config.logs_dir,

@@ -14,6 +14,8 @@ from .models import Detection, Frame, Target
 
 
 class AppRestarter(Protocol):
+    def stop(self) -> None: ...
+
     def restart(self) -> None: ...
 
 
@@ -23,8 +25,11 @@ class AdbAppRestarter:
         self.package = package
         self.activity = activity
 
-    def restart(self) -> None:
+    def stop(self) -> None:
         self.client.run(["shell", "am", "force-stop", self.package])
+
+    def restart(self) -> None:
+        self.stop()
         self.client.run(
             ["shell", "am", "start", "-n", f"{self.package}/{self.activity}"]
         )
@@ -145,6 +150,21 @@ class BlackScreenRecovery:
         )
         if self.launch_wait_seconds:
             self.sleeper(self.launch_wait_seconds)
+        return True
+
+    def request_stop(self, reason: str) -> bool:
+        """Stop only the configured game package without relaunching it."""
+
+        self.logger.warning("Control | %s; stopping game app", reason)
+        try:
+            self.restarter.stop()
+        except AdbError as exc:
+            self.logger.error("Control | game stop failed: %s", exc)
+            return False
+        self._black_since = None
+        self._is_black = False
+        self._deferred_reasons.clear()
+        self.logger.info("Control | game stopped")
         return True
 
 

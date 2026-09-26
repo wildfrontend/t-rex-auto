@@ -13,6 +13,7 @@ param(
         "start-stage-collect",
         "start-stage-cave",
         "stop",
+        "stop-game",
         "restart-bot",
         "restart-game",
         "snapshot",

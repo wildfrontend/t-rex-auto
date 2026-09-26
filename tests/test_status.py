@@ -67,6 +67,22 @@ def test_status_parses_latest_session_counts_and_actions(tmp_path: Path) -> None
     ]
 
 
+def test_status_counts_confirmed_game_stops(tmp_path: Path) -> None:
+    write_log(
+        tmp_path,
+        """
+19:01:01 | INFO | Bot started | Sense -> Think -> Act
+19:01:02 | INFO | Control | game stopped
+19:01:03 | ERROR | Control | game stop failed: transport unavailable
+""",
+    )
+
+    status = build_runtime_status(tmp_path)
+
+    assert status["game_stops"] == 1
+    assert status["game_stop_failures"] == 1
+
+
 def test_status_reports_stopped_session(tmp_path: Path) -> None:
     write_log(tmp_path, sample_log() + "19:02:00 | INFO | Bot stopped | actions=3 | cycles=1\n")
 
@@ -115,6 +131,7 @@ def test_local_status_server_accepts_allowlisted_controls(tmp_path: Path) -> Non
         port=0,
         control_handlers={
             "stop": lambda: requested.append("stop"),
+            "stop-game": lambda: requested.append("stop-game"),
             "restart-game": lambda: requested.append("restart-game"),
         },
     ) as server:
@@ -124,10 +141,14 @@ def test_local_status_server_accepts_allowlisted_controls(tmp_path: Path) -> Non
         restart_request = Request(f"{server.url}/control/restart-game", method="POST")
         with urlopen(restart_request, timeout=2) as response:  # noqa: S310
             restart_payload = json.load(response)
+        stop_game_request = Request(f"{server.url}/control/stop-game", method="POST")
+        with urlopen(stop_game_request, timeout=2) as response:  # noqa: S310
+            stop_game_payload = json.load(response)
 
     assert stop_payload == {"accepted": True, "action": "stop"}
     assert restart_payload == {"accepted": True, "action": "restart-game"}
-    assert requested == ["stop", "restart-game"]
+    assert stop_game_payload == {"accepted": True, "action": "stop-game"}
+    assert requested == ["stop", "restart-game", "stop-game"]
 
 
 def test_local_status_server_rejects_declined_control(tmp_path: Path) -> None:

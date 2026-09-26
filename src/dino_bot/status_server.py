@@ -17,6 +17,7 @@ from .status import build_runtime_status
 
 _CONTROL_PATHS = {
     "/control/stop": "stop",
+    "/control/stop-game": "stop-game",
     "/control/restart-game": "restart-game",
 }
 

@@ -56,6 +56,8 @@ class ModeObserver(Protocol):
 class RuntimeRecovery(Protocol):
     def observe(self, frame: Frame) -> bool: ...
 
+    def request_stop(self, reason: str) -> bool: ...
+
     def request_restart(
         self,
         reason: str,

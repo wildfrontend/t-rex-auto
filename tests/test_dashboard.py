@@ -42,6 +42,32 @@ def test_dashboard_prefers_live_workflow_over_truncated_logs(tmp_path, monkeypat
     assert controller._discover_instance(instance)["workflow"] == live
 
 
+def test_dashboard_waits_for_confirmed_game_stop(tmp_path, monkeypatch):
+    controller = DashboardController(tmp_path, tmp_path / "app" / "logs")
+    snapshots = iter(
+        [
+            {"running": True, "status": {"game_stops": 0, "game_stop_failures": 0}},
+            {"running": True, "status": {"game_stops": 0, "game_stop_failures": 0}},
+            {"running": True, "status": {"game_stops": 1, "game_stop_failures": 0}},
+        ]
+    )
+    monkeypatch.setattr(controller, "discover", lambda _instance=None: next(snapshots))
+    monkeypatch.setattr(
+        controller,
+        "_active_control",
+        lambda action, instance_id=None: {"accepted": True, "action": action},
+    )
+    monkeypatch.setattr(dashboard_module.time, "sleep", lambda _seconds: None)
+
+    result = controller.stop_game("main")
+
+    assert result == {
+        "accepted": True,
+        "action": "stop-game",
+        "result": "game_stopped",
+    }
+
+
 def test_dashboard_log_fallback_never_labels_active_hunts_as_hatching(tmp_path):
     log = tmp_path / "20260905.log"
     hunt = "20:00:00 | INFO | Planning | hunt_button at (450,800) confidence=1.0\n"

@@ -2469,7 +2469,11 @@ def test_action_driver_sends_android_back_key() -> None:
 
 class RecordingRestarter:
     def __init__(self) -> None:
+        self.stop_count = 0
         self.restart_count = 0
+
+    def stop(self) -> None:
+        self.stop_count += 1
 
     def restart(self) -> None:
         self.restart_count += 1
@@ -2588,6 +2592,46 @@ def test_adb_app_restarter_only_restarts_configured_game() -> None:
         ["shell", "am", "force-stop", "game.package"],
         ["shell", "am", "start", "-n", "game.package/GameActivity"],
     ]
+
+
+def test_adb_app_restarter_only_stops_configured_game() -> None:
+    client = FakeAdbClient()
+    restarter = AdbAppRestarter(client, "game.package", "GameActivity")  # type: ignore[arg-type]
+    restarter.stop()
+    assert client.commands == [["shell", "am", "force-stop", "game.package"]]
+
+
+def test_engine_queues_manual_game_stop_on_bot_thread() -> None:
+    class ManualRecovery:
+        def __init__(self) -> None:
+            self.requests: list[str] = []
+
+        def observe(self, frame: Frame) -> bool:
+            return False
+
+        def request_stop(self, reason: str) -> bool:
+            self.requests.append(reason)
+            return True
+
+    recovery = ManualRecovery()
+    context = BotContext(
+        capture_provider=SequenceCapture([make_frame(255)]),
+        detector=PixelDetector(),
+        planner=HuntPlanner(("dinosaur",)),
+        action_driver=RecordingActionDriver(),
+        verifier=TargetChangedVerifier(),
+        observer=RuntimeMode(),
+        logger=logging.getLogger("test_manual_game_stop"),
+        runtime_recovery=recovery,  # type: ignore[arg-type]
+        state=BotState.IDLE,
+    )
+    engine = BotEngine(context)
+
+    assert engine.request_game_stop()
+    assert not engine.request_game_stop()
+    assert recovery.requests == []
+    assert engine.step() == BotState.IDLE
+    assert recovery.requests == ["manual control request"]
 
 
 def test_engine_queues_manual_game_restart_on_bot_thread() -> None:
