@@ -216,6 +216,23 @@
             </label>
             <button id="hatchTuningUpdate" type="button">儲存（重啟後生效）</button>
           </div>
+          <div class="inventory-control stop-timer-control">
+            <div>
+              <span>停止計時器</span>
+              <strong id="stopTimerStatus">未設定</strong>
+              <small id="stopTimerDeadline">指定這台 Bot 要執行多久；到期先關遊戲，再停止 Bot</small>
+            </div>
+            <label>
+              <span>小時</span>
+              <input id="stopTimerHours" type="number" min="0" max="168" step="1" value="3">
+            </label>
+            <label>
+              <span>分鐘</span>
+              <input id="stopTimerMinutes" type="number" min="0" max="59" step="1" value="0">
+            </label>
+            <button id="stopTimerSet" type="button">開始計時</button>
+            <button class="danger" data-action="cancel-stop-timer" data-confirm="確定取消停止計時器？">取消計時</button>
+          </div>
           <p class="control-label">只執行一個階段</p>
           <div class="control-grid stage-controls">
             <button data-action="start-stage-hatch" data-confirm="只執行一輪孵蛋並返回主畫面？">孵蛋一輪</button>
@@ -231,6 +248,7 @@
             <button data-action="diagnostics">產生診斷包（含目前畫面）</button>
             <button data-action="open-logs">開啟日誌</button>
             <button class="danger" data-action="stop" data-confirm="確定安全停止 Bot？">安全停止</button>
+            <button class="danger control-span" data-action="stop-game-and-bot" data-confirm="確定立即關閉遊戲並停止 Bot？">關閉遊戲＋停止 Bot</button>
           </div>
           <div id="commandResult" class="command-result">所有控制只允許本機白名單指令。</div>
         </aside>

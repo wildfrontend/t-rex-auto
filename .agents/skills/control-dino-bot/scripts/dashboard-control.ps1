@@ -14,6 +14,7 @@ param(
         "start-stage-cave",
         "stop",
         "stop-game",
+        "stop-game-and-bot",
         "restart-bot",
         "restart-game",
         "snapshot",
@@ -83,6 +84,7 @@ function Convert-ToCompactInstance {
         last_successful_hunt = $Status.last_successful_hunt
         last_action = $LastAction
         operation = $Item.operation
+        stop_timer = $Item.stop_timer
     }
 }
 
@@ -145,7 +147,7 @@ try {
         -Headers $Headers `
         -ContentType "application/json" `
         -Body "{}" `
-        -TimeoutSec 15
+        -TimeoutSec 30
     Write-JsonResult ([ordered]@{
         ok = $true
         evidence = "dashboard_loopback"

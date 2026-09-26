@@ -68,6 +68,68 @@ def test_dashboard_waits_for_confirmed_game_stop(tmp_path, monkeypatch):
     }
 
 
+def test_dashboard_stops_game_before_bot(tmp_path, monkeypatch):
+    controller = DashboardController(tmp_path, tmp_path / "logs")
+    calls: list[tuple[str, str | None]] = []
+    monkeypatch.setattr(
+        controller,
+        "stop_game",
+        lambda instance_id=None: calls.append(("game", instance_id)),
+    )
+    monkeypatch.setattr(
+        controller,
+        "stop",
+        lambda instance_id=None: calls.append(("bot", instance_id)),
+    )
+
+    result = controller.stop_game_and_bot("main")
+
+    assert calls == [("game", "main"), ("bot", "main")]
+    assert result["action"] == "stop-game-and-bot"
+
+
+def test_stop_timer_is_persisted_and_expiry_stops_target_instance(tmp_path, monkeypatch):
+    controller = DashboardController(tmp_path, tmp_path / "logs")
+    monkeypatch.setattr(
+        controller,
+        "discover",
+        lambda instance_id=None: {"running": True},
+    )
+    monkeypatch.setattr(dashboard_module.time, "time", lambda: 1_000.0)
+
+    result = controller.set_stop_timer("main", 3 * 60 * 60)
+
+    assert result["stop_timer"]["remaining_seconds"] == 3 * 60 * 60
+    restored = DashboardController(tmp_path, tmp_path / "logs")
+    assert restored.stop_timer("main")["deadline_at"] == result["stop_timer"]["deadline_at"]
+    stopped: list[str] = []
+    monkeypatch.setattr(
+        restored,
+        "stop_game_and_bot",
+        lambda instance_id=None: stopped.append(str(instance_id)),
+    )
+
+    assert restored.run_due_stop_timers_once(now=11_799.0) == []
+    assert restored.run_due_stop_timers_once(now=11_800.0) == ["main"]
+    assert stopped == ["main"]
+    assert restored.stop_timer("main") == {"active": False}
+    assert restored.operation("main")["code"] == "timed_shutdown_complete"
+
+
+def test_stop_timer_requires_running_bot_and_valid_duration(tmp_path, monkeypatch):
+    controller = DashboardController(tmp_path, tmp_path / "logs")
+    monkeypatch.setattr(
+        controller,
+        "discover",
+        lambda instance_id=None: {"running": False},
+    )
+
+    with pytest.raises(ValueError, match="between 60"):
+        controller.set_stop_timer("main", 59)
+    with pytest.raises(RuntimeError, match="is not running"):
+        controller.set_stop_timer("main", 60)
+
+
 def test_dashboard_log_fallback_never_labels_active_hunts_as_hatching(tmp_path):
     log = tmp_path / "20260905.log"
     hunt = "20:00:00 | INFO | Planning | hunt_button at (450,800) confidence=1.0\n"
@@ -170,6 +232,51 @@ def test_dashboard_updates_local_boost_inventory(tmp_path: Path) -> None:
 
     assert result["inventory"]["remaining"] == 73
     assert overview["hatch_boost_inventory"]["remaining"] == 73
+
+
+def test_dashboard_sets_and_cancels_stop_timer_over_http(tmp_path: Path) -> None:
+    assets = tmp_path / "assets"
+    write_assets(assets)
+    server = DashboardServer(
+        tmp_path,
+        tmp_path / "logs",
+        tmp_path / "data" / "stats.sqlite3",
+        port=0,
+        assets=assets,
+    )
+    server.controller.discover = lambda instance_id=None: {  # type: ignore[method-assign]
+        "running": True,
+        "mode": "hunt",
+        "mode_label": "純狩獵",
+        "port": 8765,
+        "status": {},
+        "workflow": {"stage": "hunt", "label": "狩獵"},
+    }
+
+    with server:
+        set_request = Request(
+            f"{server.url}/api/control/set-stop-timer?instance=main",
+            data=json.dumps({"duration_seconds": 180}).encode(),
+            method="POST",
+            headers={"Content-Type": "application/json", "X-Dino-Dashboard": "1"},
+        )
+        with urlopen(set_request, timeout=2) as response:  # noqa: S310
+            result = json.load(response)
+        overview_url = f"{server.url}/api/overview?instance=main"
+        with urlopen(overview_url, timeout=2) as response:  # noqa: S310
+            overview = json.load(response)
+        cancel_request = Request(
+            f"{server.url}/api/control/cancel-stop-timer?instance=main",
+            method="POST",
+            headers={"X-Dino-Dashboard": "1"},
+        )
+        with urlopen(cancel_request, timeout=2) as response:  # noqa: S310
+            cancelled = json.load(response)
+
+    assert result["action"] == "set-stop-timer"
+    assert overview["stop_timer"]["active"] is True
+    assert overview["instances"][0]["stop_timer"]["active"] is True
+    assert cancelled["cancelled"] is True
 
 
 def test_dashboard_toggles_periodic_boost(tmp_path: Path) -> None:

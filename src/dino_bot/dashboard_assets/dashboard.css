@@ -138,6 +138,9 @@ h3 { font-size: 20px; }
 .inventory-control .hatch-tuning-toggle { margin-top: 8px; }
 .inventory-control button { padding-inline: 8px; }
 .custom-workflow-control { grid-template-columns: 1fr; align-items: stretch; }
+.stop-timer-control { grid-template-columns: minmax(0, 1fr) 68px 68px auto auto; }
+.stop-timer-control.active { border-color: rgba(255,155,69,.35); background: rgba(255,155,69,.07); }
+.control-span { grid-column: 1 / -1; }
 .workflow-stage-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px 12px; }
 .inventory-control .workflow-stage-options label { display: flex; align-items: center; gap: 7px; color: var(--text); font-size: 11px; }
 .inventory-control .workflow-stage-options input { width: auto; margin: 0; padding: 0; accent-color: var(--cyan); }
@@ -166,6 +169,8 @@ button.danger { color: #ffd6d5; border-color: rgba(255,107,104,.26); background:
   .record-list { grid-template-columns: 1fr; }
   .control-grid { grid-template-columns: 1fr; }
   .inventory-control { grid-template-columns: 1fr 92px 58px; }
+  .stop-timer-control { grid-template-columns: 1fr 1fr; }
+  .stop-timer-control > div { grid-column: 1 / -1; }
   .inventory-control .toggle-control { grid-column: 1 / -1; justify-content: flex-start; }
   .instance-form { grid-template-columns: 1fr; }
 }

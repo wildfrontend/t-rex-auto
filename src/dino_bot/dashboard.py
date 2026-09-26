@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import shutil
@@ -38,6 +39,8 @@ SUPPORTED_BOT_MODES = frozenset(
     {"hunt", "hatch-hunt", "hatch-stage", "custom-workflow"}
 )
 MODE_SWITCH_PROCESS_WAIT_SECONDS = 20
+MIN_STOP_TIMER_SECONDS = 60
+MAX_STOP_TIMER_SECONDS = 7 * 24 * 60 * 60
 HATCH_TUNING_FIELDS = (
     "capacity_limit",
     "cull_threshold",
@@ -416,9 +419,12 @@ class DashboardController:
         self._instances = self._load_instances()
         self._start_lock = threading.Lock()
         self._operation_lock = threading.Lock()
+        self._stop_timer_lock = threading.Lock()
         self._last_start: dict[str, float] = {}
         self._explicit_stop_at: dict[str, float] = {}
         self._operations: dict[str, dict[str, Any]] = {}
+        self.stop_timers_path = self.app_root / "data" / "dashboard-stop-timers.json"
+        self._stop_timers = self._load_stop_timers()
 
     @property
     def instances(self) -> tuple[BotInstance, ...]:
@@ -521,6 +527,197 @@ class DashboardController:
             if instance.instance_id == instance_id:
                 return instance
         raise RuntimeError(f"Unknown Bot instance: {instance_id}")
+
+    def _load_stop_timers(self) -> dict[str, dict[str, float]]:
+        try:
+            payload = json.loads(self.stop_timers_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        raw_timers = payload.get("timers") if isinstance(payload, dict) else None
+        if not isinstance(raw_timers, dict):
+            return {}
+        known_ids = {instance.instance_id for instance in self._instances}
+        timers: dict[str, dict[str, float]] = {}
+        for instance_id, raw in raw_timers.items():
+            if instance_id not in known_ids or not isinstance(raw, dict):
+                continue
+            try:
+                deadline = float(raw["deadline_epoch"])
+                duration = float(raw["duration_seconds"])
+                created = float(raw["created_epoch"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if (
+                not all(math.isfinite(value) for value in (deadline, duration, created))
+                or deadline <= 0
+                or duration <= 0
+                or created <= 0
+            ):
+                continue
+            timers[instance_id] = {
+                "deadline_epoch": deadline,
+                "duration_seconds": duration,
+                "created_epoch": created,
+            }
+        return timers
+
+    def _save_stop_timers_locked(self) -> None:
+        payload = {"timers": self._stop_timers}
+        self.stop_timers_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.stop_timers_path.with_suffix(".tmp")
+        temporary.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        temporary.replace(self.stop_timers_path)
+
+    def stop_timer(self, instance_id: str | None = None) -> dict[str, Any]:
+        instance = self._instance(instance_id)
+        with self._stop_timer_lock:
+            timer = self._stop_timers.get(instance.instance_id)
+            if timer is None:
+                return {"active": False}
+            result = dict(timer)
+        deadline = result["deadline_epoch"]
+        return {
+            "active": True,
+            "duration_seconds": int(result["duration_seconds"]),
+            "remaining_seconds": max(0, int(deadline - time.time() + 0.999)),
+            "created_at": datetime.fromtimestamp(result["created_epoch"]).astimezone().isoformat(
+                timespec="seconds"
+            ),
+            "deadline_at": datetime.fromtimestamp(deadline).astimezone().isoformat(
+                timespec="seconds"
+            ),
+        }
+
+    def set_stop_timer(
+        self,
+        instance_id: str | None,
+        duration_seconds: int,
+    ) -> dict[str, Any]:
+        if isinstance(duration_seconds, bool) or not isinstance(duration_seconds, int):
+            raise ValueError("duration_seconds must be an integer")
+        if not MIN_STOP_TIMER_SECONDS <= duration_seconds <= MAX_STOP_TIMER_SECONDS:
+            raise ValueError(
+                f"duration_seconds must be between {MIN_STOP_TIMER_SECONDS} and "
+                f"{MAX_STOP_TIMER_SECONDS}"
+            )
+        instance = self._instance(instance_id)
+        if not self.discover(instance.instance_id)["running"]:
+            raise RuntimeError(f"Bot instance '{instance.name}' is not running")
+        now = time.time()
+        with self._stop_timer_lock:
+            self._stop_timers[instance.instance_id] = {
+                "deadline_epoch": now + duration_seconds,
+                "duration_seconds": float(duration_seconds),
+                "created_epoch": now,
+            }
+            self._save_stop_timers_locked()
+        timer = self.stop_timer(instance.instance_id)
+        hours, remainder = divmod(duration_seconds, 3600)
+        minutes = remainder // 60
+        message = f"{instance.name} 已設定執行 {hours} 小時 {minutes} 分鐘"
+        message += "；到期會先關閉遊戲，再停止 Bot"
+        self._set_operation(
+            instance,
+            action="set-stop-timer",
+            state="succeeded",
+            code="stop_timer_set",
+            message=message,
+        )
+        return {
+            "accepted": True,
+            "action": "set-stop-timer",
+            "instance_id": instance.instance_id,
+            "stop_timer": timer,
+            "message": message,
+        }
+
+    def cancel_stop_timer(
+        self,
+        instance_id: str | None = None,
+        *,
+        record_operation: bool = True,
+    ) -> dict[str, Any]:
+        instance = self._instance(instance_id)
+        with self._stop_timer_lock:
+            existed = self._stop_timers.pop(instance.instance_id, None) is not None
+            if existed:
+                self._save_stop_timers_locked()
+        message = "已取消停止計時器" if existed else "目前沒有停止計時器"
+        if record_operation:
+            self._set_operation(
+                instance,
+                action="cancel-stop-timer",
+                state="succeeded",
+                code="stop_timer_cancelled" if existed else "stop_timer_not_set",
+                message=message,
+            )
+        return {
+            "accepted": True,
+            "action": "cancel-stop-timer",
+            "instance_id": instance.instance_id,
+            "cancelled": existed,
+            "message": message,
+        }
+
+    def _execute_due_stop_timer(self, instance_id: str) -> None:
+        instance = self._instance(instance_id)
+        self._set_operation(
+            instance,
+            action="stop-timer",
+            state="pending",
+            code="stop_timer_expired",
+            message="停止計時器到期；正在關閉遊戲與 Bot",
+        )
+        try:
+            self.stop_game_and_bot(instance_id)
+        except RuntimeError as exc:
+            self._set_operation(
+                instance,
+                action="stop-timer",
+                state="failed",
+                code="timed_shutdown_failed",
+                message=f"停止計時器到期，但關閉未完成：{exc}",
+            )
+        else:
+            self._set_operation(
+                instance,
+                action="stop-timer",
+                state="succeeded",
+                code="timed_shutdown_complete",
+                message="停止計時器到期；遊戲與 Bot 已關閉",
+            )
+
+    def run_due_stop_timers_once(
+        self,
+        now: float | None = None,
+        *,
+        background: bool = False,
+    ) -> list[str]:
+        current = time.time() if now is None else now
+        with self._stop_timer_lock:
+            due = [
+                instance_id
+                for instance_id, timer in self._stop_timers.items()
+                if timer["deadline_epoch"] <= current
+            ]
+            for instance_id in due:
+                self._stop_timers.pop(instance_id, None)
+            if due:
+                self._save_stop_timers_locked()
+        for instance_id in due:
+            if background:
+                threading.Thread(
+                    target=self._execute_due_stop_timer,
+                    args=(instance_id,),
+                    name=f"dino-timed-stop-{instance_id}",
+                    daemon=True,
+                ).start()
+            else:
+                self._execute_due_stop_timer(instance_id)
+        return due
 
     def scan_adb(self, instance_id: str | None = None) -> dict[str, Any]:
         """Probe the known emulator ports on behalf of one instance.
@@ -1362,7 +1559,9 @@ class DashboardController:
     def stop(self, instance_id: str | None = None) -> dict[str, Any]:
         instance = self._instance(instance_id)
         self._explicit_stop_at[instance.instance_id] = time.monotonic()
-        return self._active_control("stop", instance.instance_id)
+        response = self._active_control("stop", instance.instance_id)
+        self.cancel_stop_timer(instance.instance_id, record_operation=False)
+        return response
 
     def restart_game(self, instance_id: str | None = None) -> dict[str, Any]:
         return self._active_control("restart-game", instance_id)
@@ -1387,6 +1586,32 @@ class DashboardController:
                     "result": "game_stopped",
                 }
         raise RuntimeError("game_stop_confirmation_timeout")
+
+    def stop_game_and_bot(self, instance_id: str | None = None) -> dict[str, Any]:
+        instance = self._instance(instance_id)
+        game_error: RuntimeError | None = None
+        bot_error: RuntimeError | None = None
+        try:
+            self.stop_game(instance.instance_id)
+        except RuntimeError as exc:
+            game_error = exc
+        try:
+            self.stop(instance.instance_id)
+        except RuntimeError as exc:
+            bot_error = exc
+        if game_error is not None or bot_error is not None:
+            details = []
+            if game_error is not None:
+                details.append(f"關閉遊戲失敗：{game_error}")
+            if bot_error is not None:
+                details.append(f"停止 Bot 失敗：{bot_error}")
+            raise RuntimeError("；".join(details))
+        return {
+            "accepted": True,
+            "action": "stop-game-and-bot",
+            "instance_id": instance.instance_id,
+            "message": f"{instance.name} 的遊戲與 Bot 已關閉",
+        }
 
     def restart_bot(self, instance_id: str | None = None) -> dict[str, Any]:
         instance = self._instance(instance_id)
@@ -1790,6 +2015,16 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 result = self.server.controller.restart_game(instance_id)
             elif action == "stop-game":
                 result = self.server.controller.stop_game(instance_id)
+            elif action == "stop-game-and-bot":
+                result = self.server.controller.stop_game_and_bot(instance_id)
+            elif action == "set-stop-timer":
+                payload = self._read_json()
+                result = self.server.controller.set_stop_timer(
+                    instance_id,
+                    payload.get("duration_seconds"),
+                )
+            elif action == "cancel-stop-timer":
+                result = self.server.controller.cancel_stop_timer(instance_id)
             elif action == "restart-bot":
                 result = self.server.controller.restart_bot(instance_id)
             elif action == "shutdown-dashboard":
@@ -1920,6 +2155,8 @@ class DashboardServer:
         self._thread: threading.Thread | None = None
         self._auto_resume_thread: threading.Thread | None = None
         self._auto_resume_stop = threading.Event()
+        self._stop_timer_thread: threading.Thread | None = None
+        self._stop_timer_stop = threading.Event()
 
     @property
     def url(self) -> str:
@@ -1971,6 +2208,7 @@ class DashboardServer:
                     "allowed_modes": sorted(definition.allowed_modes),
                     "active": active,
                     "operation": self.controller.operation(definition.instance_id),
+                    "stop_timer": self.controller.stop_timer(definition.instance_id),
                     "metrics": metrics,
                     "hatch_boost_inventory": inventory.as_dict(),
                     "hatch_tuning": self.controller.hatch_tuning(definition),
@@ -1988,6 +2226,7 @@ class DashboardServer:
             "instances": instances,
             "active": selected["active"],
             "operation": selected["operation"],
+            "stop_timer": selected["stop_timer"],
             "metrics": selected["metrics"],
             "hatch_boost_inventory": selected["hatch_boost_inventory"],
             "hatch_tuning": selected["hatch_tuning"],
@@ -2010,6 +2249,21 @@ class DashboardServer:
                 target=self._watch_stage_completion, daemon=True
             )
             self._auto_resume_thread.start()
+        if self._stop_timer_thread is None:
+            self._stop_timer_thread = threading.Thread(
+                target=self._watch_stop_timers,
+                name="dino-stop-timer",
+                daemon=True,
+            )
+            self._stop_timer_thread.start()
+
+    def _watch_stop_timers(self) -> None:
+        while not self._stop_timer_stop.wait(1):
+            try:
+                self.controller.run_due_stop_timers_once(background=True)
+            except Exception:
+                # A transient status problem must not kill the persistent timer monitor.
+                continue
 
     def _watch_stage_completion(self) -> None:
         """Queue the continuous mode after a standalone stage finishes on its own.
@@ -2066,6 +2320,8 @@ class DashboardServer:
         try:
             self._server.serve_forever()
         finally:
+            self._auto_resume_stop.set()
+            self._stop_timer_stop.set()
             self._server.server_close()
             self._server = None
 
@@ -2081,12 +2337,15 @@ class DashboardServer:
 
     def close(self) -> None:
         self._auto_resume_stop.set()
+        self._stop_timer_stop.set()
         if self._server is None:
             return
         self._server.shutdown()
         self._server.server_close()
         if self._thread is not None:
             self._thread.join(timeout=2)
+        if self._stop_timer_thread is not None:
+            self._stop_timer_thread.join(timeout=2)
         self._server = None
         self._thread = None
 

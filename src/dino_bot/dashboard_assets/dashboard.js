@@ -42,6 +42,14 @@ function formatDuration(seconds) {
   return `${String(Math.floor(value / 60)).padStart(2, "0")}:${String(value % 60).padStart(2, "0")}`;
 }
 
+function formatLongDuration(seconds) {
+  const value = Math.max(0, Math.ceil(Number(seconds) || 0));
+  const hours = Math.floor(value / 3600);
+  const minutes = Math.floor((value % 3600) / 60);
+  const remainder = value % 60;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`;
+}
+
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>'"]/g, (character) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", "\"": "&quot;",
@@ -64,6 +72,7 @@ function renderInstances(items) {
     const running = Boolean(active.running);
     const selected = item.id === selectedInstanceId;
     const serial = item.serial || "未設定 ADB";
+    const stopTimer = item.stop_timer || {};
     const allowed = new Set(item.allowed_modes || []);
     const startButton = (mode, label) => allowed.has(mode)
       ? `<button type="button" data-instance-action="start-${mode}" data-instance-id="${escapeHtml(item.id)}">${label}</button>`
@@ -74,7 +83,7 @@ function renderInstances(items) {
         <span class="instance-state${running ? " running" : ""}">${running ? "● 執行中" : "○ 已停止"}</span>
       </div>
       <div class="instance-card-meta"><span>${escapeHtml(serial)}</span><span>Port ${item.status_port}</span></div>
-      <div class="instance-card-meta"><span>${escapeHtml(active.mode_label || "未啟動")}</span><span>${escapeHtml((active.status || {}).current_stage || "—")}</span></div>
+      <div class="instance-card-meta"><span>${escapeHtml(active.mode_label || "未啟動")}</span><span>${escapeHtml((active.status || {}).current_stage || "—")}</span>${stopTimer.active ? `<span>停止倒數 ${formatLongDuration(stopTimer.remaining_seconds)}</span>` : ""}</div>
       <div class="instance-card-actions">
         <button type="button" data-instance-action="select" data-instance-id="${escapeHtml(item.id)}">檢視</button>
         ${startButton("hatch-hunt", "孵蛋＋狩獵")}
@@ -156,6 +165,15 @@ function render(data) {
     button.hidden = !allowed.has(button.dataset.mode);
   });
   renderActive(data.active || {});
+  const stopTimer = data.stop_timer || {};
+  const timerControl = document.querySelector(".stop-timer-control");
+  timerControl.classList.toggle("active", stopTimer.active === true);
+  $("stopTimerStatus").textContent = stopTimer.active
+    ? `剩餘 ${formatLongDuration(stopTimer.remaining_seconds)}`
+    : "未設定";
+  $("stopTimerDeadline").textContent = stopTimer.active
+    ? `預計 ${new Date(stopTimer.deadline_at).toLocaleString("zh-TW", { hour12: false })} 關閉遊戲與 Bot`
+    : "指定這台 Bot 要執行多久；到期先關遊戲，再停止 Bot";
   const operation = data.operation;
   if (operation?.updated_at && operation.updated_at !== lastOperationUpdatedAt) {
     lastOperationUpdatedAt = operation.updated_at;
@@ -301,6 +319,46 @@ async function invokeControl(button) {
 
 document.querySelectorAll("button[data-action]").forEach((button) => {
   button.addEventListener("click", () => invokeControl(button));
+});
+
+$("stopTimerSet").addEventListener("click", async () => {
+  const hours = Number($("stopTimerHours").value);
+  const minutes = Number($("stopTimerMinutes").value);
+  const durationSeconds = (hours * 60 + minutes) * 60;
+  const result = $("commandResult");
+  if (
+    !Number.isInteger(hours) || !Number.isInteger(minutes) ||
+    hours < 0 || hours > 168 || minutes < 0 || minutes > 59 ||
+    durationSeconds < 60 || durationSeconds > 7 * 24 * 60 * 60
+  ) {
+    result.classList.add("error");
+    result.textContent = "請設定 1 分鐘到 7 天之間的執行時間。";
+    return;
+  }
+  const button = $("stopTimerSet");
+  button.disabled = true;
+  result.classList.remove("error");
+  result.textContent = "設定停止計時器…";
+  try {
+    const suffix = selectedInstanceId ? `?instance=${encodeURIComponent(selectedInstanceId)}` : "";
+    const response = await fetch(`/api/control/set-stop-timer${suffix}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Dino-Dashboard": "1",
+      },
+      body: JSON.stringify({ duration_seconds: durationSeconds }),
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+    result.textContent = payload.message;
+    await refresh();
+  } catch (error) {
+    result.classList.add("error");
+    result.textContent = String(error.message || error);
+  } finally {
+    button.disabled = false;
+  }
 });
 
 function openNewInstanceForm() {
