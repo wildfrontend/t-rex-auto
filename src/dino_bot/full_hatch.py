@@ -136,6 +136,7 @@ DEFAULT_CAPACITY_CONSISTENT_READS = 2
 
 RECOVERY_NO = "hatch_recovery_no"
 RECOVERY_MASK_CLOSE = "hatch_recovery_mask_close"
+RECOVERY_DINOSAUR_DETAIL_DISMISS = "hatch_recovery_dinosaur_detail_dismiss"
 RECOVERY_CLOSE = "hatch_recovery_close"
 RECOVERY_CLAIM = "hatch_recovery_claim"
 RECOVERY_MAP_EXIT = "hatch_recovery_map_exit"
@@ -248,6 +249,7 @@ DEFAULT_TARGET_ACTIONS: dict[str, str] = {
     CAVE_CONTINUOUS_BUTTON: "tap",
     RECOVERY_NO: "tap",
     RECOVERY_MASK_CLOSE: "tap",
+    RECOVERY_DINOSAUR_DETAIL_DISMISS: "tap",
     RECOVERY_CLOSE: "tap",
     RECOVERY_CLAIM: "tap",
     RECOVERY_MAP_EXIT: "tap",
@@ -299,6 +301,7 @@ DEFAULT_POST_ACTION_DELAYS_MS: dict[str, int] = {
     CAVE_CONTINUOUS_BUTTON: 120_000,
     RECOVERY_NO: 3000,
     RECOVERY_MASK_CLOSE: 3000,
+    RECOVERY_DINOSAUR_DETAIL_DISMISS: 3000,
     RECOVERY_CLOSE: 4000,
     RECOVERY_CLAIM: 5000,
     RECOVERY_MAP_EXIT: 4000,
@@ -1188,6 +1191,8 @@ class HatchHomeRecoveryPlanner:
         max_measured_corrections: int = 4,
         max_hunt_dialog_dismissals: int = 3,
         max_bubble_dismissals: int = 3,
+        expect_dinosaur_detail: bool = False,
+        max_dinosaur_detail_dismissals: int = 2,
         expect_max_population: bool = False,
         max_population_shortcut_attempts: int = 2,
         applied_swipes: Sequence[tuple[int, int, int, int]] = (),
@@ -1202,6 +1207,10 @@ class HatchHomeRecoveryPlanner:
         self.max_forest_trips = 0
         self.max_hunt_dialog_dismissals = max(0, max_hunt_dialog_dismissals)
         self.max_bubble_dismissals = max(0, max_bubble_dismissals)
+        self.expect_dinosaur_detail = bool(expect_dinosaur_detail)
+        self.max_dinosaur_detail_dismissals = max(
+            1, max_dinosaur_detail_dismissals
+        )
         self.expect_max_population = bool(expect_max_population)
         self.max_population_shortcut_attempts = max(
             1, max_population_shortcut_attempts
@@ -1216,6 +1225,7 @@ class HatchHomeRecoveryPlanner:
         self._forest_trips = 0
         self._hunt_dialog_dismissals = 0
         self._bubble_dismissals = 0
+        self._dinosaur_detail_dismissals = 0
         self._max_population_shortcut_attempts = 0
         self._max_population_seen = False
         self._measured_corrections = 0
@@ -1418,6 +1428,41 @@ class HatchHomeRecoveryPlanner:
                 return synthetic_target(RECOVERY_NO, no.x, no.y)
         else:
             self._autoplace_notice_without_no = False
+
+        # A roaming dinosaur can cross the calibrated pile point between the
+        # planning frame and the tap.  The resulting detail card dims the home
+        # map, leaves the home/Forest HUD visible behind it, and also satisfies
+        # the deliberately broad auto-place layout detector.  Android Back is
+        # ignored by this card, which used to spend both bounded escape rounds
+        # and fuse hatching off.  Only arm this interpretation immediately
+        # after an egg-pile miss; then dismiss through the empty mask at the
+        # left edge, never through Expel or either growth button on the card.
+        dinosaur_detail_obstruction = (
+            self.expect_dinosaur_detail
+            and notice_misread
+            and bool(by_type.get(hatch_feature.HOME_ANCHOR))
+            and bool(by_type.get(FOREST_RECENTER))
+            and not is_home_screen(frame, home_detections)
+        )
+        if (
+            dinosaur_detail_obstruction
+            and self._dinosaur_detail_dismissals
+            < self.max_dinosaur_detail_dismissals
+        ):
+            self._dinosaur_detail_dismissals += 1
+            self._stage = (
+                "dismiss_dinosaur_detail_"
+                f"{self._dinosaur_detail_dismissals}/"
+                f"{self.max_dinosaur_detail_dismissals}"
+            )
+            self.logger.warning(
+                "Hatch recovery | egg-pile tap opened dinosaur detail"
+                " | dismissing through safe backdrop"
+            )
+            return synthetic_target(
+                RECOVERY_DINOSAUR_DETAIL_DISMISS,
+                *_scaled(frame, NEST_MASK_POINT, self.reference_width),
+            )
 
         if AUTOPLACE_TITLE in by_type or SELECT_TITLE in by_type or NEST_TITLE in by_type:
             self._stage = "close_mask_layer"
@@ -4449,6 +4494,10 @@ class FullHatchPlanner:
         self._child = HatchHomeRecoveryPlanner(
             reference_width=self.reference_width,
             logger=self.logger,
+            expect_dinosaur_detail=(
+                self._egg_pile_capacity_check_pending
+                or self._egg_pile_retry_pending
+            ),
             expect_max_population=self._hatch_capacity_check_pending,
             applied_swipes=history,
         )

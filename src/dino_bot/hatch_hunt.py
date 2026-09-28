@@ -134,6 +134,11 @@ class HatchHuntPlanner:
         self.errand_margin_ms = 90_000
         self.errand_interval_seconds = 180.0
         self._next_errand_at = 0.0
+        # A blocked egg-pile recovery normally borrows a natural hunt idle
+        # window. Busy maps may always have another target, however, turning
+        # that courtesy into a permanent hatch lock. Give the idle path first
+        # choice, then force one bounded handoff after the same retry interval.
+        self._blocked_recovery_due_at: float | None = None
         # 冷卻剩餘超過這個門檻才值得為加速專程跑一趟。30 分鐘是下限而非目標:
         # 更短的冷卻交給既有的順路檢查,那不必離開狩獵。
         self.boost_visit_min_remaining_ms = 1_800_000
@@ -252,15 +257,24 @@ class HatchHuntPlanner:
             if not self._continue_hunting_when_blocked():
                 return None
             if self._mode == "hunt":
+                now = self.clock()
+                if self._blocked_recovery_due_at is None:
+                    self._blocked_recovery_due_at = (
+                        now + self.errand_interval_seconds
+                    )
                 hunt_idle = self.hunt.next_ready_delay_ms()
                 begin_collection_recovery = getattr(
                     self.hatch,
                     "begin_blocked_collection_recovery",
                     None,
                 )
-                if (
+                idle_window = (
                     hunt_idle >= self.errand_min_idle_ms
-                    and self.clock() >= self._next_errand_at
+                    and now >= self._next_errand_at
+                )
+                forced_window = now >= self._blocked_recovery_due_at
+                if (
+                    (idle_window or forced_window)
                     and callable(begin_collection_recovery)
                     and begin_collection_recovery()
                 ):
@@ -268,12 +282,14 @@ class HatchHuntPlanner:
                     # the egg-pile calibration fuse. Other hatch safety fuses
                     # refuse the method above and remain hunt-only.
                     self._next_errand_at = (
-                        self.clock() + self.errand_interval_seconds
+                        now + self.errand_interval_seconds
                     )
+                    self._blocked_recovery_due_at = self._next_errand_at
                     self._enter_handoff("blocked_collection")
                     self.logger.warning(
-                        "Hatch+Hunt | hatch blocked and hunt idle %.0fs"
-                        " | attempting verified nest collection recovery",
+                        "Hatch+Hunt | hatch blocked; attempting verified nest"
+                        " collection recovery | trigger=%s | hunt_idle=%.0fs",
+                        "idle" if idle_window else "deadline",
                         hunt_idle / 1000,
                     )
                     return self._choose_handoff(frame, detections)
@@ -287,6 +303,8 @@ class HatchHuntPlanner:
                         "Hatch+Hunt | hatch calibration blocked; switching to hunt"
                     )
             return self._choose_owned(self.hunt, frame, detections)
+
+        self._blocked_recovery_due_at = None
 
         if self._mode == "hatch":
             target = self._choose_owned(self.hatch, frame, detections)
@@ -569,6 +587,7 @@ class HatchHuntPlanner:
         self._nest_close_attempts = 0
         self._handoff_deadline = None
         self._handoff_reason = ""
+        self._blocked_recovery_due_at = None
 
     # Hunt diagnostics remain available to the shared engine while combined.
     def take_blind_escape(self) -> dict[str, Any] | None:
@@ -744,6 +763,7 @@ class HatchHuntPlanner:
                 self._next_errand_at = (
                     self.clock() + self.errand_interval_seconds
                 )
+                self._blocked_recovery_due_at = self._next_errand_at
                 self._mode = "hunt"
                 self._centered_frames = 0
                 return self._choose_owned(self.hunt, frame, detections)

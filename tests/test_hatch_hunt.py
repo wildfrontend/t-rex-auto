@@ -441,6 +441,40 @@ def test_idle_hunt_uses_collection_to_recover_egg_pile_lock() -> None:
     assert full._stage == "open_nest"
 
 
+def test_busy_hunt_forces_bounded_collection_recovery_for_egg_pile_lock() -> None:
+    """A map with endless targets must not turn the idle courtesy into a latch."""
+
+    from dino_bot.digits import DigitReader
+    from dino_bot.full_hatch import FullHatchPlanner
+
+    now = [1000.0]
+    full = FullHatchPlanner(
+        DigitReader(Path(__file__).parents[1] / "assets/hatch/digits"),
+        egg_pile_point=(450, 1330),
+        clock=lambda: now[0],
+    )
+    full._egg_pile_blocked = True
+    full._stage = "hatch_blocked"
+    hunt = StubHunt()
+    hunt.delay_ms = 0
+    hunt.next_target = target("dinosaur", 300, 700)
+    combined = HatchHuntPlanner(full, hunt, clock=lambda: now[0])
+    combined._mode = "hunt"
+
+    assert combined.choose(frame(), []).type == "dinosaur"
+    now[0] += combined.errand_interval_seconds - 1
+    assert combined.choose(frame(), []).type == "dinosaur"
+
+    now[0] += 2
+    # The handoff may finish the already-planned hunt action from this frame,
+    # but it must not remain in hunt mode waiting for a future idle gap.
+    combined.choose(frame(), [])
+    assert combined._mode == "handoff"
+    assert combined._handoff_reason == "blocked_collection"
+    assert full._blocked_collection_recovery
+    assert full._stage == "open_nest"
+
+
 def test_startup_interruption_during_hunt_restarts_hatch_first() -> None:
     combined, hatch_planner, hunt_planner = planner()
     hunt_planner.next_target = target("dinosaur", 300, 700)

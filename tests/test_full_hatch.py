@@ -51,6 +51,7 @@ from dino_bot.full_hatch import (
     PLACE_SORT_LEVEL,
     RECOVERY_BACK,
     RECOVERY_BUBBLE_DISMISS,
+    RECOVERY_DINOSAUR_DETAIL_DISMISS,
     RECOVERY_FOREST,
     RECOVERY_HUNT_DIALOG_CLOSE,
     RECOVERY_HUNT_DIALOG_DISMISS,
@@ -3169,6 +3170,47 @@ def test_home_recovery_ignores_a_notice_without_no_button_and_recenters() -> Non
 
     assert target is not None and target.type == RECOVERY_RECENTER
     assert not planner.is_failed()
+
+
+def test_home_recovery_dismisses_dinosaur_detail_after_egg_pile_miss() -> None:
+    """The live S9 detail card ignores Back but closes through its backdrop."""
+
+    planner = HatchHomeRecoveryPlanner(expect_dinosaur_detail=True)
+    dimmed = np.full((1600, 900, 3), 39, dtype=np.uint8)
+    detections = [
+        detection(AUTOPLACE_NOTICE, 450, 720),
+        detection(hatch.HOME_ANCHOR, 49, 562),
+        detection("forest_recenter_button", 841, 1296),
+    ]
+
+    target = planner.choose(frame(dimmed), detections)
+
+    assert target is not None
+    assert target.type == RECOVERY_DINOSAUR_DETAIL_DISMISS
+    assert (target.x, target.y) == (50, 800)
+    planner.on_action_success(target.type)
+
+    home = [detection(hatch.HOME_ANCHOR, 49, 562)]
+    assert planner.choose(frame(), home) is None
+    assert planner.choose(frame(), home) is None
+    assert planner.is_complete()
+
+
+def test_home_recovery_does_not_guess_dinosaur_detail_without_egg_pile_context() -> None:
+    """The broad auto-place match is insufficient outside an egg-pile miss."""
+
+    planner = HatchHomeRecoveryPlanner()
+    dimmed = np.full((1600, 900, 3), 39, dtype=np.uint8)
+    target = planner.choose(
+        frame(dimmed),
+        [
+            detection(AUTOPLACE_NOTICE, 450, 720),
+            detection(hatch.HOME_ANCHOR, 49, 562),
+            detection("forest_recenter_button", 841, 1296),
+        ],
+    )
+
+    assert target is not None and target.type == RECOVERY_BACK
 
 
 def test_home_recovery_undoes_when_task_toast_outlives_a_measured_pile() -> None:
