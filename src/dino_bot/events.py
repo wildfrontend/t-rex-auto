@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Protocol, TextIO
 
 from .models import ActionCommand, Detection, Frame, Target, VerificationResult
+from .rotation import roll_generations
 
 SCHEMA_VERSION = 1
 
@@ -58,10 +59,12 @@ class JsonlEventLog:
         directory: Path,
         *,
         max_bytes: int = 16 * 1024 * 1024,
+        backup_count: int = 20,
         encoding: str = "utf-8",
     ) -> None:
         self.directory = directory
         self.max_bytes = max(0, max_bytes)
+        self.backup_count = max(1, backup_count)
         self.encoding = encoding
         self._date = ""
         self._stream: TextIO | None = None
@@ -87,15 +90,17 @@ class JsonlEventLog:
             self._date = today
         elif self.max_bytes and self._written >= self.max_bytes:
             self._close_stream()
+            # ``.1`` sorts before the live file and stays uncompressed, so
+            # readers taking the newest lines walk the current file first and
+            # fall back to it. Older generations are gzipped and no longer
+            # match the ``events-*.jsonl`` glob those readers use.
+            roll_generations(
+                self.directory,
+                f"events-{self._date}",
+                ".jsonl",
+                self.backup_count,
+            )
             path = self.directory / f"events-{self._date}.jsonl"
-            # Sorts before the live file, so readers taking the newest lines
-            # walk the current file first and fall back to this one.
-            previous = self.directory / f"events-{self._date}.1.jsonl"
-            try:
-                previous.unlink(missing_ok=True)
-                path.replace(previous)
-            except OSError:
-                pass
             self._stream = path.open("w", encoding=self.encoding, buffering=1)
             self._written = 0
         assert self._stream is not None

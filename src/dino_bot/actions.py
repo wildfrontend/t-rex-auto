@@ -9,15 +9,25 @@ import subprocess
 import sys
 import time
 from collections.abc import Sequence
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import adb_discovery
 from .config import AdbConfig
 from .models import ActionCommand, ActionKind, Frame
 
 
 class AdbError(RuntimeError):
     pass
+
+
+class _AdbTimeout(AdbError):
+    """An ADB invocation that exceeded its timeout.
+
+    Internal to `AdbClient`: `run` either recovers from it or re-raises it as a
+    plain `AdbError`, so callers never need to know this subclass exists.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,21 +98,125 @@ class AdbClient:
         binary: bool = False,
         check: bool = True,
     ) -> bytes | str:
+        recoverable = (
+            use_serial
+            and bool(self.config.serial)
+            and bool(args)
+            and args[0] in {"shell", "exec-out"}
+        )
+        reconnect_attempted = False
         try:
-            completed = subprocess.run(
+            completed = self._invoke(args, use_serial=use_serial)
+        except _AdbTimeout as exc:
+            # Same bounded recovery as a closed transport: one reconnect, one
+            # retry.  A second timeout is genuine and propagates as AdbError.
+            if not recoverable:
+                raise AdbError(str(exc)) from exc
+            reconnect_attempted = True
+            self._recover_closed_transport()
+            try:
+                completed = self._invoke(args, use_serial=use_serial)
+            except _AdbTimeout as retry_exc:
+                raise AdbError(
+                    f"{retry_exc} (ADB reconnect was attempted once; restart the"
+                    " emulator if it remains unresponsive)"
+                ) from retry_exc
+
+        if (
+            check
+            and completed.returncode != 0
+            and recoverable
+            and not reconnect_attempted
+            and self._is_closed_transport(completed)
+        ):
+            # Some emulator ADB daemons remain listed as `device` while their
+            # shell transport has already been closed.  The next tap used to
+            # crash the Bot immediately in that state.  ADB's own `reconnect`
+            # command closes the selected host-side transport and forces a new
+            # connection; keep this recovery strictly bounded to one attempt.
+            reconnect_attempted = True
+            self._recover_closed_transport()
+            try:
+                completed = self._invoke(args, use_serial=use_serial)
+            except _AdbTimeout as exc:
+                raise AdbError(str(exc)) from exc
+
+        if check and completed.returncode != 0:
+            message = self._error_message(completed)
+            if reconnect_attempted:
+                message += (
+                    " (ADB reconnect was attempted once; restart the emulator"
+                    " if its shell remains closed)"
+                )
+            raise AdbError(f"ADB exited with {completed.returncode}: {message}")
+        if binary:
+            return completed.stdout
+        return completed.stdout.decode("utf-8", errors="replace").strip()
+
+    def _invoke(
+        self,
+        args: Sequence[str],
+        *,
+        use_serial: bool,
+    ) -> subprocess.CompletedProcess[bytes]:
+        try:
+            return subprocess.run(
                 self._command(args, use_serial),
                 capture_output=True,
                 timeout=self.config.timeout,
                 check=False,
             )
-        except (OSError, subprocess.TimeoutExpired) as exc:
+        except subprocess.TimeoutExpired as exc:
+            # A timed-out screencap looks identical to a wedged transport from
+            # here, and MuMu produces both.  Report it as a synthetic failure so
+            # `run` can route it through the same bounded reconnect recovery
+            # that already handles `error: closed`, instead of killing the run.
+            raise _AdbTimeout(f"ADB command failed to start: {exc}") from exc
+        except OSError as exc:
             raise AdbError(f"ADB command failed to start: {exc}") from exc
-        if check and completed.returncode != 0:
-            message = completed.stderr.decode("utf-8", errors="replace").strip()
-            raise AdbError(f"ADB exited with {completed.returncode}: {message}")
-        if binary:
-            return completed.stdout
-        return completed.stdout.decode("utf-8", errors="replace").strip()
+
+    @staticmethod
+    def _error_message(completed: subprocess.CompletedProcess[bytes]) -> str:
+        stderr = completed.stderr.decode("utf-8", errors="replace").strip()
+        stdout = completed.stdout.decode("utf-8", errors="replace").strip()
+        return stderr or stdout or "unknown ADB error"
+
+    # Transport states that one `reconnect` can clear.  `error: closed` is a
+    # shell transport the daemon has already dropped; `error: device offline`
+    # is the emulator still being listed while its connection is gone - the
+    # BlueStacks instance had been up for 3.5 hours when S9 hit it at 14:58
+    # on 2026-08-31 and the run died with 4970 actions completed.  Both are
+    # recovered the same way, and both are fatal without it.
+    _RECOVERABLE_TRANSPORT_ERRORS: frozenset[str] = frozenset(
+        {"error: closed", "error: device offline"}
+    )
+
+    def _is_closed_transport(
+        self,
+        completed: subprocess.CompletedProcess[bytes],
+    ) -> bool:
+        message = self._error_message(completed).lower()
+        return message in self._RECOVERABLE_TRANSPORT_ERRORS or (
+            bool(self.config.serial)
+            and message == f"error: device '{self.config.serial}' not found".lower()
+        )
+
+    def _recover_closed_transport(self) -> None:
+        # Ignore the recovery command's own exit code *and* its timeouts: the
+        # original command is retried exactly once and remains the
+        # authoritative result.  A hung `reconnect` must not mask that retry.
+        self._invoke_quietly(["reconnect"], use_serial=True)
+        time.sleep(0.5)
+        if self.config.serial:
+            self._invoke_quietly(
+                ["connect", self.config.serial],
+                use_serial=False,
+            )
+            time.sleep(0.5)
+
+    def _invoke_quietly(self, args: Sequence[str], *, use_serial: bool) -> None:
+        with suppress(AdbError):
+            self._invoke(args, use_serial=use_serial)
 
     def connect(self) -> str:
         if not self.config.serial:
@@ -126,6 +240,19 @@ class AdbClient:
             )
         return devices
 
+    def discover(self) -> list[adb_discovery.DiscoveredDevice]:
+        """Probe the known emulator ports and report every reachable device."""
+
+        ports = (
+            tuple((port, "") for port in self.config.discovery_ports)
+            if self.config.discovery_ports
+            else None
+        )
+        return adb_discovery.discover(
+            lambda args: str(self.run(args, use_serial=False)),
+            ports=ports,
+        )
+
     def ensure_ready(self) -> DeviceInfo:
         if self.config.connect_on_start and self.config.serial:
             self.connect()
@@ -133,13 +260,54 @@ class AdbClient:
         ready = [item for item in devices if item.state == "device"]
         if self.config.serial:
             ready = [item for item in ready if item.serial == self.config.serial]
-        if not ready:
-            wanted = self.config.serial or "any device"
-            raise AdbError(
-                f"No ready ADB device for {wanted}. "
-                "Enable ADB in the emulator and verify its configured port."
+        if ready:
+            return ready[0]
+
+        # Nothing matched. A configured serial that is simply wrong looks
+        # exactly like a closed emulator from here, so scan before failing:
+        # either the answer is one probe away, or the error can finally name
+        # what *is* connected instead of only what was asked for.
+        if not self.config.auto_discover:
+            raise AdbError(self._not_ready_message(()))
+        found = [device for device in self.discover() if device.ready]
+        chosen: adb_discovery.DiscoveredDevice | None = None
+        if self.config.serial:
+            # The configured port can be right while adb simply had not
+            # connected to it yet; the scan does that as a side effect.
+            chosen = next(
+                (device for device in found if device.serial == self.config.serial),
+                None,
             )
-        return ready[0]
+        elif len(found) == 1:
+            chosen = found[0]
+        if chosen is None:
+            raise AdbError(self._not_ready_message(found))
+        return DeviceInfo(chosen.serial, chosen.state, chosen.description)
+
+    def _not_ready_message(
+        self,
+        found: Sequence[adb_discovery.DiscoveredDevice],
+    ) -> str:
+        wanted = self.config.serial or "any device"
+        lines = [f"No ready ADB device for {wanted}."]
+        if found:
+            lines.append(f"Reachable now: {adb_discovery.describe(found)}.")
+            if self.config.serial:
+                lines.append(
+                    "Set adb.serial to one of those, or clear it to use the only"
+                    " one found. `dino-bot adb --auto` writes it for you."
+                )
+            else:
+                lines.append(
+                    "More than one device answered; set adb.serial to the one you"
+                    " want. `dino-bot adb` lists them."
+                )
+        else:
+            lines.append(
+                "No emulator answered on the known ADB ports. Start the emulator,"
+                " enable ADB in its settings, then run `dino-bot adb`."
+            )
+        return " ".join(lines)
 
     def display_size(self) -> tuple[int, int]:
         output = str(self.run(["shell", "wm", "size"]))
@@ -151,6 +319,11 @@ class AdbClient:
 
     def screencap_png(self) -> bytes:
         return bytes(self.run(["exec-out", "screencap", "-p"], binary=True))
+
+    def screencap_raw(self) -> bytes:
+        """Uncompressed framebuffer dump; skips the device-side PNG encoder."""
+
+        return bytes(self.run(["exec-out", "screencap"], binary=True))
 
 
 class AdbActionDriver:
