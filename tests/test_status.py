@@ -227,3 +227,35 @@ def test_client_disconnect_does_not_raise_or_kill_the_server(
     captured = capsys.readouterr()
     assert "Traceback" not in captured.err
     assert "ConnectionAborted" not in captured.err
+
+
+def test_status_api_reports_running_after_the_log_rolled_past_bot_started(
+    tmp_path: Path,
+) -> None:
+    # A long run rolls its log; the two newest files no longer hold
+    # "Bot started", yet the bot answering this request is plainly running.
+    write_log(
+        tmp_path,
+        """
+10:00:00 | INFO | Planning | dinosaur at (400,600) confidence=0.900
+10:00:00 | INFO | Action | tap (400,600) | attempt=1
+""",
+    )
+
+    assert build_runtime_status(tmp_path)["running"] is False
+    with LocalStatusServer(tmp_path, port=0) as server, urlopen(  # noqa: S310
+        f"{server.url}/status", timeout=2
+    ) as response:
+        status = json.load(response)
+
+    assert status["running"] is True
+    assert status["current_stage"] != "stopped"
+    assert status["session_started"] is None
+
+
+def test_serving_process_still_reports_a_logged_stop(tmp_path: Path) -> None:
+    write_log(tmp_path, sample_log() + "19:02:00 | INFO | Bot stopped | actions=3 | cycles=1\n")
+
+    status = build_runtime_status(tmp_path, serving_process=True)
+
+    assert status["running"] is False

@@ -192,7 +192,16 @@ def process_exists(pid: int) -> bool:
         return False
     except PermissionError:
         return True
-    return True
+    # A bot the dashboard launched stays a zombie until the dashboard reaps
+    # it; it has stopped, and treating it as alive reported every clean stop
+    # as stop_timeout.
+    completed = subprocess.run(
+        ["ps", "-o", "stat=", "-p", str(pid)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return not completed.stdout.strip().startswith("Z")
 
 
 def wait_for_process_exit(pid: int, timeout_seconds: float = 20) -> bool:

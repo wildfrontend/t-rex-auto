@@ -1145,3 +1145,68 @@ def test_dashboard_preserves_capacity_retry_status_during_hunt(tmp_path: Path):
     state = _workflow_status(tmp_path, 'custom-workflow')
     assert state['stage'] == 'capacity_retry_hunt'
     assert state['label'] == '人口讀取失敗，狩獵後重試'
+
+
+@pytest.mark.skipif(os.name == "nt", reason="zombies are a POSIX state")
+def test_an_unreaped_exited_bot_does_not_count_as_running() -> None:
+    import subprocess
+    import time
+
+    child = subprocess.Popen([sys.executable, "-c", "pass"])
+    try:
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and not dashboard_module._is_zombie(child.pid):
+            time.sleep(0.05)
+        assert dashboard_module._is_zombie(child.pid)
+        assert dashboard_module._process_exists(child.pid) is False
+    finally:
+        child.wait()
+
+
+def test_monitor_reaps_the_launched_bot_once_the_start_check_ends(
+    tmp_path, monkeypatch
+):
+    import threading
+
+    controller = DashboardController(tmp_path, tmp_path / "logs")
+    instance = controller.instances[0]
+    reaped = threading.Event()
+    process = SimpleNamespace(pid=4321, wait=reaped.set)
+    monkeypatch.setattr(controller, "_wait_for_ready", lambda *args, **kwargs: None)
+
+    controller._monitor_started(instance, "hunt", None, "start", process)
+
+    assert reaped.wait(timeout=2)
+
+
+def test_posix_launch_starts_a_fresh_warning_only_launch_log(tmp_path, monkeypatch):
+    controller = DashboardController(tmp_path, tmp_path / "logs")
+    instance = controller.instances[0]
+    instance.logs_dir.mkdir(parents=True)
+    launch_log = instance.logs_dir / "dashboard-launch-hunt.log"
+    launch_log.write_text("previous run output\n", encoding="utf-8")
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(dashboard_module.os, "name", "posix")
+    monkeypatch.setattr(
+        dashboard_module.subprocess,
+        "Popen",
+        lambda command, **kwargs: captured.update(kwargs) or SimpleNamespace(pid=1),
+    )
+
+    controller._launch("hunt", instance_id=instance.instance_id)
+
+    assert launch_log.read_text(encoding="utf-8") == ""
+    assert captured["env"][dashboard_module.CONSOLE_LEVEL_ENV] == "WARNING"
+
+
+def test_launch_log_tail_reads_only_the_end_of_a_huge_file(tmp_path):
+    controller = DashboardController(tmp_path, tmp_path / "logs")
+    instance = controller.instances[0]
+    instance.logs_dir.mkdir(parents=True)
+    launch_log = instance.logs_dir / "dashboard-launch-hunt.log"
+    filler = "x" * 1000 + "\n"
+    launch_log.write_text(filler * 200 + "Traceback: boom\n", encoding="utf-8")
+
+    tail = controller._launch_log_tail(instance, "hunt", lines=2)
+
+    assert tail.endswith("Traceback: boom")

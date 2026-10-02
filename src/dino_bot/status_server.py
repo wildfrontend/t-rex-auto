@@ -84,7 +84,7 @@ class _StatusHandler(BaseHTTPRequestHandler):
             payload.update(self.server.metadata)
             self._send_json(200, payload)
             return
-        status = build_runtime_status(self.server.logs_dir)
+        status = build_runtime_status(self.server.logs_dir, serving_process=True)
         if path == "/status":
             if self.server.workflow_provider is not None:
                 status["workflow"] = self.server.workflow_provider()

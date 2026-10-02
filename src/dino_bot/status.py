@@ -222,8 +222,19 @@ def _stage_from_message(message: str, running: bool) -> str:
     return "active"
 
 
-def build_runtime_status(logs_dir: Path, recent_action_limit: int = 10) -> dict[str, Any]:
-    """Return statistics for the most recent Bot session."""
+def build_runtime_status(
+    logs_dir: Path,
+    recent_action_limit: int = 10,
+    *,
+    serving_process: bool = False,
+) -> dict[str, Any]:
+    """Return statistics for the most recent Bot session.
+
+    ``serving_process`` is set by the status API, which runs inside the bot it
+    reports on.  Only the two newest log files are read, so a run that rolled
+    its log twice no longer has ``Bot started`` in view; the live process is
+    the proof it is running, not that line.
+    """
 
     all_entries = _read_recent_entries(logs_dir)
     window = summarize_log_window(all_entries)
@@ -317,13 +328,14 @@ def build_runtime_status(logs_dir: Path, recent_action_limit: int = 10) -> dict[
             game_restart_failures += 1
 
     stopped = any(entry["message"].startswith("Bot stopped |") for entry in entries)
-    running = entries[0]["message"].startswith("Bot started |") and not stopped
+    started = entries[0]["message"].startswith("Bot started |")
+    running = (started or serving_process) and not stopped
     last_entry = entries[-1]
     limit = max(0, recent_action_limit)
     return {
         "running": running,
         "current_stage": _stage_from_message(last_entry["message"], running),
-        "session_started": entries[0]["timestamp"] if running or stopped else None,
+        "session_started": entries[0]["timestamp"] if started else None,
         "last_log_time": last_entry["timestamp"],
         "last_successful_hunt": last_successful_hunt,
         "successful_hunts": successful_hunts,

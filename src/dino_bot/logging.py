@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import TextIO
 
 from .rotation import roll_generations
+
+# Console threshold for a bot whose console is a file nobody watches (the
+# dashboard's launch log); the daily log keeps every level regardless.
+CONSOLE_LEVEL_ENV = "DINO_BOT_CONSOLE_LOG_LEVEL"
 
 
 class DailyFileHandler(logging.Handler):
@@ -99,5 +104,8 @@ def configure_logging(
 
     console_handler = logging.StreamHandler()
     console_handler.setFormatter(formatter)
+    console_level = os.environ.get(CONSOLE_LEVEL_ENV, "").strip().upper()
+    if isinstance(logging.getLevelName(console_level), int):
+        console_handler.setLevel(console_level)
     logger.addHandler(console_handler)
     return logger

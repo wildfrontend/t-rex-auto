@@ -26,6 +26,7 @@ from urllib.request import Request, urlopen
 from .config import CUSTOM_WORKFLOW_STAGE_ORDER
 from .hatch_inventory import HatchBoostInventoryStore
 from .http_security import is_loopback_origin
+from .logging import CONSOLE_LEVEL_ENV
 from .metrics import MetricsStore
 
 DASHBOARD_VERSION = 1
@@ -41,6 +42,7 @@ SUPPORTED_BOT_MODES = frozenset(
 MODE_SWITCH_PROCESS_WAIT_SECONDS = 20
 MIN_STOP_TIMER_SECONDS = 60
 MAX_STOP_TIMER_SECONDS = 7 * 24 * 60 * 60
+LAUNCH_LOG_TAIL_BYTES = 64 * 1024
 HATCH_TUNING_FIELDS = (
     "capacity_limit",
     "cull_threshold",
@@ -175,7 +177,45 @@ def _process_exists(process_id: int | None) -> bool:
         return False
     except (PermissionError, OSError):
         return True
-    return True
+    return not _is_zombie(process_id)
+
+
+def _is_zombie(process_id: int) -> bool:
+    """An exited child its parent has not reaped still answers ``kill(pid, 0)``.
+
+    Counting it as alive made every stop wait out its full timeout and every
+    switch or restart refuse to start over a bot that had already stopped.
+    """
+
+    if os.name == "nt":
+        return False
+    try:
+        completed = subprocess.run(
+            ["ps", "-o", "stat=", "-p", str(process_id)],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return completed.stdout.strip().startswith("Z")
+
+
+def _reap_when_done(process: subprocess.Popen[Any] | None) -> None:
+    """Collect a launched bot's exit status so it does not linger as a zombie.
+
+    Started only once the start check is over: ``Popen.poll`` reports nothing
+    while another thread is blocked in ``wait`` on the same process.
+    """
+
+    if process is None:
+        return
+    threading.Thread(
+        target=process.wait,
+        name=f"reap-bot-{process.pid}",
+        daemon=True,
+    ).start()
 
 
 def _windows_port_owner(port: int) -> dict[str, Any] | None:
@@ -1018,9 +1058,15 @@ class DashboardController:
             return f"Windows runner：{failure['message']}"
         path = instance.logs_dir / f"dashboard-launch-{mode}.log"
         try:
-            entries = path.read_text(encoding="utf-8", errors="replace").splitlines()
+            # Only the end matters; a launch log left by an older dashboard
+            # can be a gigabyte.
+            with path.open("rb") as stream:
+                stream.seek(0, os.SEEK_END)
+                stream.seek(max(0, stream.tell() - LAUNCH_LOG_TAIL_BYTES))
+                data = stream.read()
         except OSError:
             return "啟動 log 不存在或無法讀取"
+        entries = data.decode("utf-8", errors="replace").splitlines()
         tail = [entry.strip() for entry in entries[-lines:] if entry.strip()]
         return " | ".join(tail) if tail else "啟動 log 沒有內容"
 
@@ -1135,6 +1181,8 @@ class DashboardController:
                 message=str(exc),
             )
             return
+        finally:
+            _reap_when_done(launcher_process)
         self._set_operation(
             instance,
             action=action,
@@ -1506,13 +1554,19 @@ class DashboardController:
                 )
             instance.logs_dir.mkdir(parents=True, exist_ok=True)
             launch_log = instance.logs_dir / f"dashboard-launch-{mode}.log"
-            with launch_log.open("ab") as stream:
+            # The daily log already holds every line.  Appending the full
+            # console here duplicated it without a cap - 1 GB per instance in
+            # two weeks.  This file only has to explain a failed start, so it
+            # starts fresh each launch and the console carries warnings up.
+            env = {**os.environ, CONSOLE_LEVEL_ENV: "WARNING"}
+            with launch_log.open("wb") as stream:
                 return subprocess.Popen(  # noqa: S603 - fixed local entrypoint and allowlist
                     self._bot_command(mode, stage=stage, instance_id=instance.instance_id),
                     cwd=instance.root,
                     stdout=stream,
                     stderr=subprocess.STDOUT,
                     start_new_session=True,
+                    env=env,
                 )
         except OSError as exc:
             raise RuntimeError(

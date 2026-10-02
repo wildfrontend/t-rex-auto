@@ -4320,3 +4320,22 @@ def test_actions_that_stop_verifying_are_still_rescued() -> None:
             break
 
     assert fired, "a bot that cannot act any more must still be rescued"
+
+
+def test_console_level_env_quiets_only_the_console(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dino_bot.logging import CONSOLE_LEVEL_ENV, DailyFileHandler, configure_logging
+
+    monkeypatch.setenv(CONSOLE_LEVEL_ENV, "warning")
+    logger = configure_logging(tmp_path, verbose=True)
+    try:
+        levels = {type(handler): handler.level for handler in logger.handlers}
+        assert levels[logging.StreamHandler] == logging.WARNING
+        assert levels[DailyFileHandler] == logging.NOTSET
+    finally:
+        for handler in list(logger.handlers):
+            handler.close()
+            logger.removeHandler(handler)
+        logger.propagate = True
+        logger.setLevel(logging.NOTSET)
