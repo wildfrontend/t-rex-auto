@@ -1878,10 +1878,17 @@ class HatchHomeRecoveryPlanner:
 
         if not is_home_screen(frame, detections):
             return None
-        if CAVE in by_type:
+        if CAVE in by_type and not (
+            self._recenter_swipes >= len(vectors)
+            and home_pile_offset(frame) is not None
+        ):
             # The cave view is a calibrated displacement, so replaying the
             # inverse route is exact.  A measured nudge is not available here:
             # the egg pile is outside the viewport at the cave position.
+            # Once those legs are spent, a cave that is merely still in view
+            # beside a measurable pile is the home map seen from slightly too
+            # low (S16 18:21: offset (-13,176), cave bottom-left): fall through
+            # to the measured nudge instead of stalling on this error.
             if self._recenter_swipes >= len(vectors):
                 self.logger.error(
                     "Hatch recovery | cave view remains after %d safe return swipes",

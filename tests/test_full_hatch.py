@@ -13,6 +13,7 @@ from dino_bot.cull import CAPACITY_REGION, CapacityRead, should_cull
 from dino_bot.detection import OpenCvDetector
 from dino_bot.digits import DigitReader
 from dino_bot.full_hatch import (
+    _group,
     read_boost_remaining_seconds,
     FOREST_RECENTER,
     SHOP_CLOSE,
@@ -4561,3 +4562,28 @@ def test_live_boost_bar_timer_is_read_on_both_layouts() -> None:
     assert read_boost_remaining_seconds(
         frame(_v3_fixture("incubator-v3-permanent-bar-boost-ready.jpg")), reader
     ) is None
+
+
+def test_spent_cave_legs_fall_back_to_a_measured_nudge() -> None:
+    # S16 2026-10-07 18:21: back on the home map but 176px low, the cave stayed
+    # in view bottom-left. Recovery kept treating that as the cave view, had
+    # no calibrated legs left, and logged the same error every frame.
+    recovery = HatchHomeRecoveryPlanner(reference_width=900.0)
+    image = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    image[1100:1500] = cv2.imread(
+        str(FIXTURES / "s16-home-low-with-cave-in-view-y1100.jpg")
+    )
+    home = frame(image)
+    detections = [
+        detection(hatch.HOME_ANCHOR, 49, 562),
+        detection(FOREST_RECENTER, 841, 1296),
+        detection(CAVE, 98, 1282),
+    ]
+    vectors = ((450, 1050, 450, 600), (350, 800, 600, 800))
+    recovery._recenter_swipes = len(vectors)
+    assert home_pile_offset(home) is not None
+
+    target = recovery._recenter_target(home, detections, _group(detections), vectors)
+
+    assert target is not None and target.type == RECOVERY_RECENTER
+    assert recovery._last_offset is not None  # a measured nudge, not a cave leg
