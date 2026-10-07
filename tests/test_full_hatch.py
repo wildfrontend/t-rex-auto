@@ -13,6 +13,8 @@ from dino_bot.cull import CAPACITY_REGION, CapacityRead, should_cull
 from dino_bot.detection import OpenCvDetector
 from dino_bot.digits import DigitReader
 from dino_bot.full_hatch import (
+    _pile_behind_hud_row,
+    _pile_tap_point,
     NEST_SET_TITLE,
     _group,
     read_boost_remaining_seconds,
@@ -4621,3 +4623,21 @@ def test_recovery_closes_the_nest_set_tab_through_the_mask() -> None:
     target = recovery.choose(frame(image), detections)
 
     assert target is not None and target.type == RECOVERY_MASK_CLOSE
+
+
+def test_pile_hidden_behind_hud_row_still_has_a_tap_point() -> None:
+    # S16 2026-10-07 19:03: the dedicated boost visit reached the centred
+    # home, found no measurable pile to open the incubator from, and timed out.
+    home = _hud_home("s16-home-centred-behind-two-hud-buttons-y1100.jpg")
+
+    assert _pile_behind_hud_row(home)
+    point = _pile_tap_point(home)
+    assert point is not None
+    assert point[0] == 450 and 1250 <= point[1] < 1357  # on the eggs, above the row
+
+
+def test_measurable_pile_keeps_its_measured_tap_point() -> None:
+    home = _hud_home("s16-home-hatch-all-22-y1100.jpg")  # pile 149px high
+
+    assert not _pile_behind_hud_row(home)
+    assert _pile_tap_point(home) == _egg_pile_safe_tap(home)

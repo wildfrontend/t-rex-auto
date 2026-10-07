@@ -1258,6 +1258,36 @@ def _egg_pile_safe_tap(frame: Frame) -> tuple[int, int] | None:
     return hatch_feature.clear_of_pile_button(frame, (x, y))
 
 
+def _pile_behind_hud_row(frame: Frame) -> bool:
+    """Whether the pile is hidden behind the bottom HUD row (map centred)."""
+
+    return (
+        hatch_feature.pile_action_button(frame) is not None
+        and home_pile_offset(frame) is None
+    )
+
+
+def _pile_tap_point(frame: Frame) -> tuple[int, int] | None:
+    """Tap point on the pile, including one hidden behind the HUD row.
+
+    A centred pile sits behind the row with only its eggs showing above it;
+    with nothing measurable the eggs right above the row are the target.
+    The S16 boost visit at 19:03 had no point at all here and timed out.
+    """
+
+    point = _egg_pile_safe_tap(frame)
+    if point is not None:
+        return point
+    row = hatch_feature.pile_action_button(frame)
+    if row is None or home_pile_offset(frame) is not None:
+        return None
+    scale = frame.width / 900.0
+    return (
+        round(HOME_PILE_BASE[0] * scale),
+        round(row[1] - hatch_feature.PILE_BUTTON_TAP_ABOVE_PX * scale),
+    )
+
+
 def _unready_egg_detail_close(frame: Frame) -> tuple[int, int] | None:
     """Locate the alternate red X shown on an unready egg detail page."""
 
@@ -4171,8 +4201,12 @@ class FullHatchPlanner:
             boost_button = _hatch_boost_button(frame, detections)
             target = visit.choose(
                 frame, detections,
-                home_centered=is_centered_home_screen(frame, detections),
-                home_point=_egg_pile_safe_tap(frame),
+                home_centered=is_centered_home_screen(frame, detections)
+                or (
+                    is_home_screen(frame, detections)
+                    and _pile_behind_hud_row(frame)
+                ),
+                home_point=_pile_tap_point(frame),
                 button_ready=boost_button is not None,
                 button_point=boost_button or (0, 0),
             )
@@ -4593,6 +4627,7 @@ class FullHatchPlanner:
                 if (
                     hatch_feature.HOME_HATCH_ALL_BUTTON in by_type
                     and not self._home_is_actionable(frame, detections)
+                    and not _pile_behind_hud_row(frame)
                 ):
                     # The centring gate was skipped for the HUD button, but the
                     # batch did not fit, so this pile tap still needs it.
@@ -4603,7 +4638,7 @@ class FullHatchPlanner:
                         "before first incubator access"
                     )
                     return self._choose_current(frame, detections)
-                safe_point = _egg_pile_safe_tap(frame)
+                safe_point = _pile_tap_point(frame)
                 if safe_point is not None:
                     return synthetic_target(hatch_feature.EGG_PILE, *safe_point)
                 # The child retains its fixed point for the lightweight hatch
