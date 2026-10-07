@@ -470,11 +470,42 @@ def test_home_pile_tap_avoids_the_pile_action_button() -> None:
 
     button = hatch.pile_action_button(home)
     assert button is not None
-    center_x, top = button
-    assert abs(center_x - 450) <= 3 and abs(top - 1360) <= 3
+    x0, top, x1, _ = button
+    assert abs((x0 + x1) / 2 - 450) <= 3 and abs(top - 1360) <= 3
 
     point = hatch.home_pile_tap_point(home, egg_pile_point=(450.0, 1330.0))
     assert point is not None
     assert point[1] <= top - 60
     # A tap that already lands on the eggs is left alone.
     assert hatch.clear_of_pile_button(home, (450, 1230)) == (450, 1230)
+
+
+def _home_with_hud(name: str) -> np.ndarray:
+    image = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    image[1100:1500] = _fixture(name)
+    return image
+
+
+def test_home_hud_hatch_all_is_tapped_instead_of_the_pile() -> None:
+    # S16 2026-10-07: the fixed HUD button opens the incubator straight into
+    # the 孵化結果 panel (22 eggs), with no map centring or pile lookup.
+    image = _home_with_hud("s16-home-hatch-all-22-y1100.jpg")
+    detections = _manifest_detections(image) + [detection(hatch.HOME_ANCHOR)]
+    planner, _ = make_planner(reader=DigitReader(GLYPHS))
+
+    assert hatch.read_home_hatch_all_count(image, DigitReader(GLYPHS)) == 22
+    target = planner.choose(Frame(image), detections)
+
+    assert target is not None and target.type == hatch.HOME_HATCH_ALL_BUTTON
+    assert abs(target.x - 450) <= 10 and 1400 <= target.y <= 1435
+
+
+def test_home_hud_batch_over_headroom_opens_the_incubator_instead() -> None:
+    image = _home_with_hud("s16-home-hatch-all-22-y1100.jpg")
+    detections = _manifest_detections(image) + [detection(hatch.HOME_ANCHOR)]
+    planner, _ = make_planner(reader=DigitReader(GLYPHS))
+    planner.hatch_all_headroom = 21
+
+    target = planner.choose(Frame(image), detections)
+
+    assert target is not None and target.type == hatch.EGG_PILE

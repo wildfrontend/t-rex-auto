@@ -39,6 +39,11 @@ SCROLL = "hatch_scroll"
 HATCH_ALL_BUTTON = "hatch_all_button"
 RESULT_TITLE = "hatch_result_title"
 CLAIM_ALL_BUTTON = "hatch_claim_all_button"
+# The fixed bottom-centre home HUD button (全部孵化 + ready-egg count). It
+# opens the incubator straight into the same 孵化結果 panel, so hatching no
+# longer depends on centring the map and finding the pile. Matched by its
+# 全部孵化 text, so the green 自動放置 control can never be mistaken for it.
+HOME_HATCH_ALL_BUTTON = "hatch_home_hatch_all_button"
 
 DEFAULT_TARGET_ACTIONS: dict[str, str] = {
     EGG_PILE: "tap",
@@ -50,6 +55,7 @@ DEFAULT_TARGET_ACTIONS: dict[str, str] = {
     SCROLL: "swipe",
     HATCH_ALL_BUTTON: "tap",
     CLAIM_ALL_BUTTON: "tap",
+    HOME_HATCH_ALL_BUTTON: "tap",
 }
 
 # Post-action delays double as verification timeouts. The hatch button plays a
@@ -65,6 +71,7 @@ DEFAULT_POST_ACTION_DELAYS_MS: dict[str, int] = {
     # The cracking-egg animation takes about 1.5s before the result panel.
     HATCH_ALL_BUTTON: 8000,
     CLAIM_ALL_BUTTON: 4000,
+    HOME_HATCH_ALL_BUTTON: 8000,
 }
 
 # What must be visible after each tap for it to count as done. Claiming may
@@ -76,6 +83,7 @@ DEFAULT_SUCCESS_TRANSITIONS: dict[str, tuple[str, ...]] = {
     CLAIM_BUTTON: (HATCH_BUTTON, INCUBATOR_TITLE, HATCH_LABEL, CLAIM_BUTTON),
     CLOSE_BUTTON: (HOME_ANCHOR,),
     HATCH_ALL_BUTTON: (CLAIM_ALL_BUTTON, RESULT_TITLE),
+    HOME_HATCH_ALL_BUTTON: (CLAIM_ALL_BUTTON, RESULT_TITLE),
     CLAIM_ALL_BUTTON: (INCUBATOR_TITLE,),
 }
 
@@ -203,6 +211,57 @@ def read_incubator_egg_count(
         return None
     count, total = int(eggs), int(slots)
     return count if 0 <= count <= total else None
+
+
+# White ready-egg count on the HUD button's dark-blue badge (S16: "22"),
+# relative to the matched 全部孵化 text: the button moves right when the green
+# 自動放置 button is shown beside it.
+HOME_HATCH_ALL_COUNT_OFFSET = (-10.0, -50.0, 50.0, -18.0)
+HOME_HATCH_ALL_TEXT_CENTER = (450.0, 1418.0)
+
+
+def read_home_hatch_all_count(
+    image: Image,
+    reader: DigitReader,
+    *,
+    reference_width: float = 900.0,
+    text_center: tuple[float, float] | None = None,
+) -> int | None:
+    """Read the ready-egg count on the home 全部孵化 button, or ``None``.
+
+    ``text_center`` is the matched 全部孵化 text in frame pixels; it defaults
+    to the button's centred position.
+    """
+
+    if image.ndim < 3 or image.shape[1] <= 0 or reference_width <= 0:
+        return None
+    scale = image.shape[1] / reference_width
+    cx, cy = (
+        text_center
+        if text_center is not None
+        else (
+            HOME_HATCH_ALL_TEXT_CENTER[0] * scale,
+            HOME_HATCH_ALL_TEXT_CENTER[1] * scale,
+        )
+    )
+    dx0, dy0, dx1, dy1 = HOME_HATCH_ALL_COUNT_OFFSET
+    x0, y0, x1, y1 = (
+        round(cx + dx0 * scale),
+        round(cy + dy0 * scale),
+        round(cx + dx1 * scale),
+        round(cy + dy1 * scale),
+    )
+    crop = image[y0:y1, x0:x1]
+    if crop.size == 0:
+        return None
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+    # The reader expects dark glyphs on a light ground.
+    glyphs = np.where(gray > 200, 0, 255).astype(np.uint8)
+    text = reader.read(cv2.cvtColor(glyphs, cv2.COLOR_GRAY2BGR)).replace("?", "")
+    if not text.isdigit() or len(text) > 3:
+        return None
+    count = int(text)
+    return count if count > 0 else None
 
 
 def read_hatch_result_count(
@@ -369,11 +428,13 @@ def has_home_pile_structure(
     )
 
 
-# The home pile now carries a contextual button over its lower half: teal
-# 全部孵化 while eggs are ready, green 自動放置 otherwise. Both sit exactly where
-# the base-minus-offset tap used to land; on 2026-10-06 S9 opened the auto-place
-# confirmation three times in a row and fused hatching off. Live 900x1600 frame:
-# a 164x77 component at (368,1360), 62% filled.
+# The home HUD now has a fixed bottom-centre button: teal 全部孵化 while eggs are
+# ready, green 自動放置 otherwise. It is not attached to the pile - it only
+# covers the pile when the map is centred, exactly where the base-minus-offset
+# tap lands (2026-10-06: S9 opened the auto-place confirmation three times and
+# fused hatching off). Its dark-blue egg-count badge also passed the blue-stone
+# pile locator on S16, which then reported a centred pile that was really at
+# x~240. Live 900x1600 frames: a 164x77 component at (368,1360), 62% filled.
 PILE_BUTTON_HSV_LOWER = (35, 60, 120)
 PILE_BUTTON_HSV_UPPER = (105, 255, 255)
 PILE_BUTTON_WIDTH_RANGE = (130.0, 200.0)
@@ -385,12 +446,20 @@ PILE_BUTTON_MAX_X_OFFSET = 180.0
 PILE_BUTTON_TAP_ABOVE_PX = 70.0
 
 
+PILE_BUTTON_MASK_MARGIN_PX = 10.0
+
+
 def pile_action_button(
     frame: Frame,
     *,
     reference_width: float = 900.0,
-) -> tuple[float, float] | None:
-    """Return the home pile button's (centre x, top y), or ``None``."""
+) -> tuple[int, int, int, int] | None:
+    """Return the bottom HUD button row's ``(x0, y0, x1, y1)``, or ``None``.
+
+    The row can hold teal 全部孵化 alone (centred) or green 自動放置 beside it
+    (S16 2026-10-07 16:44: 258-434 and 470-637). A centred pile hides behind
+    the whole row, so every caller works with the union of the buttons.
+    """
 
     if frame.image.size == 0 or frame.width <= 0 or reference_width <= 0:
         return None
@@ -411,11 +480,39 @@ def pile_action_button(
             and y >= PILE_BUTTON_MIN_Y * scale
             and abs(center_x - frame.width / 2.0) <= PILE_BUTTON_MAX_X_OFFSET * scale
         ):
-            candidates.append((area, center_x, float(y)))
+            candidates.append((area, x, y, x + width, y + height))
     if not candidates:
         return None
-    _, center_x, top = max(candidates)
-    return center_x, top
+    return (
+        min(item[1] for item in candidates),
+        min(item[2] for item in candidates),
+        max(item[3] for item in candidates),
+        max(item[4] for item in candidates),
+    )
+
+
+def without_pile_action_button(
+    frame: Frame,
+    *,
+    reference_width: float = 900.0,
+) -> Frame:
+    """Return the frame with the HUD button painted over as plain snow.
+
+    Every pile locator measures colour or dark structure; the button carries
+    both, so it is removed before any of them looks at the map.
+    """
+
+    button = pile_action_button(frame, reference_width=reference_width)
+    if button is None:
+        return frame
+    margin = round(PILE_BUTTON_MASK_MARGIN_PX * frame.width / reference_width)
+    x0, y0, x1, y1 = button
+    image = frame.image.copy()
+    image[
+        max(0, y0 - margin) : y1 + margin,
+        max(0, x0 - margin) : x1 + margin,
+    ] = 255
+    return Frame(image)
 
 
 def clear_of_pile_button(
@@ -424,17 +521,18 @@ def clear_of_pile_button(
     *,
     reference_width: float = 900.0,
 ) -> tuple[int, int]:
-    """Move a pile tap off the pile's action button onto the eggs above it."""
+    """Move a pile tap that would hit the HUD button up onto the eggs."""
 
     button = pile_action_button(frame, reference_width=reference_width)
     if button is None:
         return point
     scale = frame.width / reference_width
-    center_x, top = button
-    safe_y = top - PILE_BUTTON_TAP_ABOVE_PX * scale
-    if point[1] <= safe_y:
+    x0, y0, x1, _ = button
+    margin = PILE_BUTTON_MASK_MARGIN_PX * scale
+    safe_y = y0 - PILE_BUTTON_TAP_ABOVE_PX * scale
+    if point[1] <= safe_y or not x0 - margin <= point[0] <= x1 + margin:
         return point
-    return round(center_x), round(safe_y)
+    return point[0], round(safe_y)
 
 
 def home_pile_tap_point(
@@ -795,6 +893,22 @@ class HatchPlanner:
             )
         ):
             self._stage = "home"
+            home_hatch_all = best_detection(by_type.get(HOME_HATCH_ALL_BUTTON))
+            if home_hatch_all is not None:
+                ready = (
+                    None
+                    if self.reader is None
+                    else read_home_hatch_all_count(
+                        frame.image,
+                        self.reader,
+                        reference_width=self.reference_width,
+                        text_center=(home_hatch_all.x, home_hatch_all.y),
+                    )
+                )
+                if self._ready_fits(ready):
+                    self._stage = "home_hatch_all"
+                    self._ready_labels_seen = ready or 0
+                    return detection_target(home_hatch_all)
             return self._egg_pile_target(frame)
         self._stage = "unknown_screen"
         return None
@@ -818,6 +932,23 @@ class HatchPlanner:
         row_tolerance = max(12, int(frame.width * 0.06))
         top_row = [item for item in items if item.y <= top_y + row_tolerance]
         return min(top_row, key=lambda item: item.x)
+
+    def _ready_fits(self, ready: int | None) -> bool:
+        headroom = self.hatch_all_headroom
+        if headroom is None:
+            return True
+        if ready is not None and ready <= headroom:
+            self._headroom_fallback_logged = False
+            return True
+        if not self._headroom_fallback_logged:
+            self._headroom_fallback_logged = True
+            self.logger.info(
+                "Hatch | home 全部孵化 skipped | ready=%s exceeds headroom=%d"
+                " | opening the incubator instead",
+                "?" if ready is None else ready,
+                headroom,
+            )
+        return False
 
     def _batch_fits(self, frame: Frame) -> bool:
         headroom = self.hatch_all_headroom

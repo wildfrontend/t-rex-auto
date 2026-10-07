@@ -29,6 +29,7 @@ from typing import Protocol
 
 import cv2
 import numpy as np
+from dataclasses import replace as _replace
 
 from . import attack_replacement as replacement_feature
 from . import hatch as hatch_feature
@@ -108,16 +109,18 @@ NEST_MASK_POINT = (50.0, 800.0)
 HATCH_DETAIL_CLOSE = "hatch_unready_detail_close"
 HATCH_BOOST_BUTTON = "hatch_cooldown_boost_button"
 HATCH_BOOST_CONFIRM = "hatch_cooldown_boost_confirm_yes"
-# Original incubator: one ticket boost bar at the bottom.
-HATCH_BOOST_POINT = (450.0, 1380.0)
-_BOOST_BAR_SAMPLE = (380, 1355, 520, 1405)
-# Incubator v2: a new permanent egg-speed bar pushes the ticket boost down.
-HATCH_BOOST_POINT_V2 = (450.0, 1420.0)
-_BOOST_BAR_SAMPLE_V2 = (380, 1405, 520, 1455)
-# Incubator v3: the permanent bar is gone and the ticket bar sits at y~1262-1345.
-HATCH_BOOST_POINT_V3 = (450.0, 1303.0)
-_BOOST_BAR_SAMPLE_V3 = (380, 1280, 520, 1330)
-# 按鈕帶中段(避開左側 50% 圖示與右側票券圖示)的取樣框,900 寬座標。
+# The ticket boost is recognised by its own 冷卻時間加速 label rather than by a
+# layout position. The bar's position depends on whether the account has
+# maxed the permanent egg speed (S9: bar gone, ticket bar moved up; S16: bar
+# still there). A position guessed from the v3 header put S16's tap on the
+# orange permanent bar, which opens its gold-bar/real-money purchase page.
+# The label is only drawn while the boost is pressable - a running boost
+# shows its countdown there instead - and the bar must also be saturated at
+# the matched spot.
+HATCH_BOOST_READY = "hatch_cooldown_boost_ready"
+_BOOST_LABEL_SAMPLE_HALF = (70, 20)
+# Live S16: ready label V~207; under the 想使用黃金票嗎 dialog V~28.
+_BOOST_LABEL_MIN_VALUE = 120.0
 _BOOST_BAR_MIN_SATURATION = 80.0
 
 CAVE_SWIPE = "hatch_cave_swipe"
@@ -169,15 +172,24 @@ STARTUP_SIMPLE_INTERRUPTS: tuple[str, ...] = (
     # at launch; it blocks every other action until RESTART is pressed.
     "server_error_restart_button",
 )
+# Any in-game shop page (permanent egg speed, x2 cooldown packs) prints this
+# reset notice at the top. S16 2026-10-07 reached both by stray taps (a guessed
+# boost position, then a cave tap on the floating ⏱x2 icon) and recovery only
+# pressed Back, which these pages ignore. The only safe action is the red X.
+SHOP_NOTICE = "hatch_shop_reset_notice"
+SHOP_CLOSE = "hatch_shop_close"
+SHOP_CLOSE_POINT = (450.0, 1448.0)
+_SHOP_CLOSE_SAMPLE_HALF = 18
 STARTUP_DETECTION_TYPES: frozenset[str] = frozenset(
     {
         *STARTUP_SIMPLE_INTERRUPTS,
         STARTUP_GROWTH_RESULT,
         STARTUP_AUTO_BATTLE_CLOSE,
+        SHOP_NOTICE,
     }
 )
 STARTUP_INTERRUPTS: frozenset[str] = frozenset(
-    {*STARTUP_DETECTION_TYPES, STARTUP_NEST_SHORTCUT}
+    {*STARTUP_DETECTION_TYPES, STARTUP_NEST_SHORTCUT, SHOP_CLOSE}
 )
 HUNT_ACTIVE_TYPES: frozenset[str] = frozenset(
     {
@@ -241,6 +253,7 @@ DEFAULT_TARGET_ACTIONS: dict[str, str] = {
     CAVE_SWIPE: "swipe",
     CAVE_RECENTER: "swipe",
     CAVE: "tap",
+    SHOP_CLOSE: "tap",
     RECOVERY_BUBBLE_DISMISS: "tap",
     PANEL_OPEN: "tap",
     PANEL_CLOSE: "tap",
@@ -293,6 +306,7 @@ DEFAULT_POST_ACTION_DELAYS_MS: dict[str, int] = {
     CAVE_SWIPE: 3000,
     CAVE_RECENTER: 3500,
     CAVE: 4000,
+    SHOP_CLOSE: 2500,
     RECOVERY_BUBBLE_DISMISS: 2500,
     PANEL_OPEN: 3000,
     PANEL_CLOSE: 2500,
@@ -416,6 +430,13 @@ MAX_SCREENING_RECOVERY_FAILURES = 3
 # and the correction that follows it cannot drift apart.
 HOME_PILE_BASE: tuple[float, float] = (450.0, 1455.0)
 HOME_PILE_TOLERANCE = 100.0
+# How far outside the bottom HUD button row a predicted pile base may land and
+# still count as hidden behind it (the base sits ~10px below the row's bottom).
+HUD_ROW_ACCEPT_SLACK_PX = 40.0
+# One-off lift that shows a pile hidden behind that row: the centred base
+# (y~1455) rises to ~1235, clear above the row top (~1357).
+HUD_PROBE_START_Y = 900.0
+HUD_PROBE_LIFT_PX = 220.0
 # Frames to let the map glide after a measured drag before treating a missing
 # pile as proof the drag went wrong.
 PILE_SETTLE_FRAMES = 3
@@ -543,6 +564,7 @@ HATCH_DETECTION_TYPES: frozenset[str] = frozenset(
         hatch_feature.INCUBATOR_TITLE,
         hatch_feature.HOME_ANCHOR,
         hatch_feature.EXPEL_BUTTON,
+        HATCH_BOOST_READY,
         CONFIRM_YES,
         CONFIRM_NO,
         *HOME_FOREGROUND_TYPES,
@@ -762,6 +784,45 @@ def home_pile_offset(frame: Frame) -> tuple[float, float] | None:
     )
 
 
+# The floating left-hand HUD icons (⏱x2 cooldown, ⚛x2, green +) sit over the
+# cave entrance in the calibrated cave view. S16 2026-10-07 tapped the matched
+# cave centre (105,1113) and opened the x2 cooldown real-money shop. Live
+# icons span x~25-95, y~1082-1328; the zone adds a 25px finger margin.
+FLOATING_ICON_ZONE = (0.0, 1060.0, 120.0, 1350.0)
+FLOATING_ICON_CLEARANCE = 15.0
+
+
+def _clear_of_floating_icons(item: Detection, frame: Frame) -> Detection | None:
+    """Keep a cave tap off the floating icons, moving it right inside the cave."""
+
+    scale = frame.width / 900.0
+    x0, y0, x1, y1 = (round(value * scale) for value in FLOATING_ICON_ZONE)
+    if not (x0 <= item.x <= x1 and y0 <= item.y <= y1):
+        return item
+    safe_x = x1 + round(FLOATING_ICON_CLEARANCE * scale)
+    box = item.bbox
+    if box is None or safe_x > box.x + box.width - round(FLOATING_ICON_CLEARANCE * scale):
+        return None
+    return _replace(item, x=safe_x)
+
+
+def shop_close_point(frame: Frame) -> tuple[int, int] | None:
+    """Return the shop page's red X, verified by colour, or ``None``."""
+
+    if frame.image.size == 0:
+        return None
+    x, y = _scaled(frame, SHOP_CLOSE_POINT, 900.0)
+    half = round(_SHOP_CLOSE_SAMPLE_HALF * frame.width / 900.0)
+    roi = frame.image[max(0, y - half) : y + half, max(0, x - half) : x + half]
+    if not roi.size:
+        return None
+    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+    # Live shop pages: H~2, S~133, V~213 on both the egg-speed and x2 packs.
+    # Red wraps around hue 0/180, so count red pixels instead of averaging.
+    red = ((hsv[:, :, 0] <= 10) | (hsv[:, :, 0] >= 170)) & (hsv[:, :, 1] >= 80)
+    return (x, y) if float(red.mean()) >= 0.4 else None
+
+
 def is_centered_home_frame(frame: Frame) -> bool:
     """Prove centred, unobscured home from frame structure alone.
 
@@ -831,55 +892,34 @@ def _home_pile_click_blocked(
     )
 
 
-def _hatch_boost_geometry(
+def _hatch_boost_button(
     frame: Frame,
-    *,
-    reference_width: float = 900.0,
-) -> tuple[tuple[float, float], tuple[int, int, int, int]]:
-    """Return the ticket boost point and sample for the visible UI version."""
+    detections: Sequence[Detection],
+) -> tuple[int, int] | None:
+    """Return the pressable ticket boost button's point, or ``None``."""
 
-    # v3 first: its ready ticket bar is saturated inside the v2 marker sample.
-    if hatch_feature.uses_header_layout(frame.image, reference_width=reference_width):
-        return HATCH_BOOST_POINT_V3, _BOOST_BAR_SAMPLE_V3
-    if hatch_feature.uses_permanent_boost_layout(
-        frame.image,
-        reference_width=reference_width,
-    ):
-        return HATCH_BOOST_POINT_V2, _BOOST_BAR_SAMPLE_V2
-    return HATCH_BOOST_POINT, _BOOST_BAR_SAMPLE
-
-
-def _hatch_boost_point(
-    frame: Frame,
-    *,
-    reference_width: float = 900.0,
-) -> tuple[int, int]:
-    point, _ = _hatch_boost_geometry(frame, reference_width=reference_width)
-    return _scaled(frame, point, reference_width)
-
-
-def _hatch_boost_ready(
-    frame: Frame,
-    *,
-    reference_width: float = 900.0,
-) -> bool:
-    """Return whether the incubator cooldown-boost bar is pressable.
-
-    The bar keeps its template shape while a boost is running, but the game
-    desaturates it to gray for the countdown; normalized template matching is
-    brightness-invariant, so color saturation is the only reliable signal.
-    """
-
-    if frame.image.size == 0:
-        return False
-    _, sample = _hatch_boost_geometry(frame, reference_width=reference_width)
-    scale = frame.width / reference_width
-    x0, y0, x1, y1 = (round(value * scale) for value in sample)
-    roi = frame.image[y0:y1, x0:x1]
+    label = best_detection(
+        [item for item in detections if item.type == HATCH_BOOST_READY]
+    )
+    if label is None or frame.image.size == 0:
+        return None
+    half_w, half_h = _BOOST_LABEL_SAMPLE_HALF
+    scale = frame.width / 900.0
+    x, y = int(label.x), int(label.y)
+    roi = frame.image[
+        max(0, y - round(half_h * scale)) : y + round(half_h * scale),
+        max(0, x - round(half_w * scale)) : x + round(half_w * scale),
+    ]
     if not roi.size:
-        return False
+        return None
     hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
-    return float(hsv[:, :, 1].mean()) >= _BOOST_BAR_MIN_SATURATION
+    # Any modal dims the label without changing its hue or saturation.
+    if (
+        float(hsv[:, :, 1].mean()) < _BOOST_BAR_MIN_SATURATION
+        or float(hsv[:, :, 2].mean()) < _BOOST_LABEL_MIN_VALUE
+    ):
+        return None
+    return x, y
 
 
 def _load_home_base_template() -> np.ndarray | None:
@@ -1004,16 +1044,108 @@ def _blue_stone_base_center(frame: Frame) -> tuple[float, float] | None:
     return center_x, center_y + BLUE_STONE_ANCHOR_Y_OFFSET * scale
 
 
+# A centred pile sits right behind the fixed 全部孵化 HUD button, which hides
+# the middle of its cyan base strip (S16 2026-10-07: two 72px halves at y~1451
+# either side of the button). Each half alone is too narrow for a strip, so
+# recovery saw the pile vanish after every correct centring drag and fused
+# hatching off. The halves are rejoined when the gap between them is the button.
+SPLIT_STRIP_MAX_HEIGHT = 20.0
+SPLIT_STRIP_MIN_AREA = 150.0
+SPLIT_STRIP_MAX_DY = 6.0
+SPLIT_STRIP_GAP_SLACK = 20.0
+
+
+# With fewer eggs the centred pile shows only its water/bowl above the button
+# and its whole base behind it (S16 15:46, two eggs left; S9 the same with its
+# deep bowl ending 16px above). Measuring that water as the base reported the
+# centred map 120-170px off, so every correct centring drag looked like the
+# pile vanished. Cyan cut off just above the button is the pile behind it.
+PILE_BEHIND_BUTTON_MIN_WIDTH = 100.0
+# A flat strip that clears the button is the base itself (a full pile parked
+# high, S16 h2: 188x8 at y~1305) and is measured normally instead.
+PILE_BEHIND_BUTTON_MIN_HEIGHT = 30.0
+PILE_BEHIND_BUTTON_MAX_GAP = 60.0
+
+
+def _pile_behind_button(
+    stats: np.ndarray,
+    centers: np.ndarray,
+    button: tuple[int, int, int, int],
+    scale: float,
+) -> tuple[float, float] | None:
+    bx0, by0, bx1, _ = button
+    mask_top = by0 - hatch_feature.PILE_BUTTON_MASK_MARGIN_PX * scale
+    for index, (x, y, width, height, area) in enumerate(stats):
+        if (
+            not index
+            or width < PILE_BEHIND_BUTTON_MIN_WIDTH * scale
+            or height < PILE_BEHIND_BUTTON_MIN_HEIGHT * scale
+        ):
+            continue
+        center_x = float(centers[index][0])
+        bottom = float(y + height)
+        if (
+            bx0 <= center_x <= bx1
+            and mask_top - PILE_BEHIND_BUTTON_MAX_GAP * scale <= bottom <= mask_top + 2
+        ):
+            return center_x, HOME_PILE_BASE[1] * scale
+    return None
+
+
+def _strip_split_by_button(
+    stats: np.ndarray,
+    centers: np.ndarray,
+    button: tuple[int, int, int, int],
+    scale: float,
+) -> tuple[float, float] | None:
+    bx0, _, bx1, _ = button
+    slack = SPLIT_STRIP_GAP_SLACK * scale
+    pieces = [
+        (int(x), int(x + width), float(centers[index][1]), int(area))
+        for index, (x, y, width, height, area) in enumerate(stats)
+        if index
+        and y >= 850 * scale
+        and height <= SPLIT_STRIP_MAX_HEIGHT * scale
+        and area >= SPLIT_STRIP_MIN_AREA * scale * scale
+    ]
+    best: tuple[float, float] | None = None
+    for left in pieces:
+        for right in pieces:
+            if right[0] <= left[1] or abs(left[2] - right[2]) > SPLIT_STRIP_MAX_DY * scale:
+                continue
+            # The gap must be the button itself, not open snow between nests.
+            if left[1] < bx0 - slack or right[0] > bx1 + slack:
+                continue
+            if left[1] > bx1 or right[0] < bx0:
+                continue
+            if right[1] - left[0] < CYAN_STRIP_MIN_WIDTH * scale:
+                continue
+            center_y = (left[2] * left[3] + right[2] * right[3]) / (left[3] + right[3])
+            candidate = ((left[0] + right[1]) / 2.0, center_y)
+            if best is None or candidate[1] > best[1]:
+                best = candidate
+    return best
+
+
 def _egg_pile_base_center(frame: Frame) -> tuple[float, float] | None:
     """Locate the stable base of the variable-looking home egg pile."""
 
     if frame.image.size == 0:
         return None
+    button = hatch_feature.pile_action_button(frame)
+    frame = hatch_feature.without_pile_action_button(frame)
     scale = frame.width / 900.0
     hsv = cv2.cvtColor(frame.image, cv2.COLOR_BGR2HSV)
     cyan = cv2.inRange(hsv, (75, 70, 70), (105, 255, 255))
     count, _, stats, centers = cv2.connectedComponentsWithStats(cyan)
     candidates: list[tuple[float, float]] = []
+    if button is not None:
+        behind = _pile_behind_button(stats, centers, button, scale)
+        if behind is not None:
+            return behind
+        joined = _strip_split_by_button(stats, centers, button, scale)
+        if joined is not None:
+            candidates.append(joined)
     for index in range(1, count):
         x, y, width, height, area = stats[index]
         center_x, center_y = centers[index]
@@ -1254,6 +1386,7 @@ class HatchHomeRecoveryPlanner:
         # corrections. Require the home anchor before reaching inherited legs.
         self._inherited_swipes = len(applied_swipes)
         self._pile_settle_frames = 0
+        self._hud_probe_sent = False
         self._applied_offsets: list[tuple[float, float] | None] = [None] * len(applied_swipes)
         self._pending_swipe: tuple[int, int, int, int] | None = None
         self._pending_measured_offset: tuple[float, float] | None = None
@@ -1284,10 +1417,11 @@ class HatchHomeRecoveryPlanner:
 
     @property
     def camera_at_limit(self) -> bool:
-        """Whether recovery accepted a home the camera could not centre.
+        """Whether recovery accepted a home without a measured centred pile.
 
         Recovery may complete on an off-centre map when the camera is parked
-        against a map edge.  Callers gating on `is_centered_home_screen` must
+        against a map edge, or on a centred map whose pile is hidden behind
+        the bottom HUD button row after a measured drag.  Callers gating on `is_centered_home_screen` must
         read this, or they reject the very frame recovery just approved and
         hand it straight back for another round.
         """
@@ -1638,6 +1772,8 @@ class HatchHomeRecoveryPlanner:
             and self._applied_swipes
             and (own_swipe_pending or home_anchor_seen)
         ):
+            if self._pile_hidden_behind_hud(frame):
+                return None
             # This control proves we are already on the home map; it is not a
             # recenter command.  If our own last measured drag made the pile
             # disappear, reverse that exact drag without leaving the map.
@@ -1647,6 +1783,13 @@ class HatchHomeRecoveryPlanner:
             if undo is not None:
                 return undo
 
+        probe = self._hud_probe_target(
+            frame,
+            home_detections,
+            landmark_seen=forest is not None or home_anchor_seen,
+        )
+        if probe is not None:
+            return probe
         if self._back_attempts < self.max_back_attempts:
             self._back_attempts += 1
             self._stage = f"back_{self._back_attempts}/{self.max_back_attempts}"
@@ -1840,6 +1983,84 @@ class HatchHomeRecoveryPlanner:
         x1, x2 = leg(frame.width, dx)
         y1, y2 = leg(frame.height, dy)
         return x1, y1, x2, y2
+
+    def _hud_probe_target(
+        self,
+        frame: Frame,
+        detections: Sequence[Detection],
+        *,
+        landmark_seen: bool,
+    ) -> Target | None:
+        """Lift the map once so a pile hidden behind the HUD row can be measured.
+
+        A run can start on an already centred map whose pile is fully behind
+        the bottom button row (S16 16:58): nothing measures it and Back cannot
+        change the camera. Lifting the map by a known amount shows the pile
+        above the row; the measured drag back then hides it again exactly
+        where ``_pile_hidden_behind_hud`` accepts it.
+        """
+
+        if (
+            self._hud_probe_sent
+            or self._applied_swipes
+            or not landmark_seen
+            or hatch_feature.pile_action_button(frame) is None
+            or not is_home_screen(frame, detections)
+            or home_pile_offset(frame) is not None
+        ):
+            return None
+        self._hud_probe_sent = True
+        scale = frame.width / 900.0
+        x = frame.width // 2
+        y1 = round(HUD_PROBE_START_Y * scale)
+        y2 = y1 - round(HUD_PROBE_LIFT_PX * scale)
+        self._stage = "probe_pile_behind_hud"
+        self.logger.info(
+            "Hatch recovery | pile not visible behind the home HUD buttons"
+            " | lifting the map %dpx to measure it",
+            round(HUD_PROBE_LIFT_PX * scale),
+        )
+        return self._swipe(RECOVERY_RECENTER, x, y1, x, y2)
+
+    def _pile_hidden_behind_hud(self, frame: Frame) -> bool:
+        """Accept a measured drag whose pile landed behind the HUD button row.
+
+        The centred pile base (450,1455) sits right behind the fixed bottom
+        全部孵化 / 自動放置 row, so a correct drag hides the very landmark that
+        would prove it - in a different way for every pile skin and egg count
+        (S16 2026-10-07: full pile, water only, two buttons). The drag itself
+        is the proof: when the pile measured before it was predicted to land
+        inside the row and it is now gone, the map is centred.
+        """
+
+        if self._last_offset is None:
+            return False
+        row = hatch_feature.pile_action_button(frame)
+        if row is None:
+            return False
+        x1, y1, x2, y2 = self._applied_swipes[-1]
+        scale = frame.width / 900.0
+        target_x, target_y = HOME_PILE_BASE[0] * scale, HOME_PILE_BASE[1] * scale
+        predicted = (
+            target_x - (self._last_offset[0] - (x2 - x1)),
+            target_y - (self._last_offset[1] - (y2 - y1)),
+        )
+        rx0, ry0, rx1, ry1 = row
+        slack = HUD_ROW_ACCEPT_SLACK_PX * scale
+        if not (
+            rx0 <= predicted[0] <= rx1
+            and ry0 - slack <= predicted[1] <= ry1 + slack
+        ):
+            return False
+        self.logger.warning(
+            "Hatch recovery | pile hidden behind the home HUD buttons after a"
+            " measured drag of (%.0f,%.0f)px; accepting home as centred",
+            self._last_offset[0],
+            self._last_offset[1],
+        )
+        self._last_offset = None
+        self._camera_at_limit = True
+        return True
 
     def _undo_target(self, *, reason: str = "no home landmark") -> Target | None:
         """Reverse this planner's own camera move once the landmarks are gone.
@@ -2744,7 +2965,28 @@ class CaveCullPlanner:
                 "Hatch cave | rejected %d target(s) inside protected screen edge",
                 rejected,
             )
-        return best_detection(safe)
+        cleared: list[Detection] = []
+        for item in safe:
+            moved = _clear_of_floating_icons(item, frame)
+            if moved is None:
+                self.logger.warning(
+                    "Hatch cave | rejected target at (%d,%d): only reachable"
+                    " through the floating HUD icons",
+                    item.x,
+                    item.y,
+                )
+                continue
+            if moved is not item:
+                self.logger.info(
+                    "Hatch cave | moved tap off the floating HUD icons"
+                    " | (%d,%d) -> (%d,%d)",
+                    item.x,
+                    item.y,
+                    moved.x,
+                    moved.y,
+                )
+            cleared.append(moved)
+        return best_detection(cleared)
 
 
 class FullHatchPlanner:
@@ -3672,6 +3914,7 @@ class FullHatchPlanner:
             if target_type in (
                 hatch_feature.HATCH_BUTTON,
                 hatch_feature.HATCH_ALL_BUTTON,
+                hatch_feature.HOME_HATCH_ALL_BUTTON,
             ):
                 self._capacity_checked = False
                 self._hatch_capacity_check_pending = True
@@ -3767,6 +4010,15 @@ class FullHatchPlanner:
         # has cyan Yes and red No buttons, so its layout can look like an
         # auto-place notice even though this explicit button proves which
         # startup dialog is actually in front.
+        if SHOP_NOTICE in by_type:
+            close = shop_close_point(frame)
+            self._no_target_since = None
+            if close is None:
+                # Never guess on a page that sells things: wait for the X.
+                self.logger.warning("Hatch full | shop page open but its X is not verified")
+                return None
+            self.logger.warning("Hatch full | closing an unexpected shop page")
+            return synthetic_target(SHOP_CLOSE, *close)
         for target_type in STARTUP_SIMPLE_INTERRUPTS:
             interruption = best_detection(by_type.get(target_type))
             if interruption is not None:
@@ -3801,12 +4053,13 @@ class FullHatchPlanner:
                 self.begin_boost_visit(keep_incubator_open=True)
         if self._boost_visit is not None:
             visit = self._boost_visit
+            boost_button = _hatch_boost_button(frame, detections)
             target = visit.choose(
                 frame, detections,
                 home_centered=is_centered_home_screen(frame, detections),
                 home_point=_egg_pile_safe_tap(frame),
-                button_ready=_hatch_boost_ready(frame, reference_width=self.reference_width),
-                button_point=_hatch_boost_point(frame, reference_width=self.reference_width),
+                button_ready=boost_button is not None,
+                button_point=boost_button or (0, 0),
             )
             if visit.used and self._stage == "hatch":
                 self._observe_hatch_cooldown(frame, by_type)
@@ -3941,9 +4194,13 @@ class FullHatchPlanner:
         # must outrank that generic hunt-map interruption. Without this guard
         # the planner closes the incubator, returns home, and reopens it every
         # ten seconds without ever hatching an egg.
+        # The 孵化結果 panel hides the title but leaves the same dimmed X
+        # (S16 v0.0.90: recovery claimed the batch, so it was never counted).
         if (
             self._stage == "hatch"
             and hatch_feature.INCUBATOR_TITLE not in by_type
+            and hatch_feature.RESULT_TITLE not in by_type
+            and hatch_feature.CLAIM_ALL_BUTTON not in by_type
             and any(item.type in HUNT_ACTIVE_TYPES for item in detections)
         ):
             self._begin_home_recovery("hatch started from active hunt map")
@@ -4018,7 +4275,7 @@ class FullHatchPlanner:
                 self.logger.info(
                     "Hatch full | centered home confirmed | recovered=%s%s",
                     self._recovery_reason or "unknown",
-                    " | camera at map edge" if self._home_camera_at_limit else "",
+                    " | accepted without a measured centre" if self._home_camera_at_limit else "",
                 )
                 if self._committed_cave_population is not None:
                     expected = self._committed_cave_population
@@ -4112,8 +4369,11 @@ class FullHatchPlanner:
         # coordinate is only valid on the centred home map.  Route a resumed
         # or freshly started workflow through the existing bounded recovery
         # before the child can issue that unsafe/misplaced tap.
+        # The fixed home 全部孵化 HUD button is valid wherever the map sits, so
+        # it needs no centring; a pile tap still does (checked below).
         if (
             self._stage == "hatch"
+            and hatch_feature.HOME_HATCH_ALL_BUTTON not in by_type
             and is_home_screen(frame, detections)
             and not self._home_is_actionable(frame, detections)
         ):
@@ -4162,7 +4422,7 @@ class FullHatchPlanner:
             if self.capacity_retry_pending:
                 if self.is_hunt_cooldown_active():
                     return None
-                if is_centered_home_screen(frame, detections):
+                if self._home_is_actionable(frame, detections):
                     self._begin_capacity_preflight("scheduled capacity recheck")
                     return self._choose_current(frame, detections)
                 self._hatch_capacity_check_pending = True
@@ -4194,7 +4454,22 @@ class FullHatchPlanner:
                 return synthetic_target(HATCH_DETAIL_CLOSE, *detail_close)
             self._hatch_child.hatch_all_headroom = self._hatch_all_headroom()
             target = self._hatch_child.choose(frame, detections)
+            if (
+                target is not None
+                and target.type == hatch_feature.HOME_HATCH_ALL_BUTTON
+                and not self._capacity_checked
+            ):
+                self._begin_capacity_preflight("before first home 全部孵化")
+                return self._choose_current(frame, detections)
             if target is not None and target.type == hatch_feature.EGG_PILE:
+                if (
+                    hatch_feature.HOME_HATCH_ALL_BUTTON in by_type
+                    and not self._home_is_actionable(frame, detections)
+                ):
+                    # The centring gate was skipped for the HUD button, but the
+                    # batch did not fit, so this pile tap still needs it.
+                    self._begin_home_recovery("egg pile tap needs a centred home")
+                    return self._choose_current(frame, detections)
                 if not self._capacity_checked:
                     self._begin_capacity_preflight(
                         "before first incubator access"
@@ -4820,6 +5095,11 @@ class FullHatchPlanner:
             return False
         if not is_home_screen(frame, detections):
             return False
+        if hatch_feature.pile_action_button(frame) is not None:
+            # Accepted behind the HUD row: hatching goes through the fixed
+            # 全部孵化 button and My Nest through the anchor. The pile itself
+            # is hidden, and the one pile tap path refuses to tap unmeasured.
+            return True
         # `_home_pile_click_blocked` is gated on the centred test that just
         # failed, so it would be vacuously False here.  Measure the tap point
         # itself to keep the guard real on this path.

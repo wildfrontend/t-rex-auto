@@ -10,10 +10,12 @@ from typing import Any
 
 from .full_hatch import (
     HOME_PILE_TOLERANCE,
+    SHOP_NOTICE,
     STARTUP_DETECTION_TYPES,
     _is_bright_outdoor_map,
     home_pile_offset,
     is_centered_home_screen,
+    is_home_screen,
     nest_mask_close_target,
 )
 from . import hatch as hatch_feature
@@ -433,7 +435,9 @@ class HatchHuntPlanner:
                 # NEST_TITLE is not part of any hunting stage, but without it
                 # in the scan a stray My Nest panel is invisible and the hunt
                 # burns its retries on controls the panel covers.
-                return frozenset({*hunt_types, NEST_TITLE})
+                # A shop page can open from any stray tap; seeing it hands
+                # control to the hatch side, which only presses its red X.
+                return frozenset({*hunt_types, NEST_TITLE, SHOP_NOTICE})
             # ``None`` means a full scan to a standalone planner. The combined
             # detector also owns all hatch templates, so translate that request
             # into the complete hunting vocabulary when the planner exposes it.
@@ -803,7 +807,13 @@ class HatchHuntPlanner:
         # hunting map's small egg anchor here deadlocks a successful handoff:
         # that landmark is legitimately off-screen once the hatch home is
         # centered.
-        if is_centered_home_screen(frame, detections):
+        # The fixed home 全部孵化 HUD button makes hatching independent of the
+        # camera, so its presence on the home screen is proof enough to hand
+        # back; only a pile tap still needs the centred map (full_hatch checks).
+        hud_ready = any(
+            item.type == hatch_feature.HOME_HATCH_ALL_BUTTON for item in detections
+        ) and is_home_screen(frame, detections)
+        if hud_ready or is_centered_home_screen(frame, detections):
             self._centered_frames += 1
             if self._centered_frames < 2:
                 return None

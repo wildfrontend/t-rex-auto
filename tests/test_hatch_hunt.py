@@ -9,6 +9,7 @@ import pytest
 
 from dino_bot import hatch
 from dino_bot.full_hatch import (
+    SHOP_NOTICE,
     NEST_MASK_CLOSE,
     STARTUP_GROWTH_RESULT,
     STARTUP_NEST_SHORTCUT,
@@ -211,7 +212,7 @@ def test_long_hatch_cooldown_switches_to_hunt_and_keeps_action_owner() -> None:
     assert chosen is not None and chosen.type == "dinosaur"
     # The hunt scan carries NEST_TITLE so a stray My Nest panel is visible.
     assert combined.planning_detection_types() == frozenset(
-        {"dinosaur", NEST_TITLE}
+        {"dinosaur", NEST_TITLE, SHOP_NOTICE}
     )
 
     combined.on_action_success(chosen.type)
@@ -264,7 +265,7 @@ def test_blocked_hatch_falls_back_to_hunting_in_combined_mode() -> None:
     assert chosen is not None and chosen.type == "dinosaur"
     # The hunt scan carries NEST_TITLE so a stray My Nest panel is visible.
     assert combined.planning_detection_types() == frozenset(
-        {"dinosaur", NEST_TITLE}
+        {"dinosaur", NEST_TITLE, SHOP_NOTICE}
     )
     assert not combined.is_complete()
 
@@ -1264,3 +1265,29 @@ def test_a_blocked_hatch_side_makes_no_boost_trip() -> None:
     combined.choose(frame(), [])
 
     assert started == []
+
+
+def test_handoff_resumes_hatch_on_hud_button_without_centring() -> None:
+    # S16 2026-10-07 15:16: the handoff kept recentring the map and fused
+    # hatching off. The fixed home 全部孵化 button needs no centred map.
+    import cv2
+
+    fixtures = Path(__file__).resolve().parent / "fixtures" / "hatch"
+    image = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    image[1100:1500] = cv2.imread(
+        str(fixtures / "s16-home-hud-button-offset-pile.jpg")
+    )
+    home = Frame(image)
+    combined, hatch_planner, hunt_planner = planner()
+    assert combined.choose(frame(), []) is None
+    hatch_planner.cooldown_ms = 0
+    hatch_planner.next_target = target(hatch.HOME_HATCH_ALL_BUTTON, 450, 1418)
+    seen = [
+        detection(hatch.HOME_ANCHOR, 59, 561),
+        detection(hatch.HOME_HATCH_ALL_BUTTON, 450, 1418),
+    ]
+
+    assert combined.choose(home, seen) is None
+    chosen = combined.choose(home, seen)
+    assert chosen is not None and chosen.type == hatch.HOME_HATCH_ALL_BUTTON
+    assert hunt_planner.reset_count == 1

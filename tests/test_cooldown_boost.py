@@ -75,12 +75,16 @@ def test_live_disable_cancels_open_confirmation(setup_visit):
 
 @pytest.mark.parametrize("active", [True, False])
 def test_uncertain_confirmation_is_observed_without_resubmission(setup_visit, active):
-    visit, inventory, _ = setup_visit
+    visit, inventory, now = setup_visit
     choose(visit)
     visit.on_action_success(BOOST_BUTTON)
     assert choose(visit, PROMPT).type == BOOST_CONFIRM
     visit.on_action_failure(BOOST_CONFIRM)
     assert choose(visit, PROMPT) is None
+    if not active:
+        # A still-ready bar is given the grace window before it counts as failed.
+        assert choose(visit, ready=True) is None
+        now[0] += 11
     assert choose(visit, ready=not active).type == BOOST_CLOSE
     assert inventory.snapshot().remaining == (99 if active else 100)
     assert inventory.ready_delay_seconds() == (1800 if active else 60)
@@ -122,3 +126,36 @@ def test_inline_check_returns_open_incubator_without_navigation(setup_visit, rea
     assert inventory.snapshot().remaining == (99 if ready else 100)
     choose(visit, ready=False)
     assert inventory.snapshot().remaining == (99 if ready else 100)
+
+
+def test_slow_gray_transition_after_yes_is_still_counted(setup_visit):
+    # S16 2026-10-07: 3s after Yes the bar still read as ready, the visit gave
+    # up, and the ticket the game had spent was never recorded.
+    visit, inventory, now = setup_visit
+    visit = CooldownBoostVisit(inventory, clock=lambda: now[0], keep_incubator_open=True)
+    assert choose(visit).type == BOOST_BUTTON
+    visit.on_action_success(BOOST_BUTTON)
+    assert choose(visit, PROMPT).type == BOOST_CONFIRM
+    visit.on_action_success(BOOST_CONFIRM)
+
+    now[0] += 3
+    assert choose(visit, ready=True) is None  # still waiting, no second Yes
+    assert not visit.complete
+    now[0] += 3
+    choose(visit, ready=False)
+    assert visit.used and visit.complete
+    assert inventory.snapshot().remaining == 99
+
+
+def test_bar_still_ready_after_grace_is_not_counted(setup_visit):
+    visit, inventory, now = setup_visit
+    visit = CooldownBoostVisit(inventory, clock=lambda: now[0], keep_incubator_open=True)
+    assert choose(visit).type == BOOST_BUTTON
+    visit.on_action_success(BOOST_BUTTON)
+    assert choose(visit, PROMPT).type == BOOST_CONFIRM
+    visit.on_action_success(BOOST_CONFIRM)
+
+    now[0] += 11
+    assert choose(visit, ready=True) is None
+    assert not visit.used
+    assert inventory.snapshot().remaining == 100

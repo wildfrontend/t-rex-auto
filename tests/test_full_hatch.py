@@ -13,6 +13,11 @@ from dino_bot.cull import CAPACITY_REGION, CapacityRead, should_cull
 from dino_bot.detection import OpenCvDetector
 from dino_bot.digits import DigitReader
 from dino_bot.full_hatch import (
+    FOREST_RECENTER,
+    SHOP_CLOSE,
+    SHOP_NOTICE,
+    CAVE,
+    _clear_of_floating_icons,
     AUTOPLACE_BUTTON,
     AUTOPLACE_MASK_CLOSE,
     AUTOPLACE_NOTICE,
@@ -30,6 +35,7 @@ from dino_bot.full_hatch import (
     DEFAULT_SUCCESS_TRANSITIONS,
     FULL_HATCH_STAGES,
     HATCH_BOOST_BUTTON,
+    HATCH_BOOST_READY,
     HATCH_BOOST_CONFIRM,
     HATCH_DETAIL_CLOSE,
     HOME_PILE_BASE,
@@ -74,8 +80,7 @@ from dino_bot.full_hatch import (
     HatchHomeRecoveryPlanner,
     _egg_pile_base_center,
     _egg_pile_safe_tap,
-    _hatch_boost_point,
-    _hatch_boost_ready,
+    _hatch_boost_button,
     home_pile_offset,
     is_centered_home_frame,
     is_centered_home_screen,
@@ -855,7 +860,7 @@ def test_s9_occluded_capacity_finishes_remaining_move_before_failing(caplog) -> 
     assert first is not None and first.type == CAVE_SWIPE
     planner.on_action_success(first.type)
 
-    cave = [detection("hatch_cave", 100, 1100)]
+    cave = [detection("hatch_cave", 209, 1150)]
     for _ in range(2):
         assert planner.choose(blocked, cave) is None
     target = planner.choose(blocked, cave)
@@ -891,7 +896,7 @@ def test_capacity_after_remaining_move_requires_two_new_reads(
     )
     first = planner.choose(frame(), [])
     planner.on_action_success(first.type)
-    cave = [detection("hatch_cave", 100, 1100)]
+    cave = [detection("hatch_cave", 209, 1150)]
     blocked = occluded_capacity_frame()
     assert planner.choose(blocked, cave) is None
     move = planner.choose(blocked, cave)
@@ -918,7 +923,7 @@ def test_occluded_capacity_does_not_start_new_path_from_unknown_cave_view() -> N
         capacity_read_retries=1,
     )
     blocked = occluded_capacity_frame()
-    cave = [detection("hatch_cave", 100, 1100)]
+    cave = [detection("hatch_cave", 209, 1150)]
     assert planner.choose(blocked, cave) is None
     target = planner.choose(blocked, cave)
     assert target is not None and target.type == CAVE_RECENTER
@@ -933,7 +938,7 @@ def test_occluded_capacity_remaining_move_failures_are_bounded() -> None:
     )
     first = planner.choose(frame(), [])
     planner.on_action_success(first.type)
-    cave = [detection("hatch_cave", 100, 1100)]
+    cave = [detection("hatch_cave", 209, 1150)]
     blocked = occluded_capacity_frame()
     assert planner.choose(blocked, cave) is None
     for _ in range(planner.navigator.max_swipe_failures + 1):
@@ -956,7 +961,7 @@ def test_wrong_capacity_limit_finishes_remaining_move_then_fails_safely() -> Non
     )
     first = planner.choose(frame(), [])
     planner.on_action_success(first.type)
-    cave = [detection("hatch_cave", 100, 1100)]
+    cave = [detection("hatch_cave", 209, 1150)]
     assert planner._read_capacity(capacity_frame()).reason == "unexpected_capacity"
     assert planner.choose(capacity_frame(), cave) is None
     target = planner.choose(capacity_frame(), cave)
@@ -1853,48 +1858,10 @@ def boost_ready_frame() -> Frame:
     return ready
 
 
-def test_permanent_boost_layout_moves_ticket_boost_safely() -> None:
-    image = np.full((1600, 900, 3), 255, dtype=np.uint8)
-    panel = cv2.imread(str(FIXTURES / "incubator-v2-boost-panel.png"))
-    assert panel is not None
-    image[1250:1470, 240:660] = panel
-    v2 = frame(image)
+def with_boost_ready(detections: list[Detection]) -> list[Detection]:
+    """Add the 冷卻時間加速 label match that boost_ready_frame() paints under."""
 
-    assert _hatch_boost_point(v2) == (450, 1420)
-    assert not _hatch_boost_ready(v2)
-
-    # The captured ticket bar is gray because a boost is active. Simulate its
-    # saturated ready state without touching the orange permanent-speed bar.
-    image[1405:1455, 380:520] = (30, 140, 240)
-    assert _hatch_boost_ready(frame(image))
-
-
-def test_permanent_boost_layout_planner_taps_ticket_bar_center(tmp_path) -> None:
-    inventory = HatchBoostInventoryStore(tmp_path / "stats.sqlite3")
-    inventory.set_enabled(True)
-    planner = FullHatchPlanner(
-        DigitReader(GLYPHS),
-        egg_pile_point=(450, 1330),
-        boost_inventory=inventory,
-    )
-    planner._child = planner._new_hatch()
-    planner._start_hatch_cycle()
-    planner._observed_cooldown_until = planner.clock() + 300
-
-    image = np.full((1600, 900, 3), 255, dtype=np.uint8)
-    panel = cv2.imread(str(FIXTURES / "incubator-v2-boost-panel.png"))
-    assert panel is not None
-    image[1250:1470, 240:660] = panel
-    image[1405:1455, 380:520] = (30, 140, 240)
-    grid = [
-        detection(hatch.INCUBATOR_TITLE, 450, 169),
-        detection(hatch.CLOSE_BUTTON, 798, 1421),
-    ]
-
-    target = planner.choose(frame(image), grid)
-
-    assert target is not None and target.type == HATCH_BOOST_BUTTON
-    assert (target.x, target.y) == (450, 1420)
+    return [*detections, detection(HATCH_BOOST_READY, 450, 1380)]
 
 
 def test_incubator_title_outranks_false_hunt_dialog_close_detection() -> None:
@@ -1931,10 +1898,10 @@ def test_boost_permission_is_live_and_stock_requires_active_bar(tmp_path) -> Non
     ]
 
     # Enabling takes effect without resetting the hatch cycle.
-    target = planner.choose(boost_ready_frame(), grid)
+    target = planner.choose(boost_ready_frame(), with_boost_ready(grid))
     assert target is not None and target.type == hatch.CLOSE_BUTTON
     inventory.set_enabled(True)
-    target = planner.choose(boost_ready_frame(), grid)
+    target = planner.choose(boost_ready_frame(), with_boost_ready(grid))
     assert target is not None and target.type == HATCH_BOOST_BUTTON
     planner.on_action_success(target.type)
 
@@ -1942,7 +1909,7 @@ def test_boost_permission_is_live_and_stock_requires_active_bar(tmp_path) -> Non
         detection(CONFIRM_YES, 365, 850),
         detection(CONFIRM_NO, 535, 850),
     ]
-    target = planner.choose(boost_ready_frame(), prompt)
+    target = planner.choose(boost_ready_frame(), with_boost_ready(prompt))
     assert target is not None and target.type == HATCH_BOOST_CONFIRM
     planner.on_action_success(target.type)
     assert inventory.snapshot().remaining == 100
@@ -1991,7 +1958,7 @@ def test_boost_is_due_even_while_incubator_is_empty(tmp_path) -> None:
     ]
 
     # 用券排程與蛋的冷卻/數量無關。
-    target = planner.choose(boost_ready_frame(), grid)
+    target = planner.choose(boost_ready_frame(), with_boost_ready(grid))
     assert target is not None and target.type == HATCH_BOOST_BUTTON
     assert inventory.snapshot().remaining == 100
 
@@ -2022,9 +1989,9 @@ def test_scheduled_visit_preserves_child_and_refreshes_egg_wait(tmp_path, monkey
     assert planner.choose(frame(), home) is None
     assert planner.begin_boost_visit()
     assert planner.choose(frame(), home).type == "hatch_cooldown_boost_open"
-    assert planner.choose(boost_ready_frame(), panel).type == HATCH_BOOST_BUTTON
+    assert planner.choose(boost_ready_frame(), with_boost_ready(panel)).type == HATCH_BOOST_BUTTON
     planner.on_action_success(HATCH_BOOST_BUTTON)
-    assert planner.choose(boost_ready_frame(), prompt).type == HATCH_BOOST_CONFIRM
+    assert planner.choose(boost_ready_frame(), with_boost_ready(prompt)).type == HATCH_BOOST_CONFIRM
     planner.on_action_success(HATCH_BOOST_CONFIRM)
     assert planner.choose(panel_frame(), panel).type == "hatch_cooldown_boost_close"
     planner.on_action_success("hatch_cooldown_boost_close")
@@ -3911,7 +3878,7 @@ def test_incubator_hatches_ready_eggs_and_reads_timer_before_inline_boost(
     planner.on_action_success(hatch.CLAIM_BUTTON)
     assert child.hatched == 1
     if ready:
-        assert planner.choose(screen, panel).type == HATCH_BOOST_BUTTON
+        assert planner.choose(screen, with_boost_ready(panel)).type == HATCH_BOOST_BUTTON
         planner.on_action_success(HATCH_BOOST_BUTTON)
         prompt = panel + [detection(CONFIRM_YES, 365, 850), detection(CONFIRM_NO, 535, 850)]
         assert planner.choose(screen, prompt).type == HATCH_BOOST_CONFIRM
@@ -3971,7 +3938,7 @@ def test_custom_last_claim_prevents_next_egg_and_boost(tmp_path, stop_line, read
     panel = [detection(hatch.INCUBATOR_TITLE), detection(hatch.CLOSE_BUTTON, 800, 1380)]
     if ready_egg:
         panel.append(detection(hatch.HATCH_LABEL, 270, 436))
-    chosen = planner.choose(boost_ready_frame(), panel)
+    chosen = planner.choose(boost_ready_frame(), with_boost_ready(panel))
     assert chosen is None or chosen.type not in {hatch.HATCH_LABEL, HATCH_BOOST_BUTTON}
     assert planner._stage == "recover_home"
     assert planner._hatch_capacity_check_pending
@@ -4009,7 +3976,7 @@ def test_custom_return_collects_then_hatches_boosts_and_waits_once(tmp_path, mon
     assert chosen.type == hatch.EGG_PILE
     planner.on_action_success(chosen.type)
     panel = [detection(hatch.INCUBATOR_TITLE), detection(hatch.CLOSE_BUTTON, 800, 1380)]
-    chosen = planner.choose(boost_ready_frame(), panel + [detection(hatch.HATCH_LABEL, 270, 436)])
+    chosen = planner.choose(boost_ready_frame(), with_boost_ready(panel + [detection(hatch.HATCH_LABEL, 270, 436)]))
     assert chosen.type == hatch.HATCH_LABEL
     assert not planner.boost_visit_active()
     planner.on_action_success(chosen.type)
@@ -4017,11 +3984,11 @@ def test_custom_return_collects_then_hatches_boosts_and_waits_once(tmp_path, mon
     planner.on_action_success(hatch.HATCH_BUTTON)
     assert planner.choose(frame(), [detection(hatch.CLAIM_BUTTON)]).type == hatch.CLAIM_BUTTON
     planner.on_action_success(hatch.CLAIM_BUTTON)
-    chosen = planner.choose(boost_ready_frame(), panel)
+    chosen = planner.choose(boost_ready_frame(), with_boost_ready(panel))
     assert chosen.type == HATCH_BOOST_BUTTON
     planner.on_action_success(chosen.type)
     prompt = panel + [detection(CONFIRM_YES, 365, 850), detection(CONFIRM_NO, 535, 850)]
-    chosen = planner.choose(boost_ready_frame(), prompt)
+    chosen = planner.choose(boost_ready_frame(), with_boost_ready(prompt))
     assert chosen.type == HATCH_BOOST_CONFIRM
     planner.on_action_success(chosen.type)
     monkeypatch.setattr(hatch, "read_hatch_cooldown_seconds", lambda *a, **kw: 300)
@@ -4057,7 +4024,7 @@ def test_real_s9_wrong_denominator_finishes_known_path_before_retrying():
     assert read.reason == 'unexpected_capacity' and read.count is None
     first = planner.choose(frame(), [])
     planner.on_action_success(first.type)
-    cave = [detection('hatch_cave', 100, 1100)]
+    cave = [detection('hatch_cave', 209, 1150)]
     assert planner.choose(blocked, cave) is None
     second = planner.choose(blocked, cave)
     assert second.type == CAVE_SWIPE
@@ -4117,7 +4084,7 @@ def test_custom_unreadable_population_retries_after_wait_and_rechecks_limit(
     assert not planner.begin_home_collection()
     assert not planner.begin_interim_collection()
     assert not planner.begin_boost_visit()
-    assert planner.choose(boost_ready_frame(), [detection(hatch.HATCH_LABEL)]) is None
+    assert planner.choose(boost_ready_frame(), with_boost_ready([detection(hatch.HATCH_LABEL)])) is None
     assert inventory.snapshot().remaining == 100
     now[0] += 601
     # A fresh read comes before any egg/claim/boost.
@@ -4183,22 +4150,6 @@ def _v3_fixture(name: str) -> np.ndarray:
     return image
 
 
-def test_v3_layout_moves_ticket_boost_up_into_the_old_permanent_bar_slot() -> None:
-    image = _v3_fixture("incubator-v3-ready.jpg")
-
-    assert _hatch_boost_point(frame(image)) == (450, 1303)
-    # Live capture: the ticket boost is counting down (gray).
-    assert not _hatch_boost_ready(frame(image))
-
-    ready = image.copy()
-    ready[1280:1330, 380:520] = (30, 140, 240)
-    # A saturated ready bar sits inside the v2 marker sample; the v3 header
-    # must still win so the tap does not go to the empty v2 position.
-    assert hatch.uses_permanent_boost_layout(ready)
-    assert _hatch_boost_point(frame(ready)) == (450, 1303)
-    assert _hatch_boost_ready(frame(ready))
-
-
 def test_v3_full_workflow_hatches_the_whole_incubator_at_once() -> None:
     planner = make_full_planner()
     planner._child = planner._new_hatch()
@@ -4236,3 +4187,304 @@ def test_v3_full_workflow_bounds_a_batch_by_the_population_stop_line() -> None:
     planner._cave_population = planner.cull_threshold - 9
     target = planner.choose(frame(image), grid)
     assert target is not None and target.type == hatch.HATCH_ALL_BUTTON
+
+
+def test_hud_hatch_all_button_is_never_measured_as_the_egg_pile() -> None:
+    # S16 2026-10-07: the pile sat at x~240 while the fixed bottom-centre
+    # 全部孵化 HUD button stayed at x=450. With the pile's own strip missed,
+    # the button's dark-blue badge passed the blue-stone locator and the bot
+    # tapped empty snow above it as a "centred" pile.
+    image = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    image[1100:1500] = cv2.imread(
+        str(FIXTURES / "s16-home-hud-button-offset-pile.jpg")
+    )
+    home = frame(image)
+
+    base = _egg_pile_base_center(home)
+    assert base is not None and abs(base[0] - 240) <= 10
+
+    missed = image.copy()
+    missed[1240:1360, 120:360] = 255  # the pile's own strip out of view
+    base = _egg_pile_base_center(frame(missed))
+    assert base is None or abs(base[0] - 450) > 40 or base[1] < 1300
+
+
+def test_hatch_result_panel_outranks_false_hunt_dialog_close_detection() -> None:
+    # S16 v0.0.90: the panel hides the incubator title while the dimmed X
+    # behind it still matches the hunt-dialog close template. Recovery then
+    # claimed the batch itself and the three dinosaurs were never counted.
+    planner = make_full_planner()
+    planner._stage = "hatch"
+    planner._child = planner._new_hatch()
+    planner._start_hatch_cycle()
+    image = _v3_fixture("hatch-all-result.jpg")
+    detections = [
+        detection(hatch.RESULT_TITLE, 450, 231),
+        detection(hatch.CLAIM_ALL_BUTTON, 645, 1246),
+        detection(hatch.CLOSE_BUTTON, 798, 1421),
+        detection("hunt_dialog_close_button", 798, 1421),
+    ]
+
+    target = planner.choose(frame(image), detections)
+
+    assert target is not None and target.type == hatch.CLAIM_ALL_BUTTON
+    assert planner._stage == "hatch"
+    planner.on_action_success(hatch.CLAIM_ALL_BUTTON)
+    assert planner._hatch_child.hatched == 4
+
+
+def test_boost_is_pressed_only_where_its_ready_label_is_matched() -> None:
+    # S16 v0.0.90: a layout-guessed (450,1303) landed on the orange permanent
+    # egg-speed bar of an account that has not maxed it, opening the purchase
+    # page. The tap now comes only from the matched 冷卻時間加速 label.
+    image = _v3_fixture("incubator-v3-ready.jpg")
+    assert _hatch_boost_button(frame(image), []) is None
+
+    ready = image.copy()
+    ready[1280:1330, 380:520] = (30, 140, 240)
+    label = detection(HATCH_BOOST_READY, 450, 1303)
+    assert _hatch_boost_button(frame(ready), [label]) == (450, 1303)
+    # A label match over a gray (running) bar is not pressable.
+    assert _hatch_boost_button(frame(image), [label]) is None
+
+
+def test_full_workflow_never_presses_boost_without_its_label(tmp_path) -> None:
+    inventory = HatchBoostInventoryStore(tmp_path / "stats.sqlite3")
+    inventory.set_enabled(True)
+    planner = FullHatchPlanner(
+        DigitReader(GLYPHS),
+        egg_pile_point=(450, 1330),
+        boost_inventory=inventory,
+    )
+    planner._child = planner._new_hatch()
+    planner._start_hatch_cycle()
+    planner._observed_cooldown_until = planner.clock() + 300
+    grid = [
+        detection(hatch.INCUBATOR_TITLE, 450, 169),
+        detection(hatch.CLOSE_BUTTON, 798, 1421),
+    ]
+    # Saturated orange where the old layout guess pointed (a permanent bar).
+    image = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    image[1260:1460, 250:650] = (30, 140, 240)
+
+    target = planner.choose(frame(image), grid)
+
+    assert target is None or target.type != HATCH_BOOST_BUTTON
+
+
+def test_live_boost_label_beside_unmaxed_permanent_bar() -> None:
+    # S16 2026-10-07: header + orange 永久蛋加速 VIII + ready 冷卻時間加速.
+    image = _v3_fixture("incubator-v3-permanent-bar-boost-ready.jpg")
+    detections = OpenCvDetector(
+        REPO / "assets" / "hatch" / "manifest.json",
+        default_threshold=0.85,
+        nms_iou=0.3,
+    ).detect(frame(image))
+
+    point = _hatch_boost_button(frame(image), detections)
+    assert point is not None
+    assert abs(point[0] - 477) <= 5 and abs(point[1] - 1358) <= 5
+    # Well clear of the permanent bar (y~1205-1295) that opens the shop.
+    assert point[1] > 1315
+
+    dimmed = (image * 0.15).astype(np.uint8)  # the ticket confirmation modal
+    assert _hatch_boost_button(frame(dimmed), detections) is None
+    # The S9 (maxed) incubator shows a running countdown: no label at all.
+    assert not any(
+        item.type == HATCH_BOOST_READY
+        for item in OpenCvDetector(
+            REPO / "assets" / "hatch" / "manifest.json",
+            default_threshold=0.85,
+            nms_iou=0.3,
+        ).detect(frame(_v3_fixture("incubator-v3-ready.jpg")))
+    )
+
+
+def test_centred_pile_behind_hud_button_is_still_measured() -> None:
+    # S16 2026-10-07 15:16: centring put the pile behind the fixed 全部孵化
+    # button, which split its base strip into two narrow halves. Recovery saw
+    # the pile vanish after every correct drag, undid it, and fused hatching.
+    image = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    image[1100:1500] = cv2.imread(
+        str(FIXTURES / "s16-home-centred-behind-hud-button-y1100.jpg")
+    )
+    home = frame(image)
+
+    base = _egg_pile_base_center(home)
+    assert base is not None
+    assert abs(base[0] - 450) <= 5 and abs(base[1] - 1455) <= 8
+    tap = _egg_pile_safe_tap(home)
+    assert tap is not None and tap[1] < 1360  # never on the HUD button
+
+
+def test_home_hud_hatch_all_waits_for_capacity_preflight() -> None:
+    planner = make_full_planner()
+    planner._child = planner._new_hatch()
+    hatch_child = planner._child
+    planner._start_hatch_cycle()
+    image = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    image[1100:1500] = cv2.imread(str(FIXTURES / "s16-home-hatch-all-22-y1100.jpg"))
+    home = [
+        detection(hatch.HOME_ANCHOR, 49, 562),
+        detection(hatch.HOME_HATCH_ALL_BUTTON, 450, 1418),
+    ]
+
+    target = planner.choose(frame(image), home)
+
+    assert planner._stage == "capacity_preflight"
+    assert target is None or target.type != hatch.HOME_HATCH_ALL_BUTTON
+
+    planner._stage = "hatch"
+    planner._child = hatch_child
+    planner._capacity_checked = True
+    target = planner.choose(frame(image), home)
+    assert target is not None and target.type == hatch.HOME_HATCH_ALL_BUTTON
+
+
+@pytest.mark.parametrize(
+    ("fixture", "expected_dy"),
+    [
+        # Centred, two eggs left: only the water shows, cut off by the button.
+        ("s16-home-centred-two-eggs-behind-hud-y1100.jpg", 0),
+        # Full pile parked 149px high: its flat base strip clears the button.
+        ("s16-home-hatch-all-22-y1100.jpg", 149),
+    ],
+)
+def test_pile_offset_with_hud_button_in_front(fixture: str, expected_dy: int) -> None:
+    image = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    image[1100:1500] = cv2.imread(str(FIXTURES / fixture))
+
+    offset = home_pile_offset(frame(image))
+
+    assert offset is not None
+    assert abs(offset[1] - expected_dy) <= 8
+
+
+@pytest.mark.parametrize(
+    "fixture", ["shop-cooldown-x2.jpg", "shop-permanent-egg-speed.jpg"]
+)
+def test_any_shop_page_is_closed_only_by_its_red_x(fixture: str) -> None:
+    # S16 2026-10-07 reached both shops by stray taps; Back did nothing.
+    image = _v3_fixture(fixture)
+    detections = OpenCvDetector(
+        REPO / "assets" / "hatch" / "manifest.json",
+        default_threshold=0.85,
+        nms_iou=0.3,
+    ).detect(frame(image))
+    assert any(item.type == SHOP_NOTICE for item in detections)
+
+    planner = make_full_planner()
+    planner._stage = "recover_home"
+    target = planner.choose(frame(image), detections)
+
+    assert target is not None and target.type == SHOP_CLOSE
+    assert (target.x, target.y) == (450, 1448)
+
+
+def test_shop_page_without_a_verified_x_is_left_alone() -> None:
+    planner = make_full_planner()
+    blank = frame()  # no red X where the shop puts it
+    assert planner.choose(blank, [detection(SHOP_NOTICE, 450, 175)]) is None
+
+
+def test_cave_tap_is_moved_off_the_floating_cooldown_icon() -> None:
+    # S16 2026-10-07: the matched cave centre (105,1113) sat on the ⏱x2 icon
+    # and opened the x2 cooldown real-money shop.
+    image = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    image[980:1360] = cv2.imread(
+        str(FIXTURES / "s16-cave-view-under-floating-icons-y980.jpg")
+    )
+    cave = Detection.from_bbox(CAVE, BoundingBox(18, 1020, 174, 187), 0.83)
+    assert (cave.x, cave.y) == (105, 1113)
+
+    moved = _clear_of_floating_icons(cave, frame(image))
+
+    assert moved is not None
+    assert moved.x > 120 and moved.y == 1113
+    assert moved.x < 18 + 174  # still on the cave
+
+
+def test_cave_reachable_only_through_the_icons_is_not_tapped() -> None:
+    cave = Detection.from_bbox(CAVE, BoundingBox(10, 1050, 115, 120), 0.9)
+    assert _clear_of_floating_icons(cave, frame()) is None
+
+
+def _hud_home(fixture: str) -> Frame:
+    image = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    image[1100:1500] = cv2.imread(str(FIXTURES / fixture))
+    return frame(image)
+
+
+def test_measured_drag_into_the_hud_row_is_accepted_as_centred() -> None:
+    # S16 2026-10-07 16:45: a (156,151) drag centred the full pile behind the
+    # 自動放置 + 全部孵化 row; recovery saw the pile vanish, undid the correct
+    # drag four times, and fused hatching off.
+    recovery = HatchHomeRecoveryPlanner(reference_width=900.0)
+    recovery._last_offset = (156.0, 151.0)
+    recovery._applied_swipes = [(372, 724, 528, 875)]
+    home = _hud_home("s16-home-centred-behind-two-hud-buttons-y1100.jpg")
+    assert home_pile_offset(home) is None  # the pile really is hidden
+
+    assert recovery._pile_hidden_behind_hud(home)
+    assert recovery.camera_at_limit
+
+
+def test_drag_predicted_outside_the_hud_row_is_still_undone() -> None:
+    recovery = HatchHomeRecoveryPlanner(reference_width=900.0)
+    # Only half of a 300px offset was applied: the pile cannot be centred.
+    recovery._last_offset = (0.0, 300.0)
+    recovery._applied_swipes = [(450, 725, 450, 875)]
+    home = _hud_home("s16-home-centred-behind-two-hud-buttons-y1100.jpg")
+
+    assert not recovery._pile_hidden_behind_hud(home)
+    assert not recovery.camera_at_limit
+
+
+def test_vanished_pile_without_a_hud_row_is_still_undone() -> None:
+    recovery = HatchHomeRecoveryPlanner(reference_width=900.0)
+    recovery._last_offset = (0.0, 150.0)
+    recovery._applied_swipes = [(450, 725, 450, 875)]
+
+    assert not recovery._pile_hidden_behind_hud(frame())
+
+
+def test_home_accepted_behind_hud_row_is_actionable_for_my_nest() -> None:
+    planner = make_full_planner()
+    planner._home_camera_at_limit = True
+    home = _hud_home("s16-home-centred-behind-two-hud-buttons-y1100.jpg")
+    detections = [
+        detection(hatch.HOME_ANCHOR, 49, 562),
+        detection(FOREST_RECENTER, 841, 1296),
+    ]
+
+    assert planner._home_is_actionable(home, detections)
+    planner._home_camera_at_limit = False
+    assert not planner._home_is_actionable(home, detections)
+
+
+def test_cold_start_with_pile_behind_hud_row_probes_once() -> None:
+    # S16 2026-10-07 16:58: the run started on a centred map whose pile was
+    # entirely behind the HUD row; with nothing measured and no own drag the
+    # recovery could only press Back, and fused hatching off.
+    recovery = HatchHomeRecoveryPlanner(reference_width=900.0)
+    home = _hud_home("s16-home-centred-behind-two-hud-buttons-y1100.jpg")
+    seen = [
+        detection(hatch.HOME_ANCHOR, 49, 562),
+        detection(FOREST_RECENTER, 841, 1296),
+    ]
+
+    probe = recovery._hud_probe_target(home, seen, landmark_seen=True)
+
+    assert probe is not None and probe.type == RECOVERY_RECENTER
+    swipe = probe.detection.metadata["swipe"]
+    assert probe.x == 450 and probe.y == 900 and swipe["y2"] == 680
+    assert recovery._hud_probe_target(home, seen, landmark_seen=True) is None
+
+
+def test_probe_is_not_used_once_recovery_has_moved_the_camera() -> None:
+    recovery = HatchHomeRecoveryPlanner(reference_width=900.0)
+    recovery._applied_swipes = [(450, 725, 450, 875)]
+    home = _hud_home("s16-home-centred-behind-two-hud-buttons-y1100.jpg")
+    seen = [detection(hatch.HOME_ANCHOR, 49, 562)]
+
+    assert recovery._hud_probe_target(home, seen, landmark_seen=True) is None

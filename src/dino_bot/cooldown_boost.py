@@ -22,6 +22,10 @@ BOOST_OPEN = "hatch_cooldown_boost_open"
 BOOST_CLOSE = "hatch_cooldown_boost_close"
 BOOST_CANCEL = "hatch_cooldown_boost_cancel"
 BOOST_ACTIONS = frozenset({BOOST_BUTTON, BOOST_CONFIRM, BOOST_OPEN, BOOST_CLOSE, BOOST_CANCEL})
+# The game takes several seconds to turn the bar into its gray countdown after
+# Yes (S16 2026-10-07: still drawn as ready 3s later, gray by the next visit),
+# so an unchanged bar right after confirming is not yet proof of failure.
+VERIFY_GRACE_SECONDS = 10.0
 
 
 class CooldownBoostVisit:
@@ -40,6 +44,7 @@ class CooldownBoostVisit:
         self.failed = False
         self.used = False
         self.confirm_sent = False
+        self.verify_until: float | None = None
         self.keep_incubator_open = keep_incubator_open
         self.logger.info(
             "Cooldown boost | %s",
@@ -80,6 +85,13 @@ class CooldownBoostVisit:
         # Confirmation disappearing alone is insufficient: require a fresh
         # unobscured incubator and an active gray bar before accounting for use.
         if self.phase == "verify" and panel:
+            if (
+                button_ready
+                and self.confirm_sent
+                and self.verify_until is not None
+                and self.clock() < self.verify_until
+            ):
+                return None
             if not button_ready and self.confirm_sent:
                 consumed = self.inventory.consume_one(only_if_due=True)
                 self.used = consumed is not None
@@ -143,11 +155,13 @@ class CooldownBoostVisit:
             self.phase = "confirm"
         elif target_type == BOOST_CONFIRM:
             self.phase = "verify"
+            self.verify_until = self.clock() + VERIFY_GRACE_SECONDS
 
     def on_action_failure(self, target_type: str) -> None:
         if target_type == BOOST_CONFIRM:
             # A missed transition can still have spent the ticket. Observe the
             # next frame before deciding; do not immediately try another Yes.
             self.phase = "verify"
+            self.verify_until = self.clock() + VERIFY_GRACE_SECONDS
         else:
             self.finish(f"action not verified: {target_type}; retry later")
