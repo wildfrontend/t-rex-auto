@@ -87,6 +87,20 @@ class HatchBoostInventoryStore:
                 (self.clock() + seconds, reason, "hatch_cooldown_boost"),
             )
 
+    def align_next_use(self, seconds_from_now: float) -> None:
+        """Match the use deadline to the boost state read off the screen.
+
+        The deadline is otherwise only ever set by our own verified use, so a
+        use the bot did not record (or one it recorded but the game applied
+        late) leaves it wrong by up to a whole boost period.
+        """
+
+        with self._session() as connection:
+            connection.execute(
+                "UPDATE local_inventory SET next_use_at = ? WHERE name = ?",
+                (self.clock() + max(0.0, seconds_from_now), "hatch_cooldown_boost"),
+            )
+
     def set_remaining(self, remaining: int) -> HatchBoostInventory:
         value = self._validate_stock(remaining)
         updated_at = self._now()

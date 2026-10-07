@@ -141,9 +141,10 @@ class HatchHuntPlanner:
         # that courtesy into a permanent hatch lock. Give the idle path first
         # choice, then force one bounded handoff after the same retry interval.
         self._blocked_recovery_due_at: float | None = None
-        # 冷卻剩餘超過這個門檻才值得為加速專程跑一趟。30 分鐘是下限而非目標:
-        # 更短的冷卻交給既有的順路檢查,那不必離開狩獵。
-        self.boost_visit_min_remaining_ms = 1_800_000
+        # 冷卻剩餘超過這個門檻才值得為加速專程跑一趟;更短的交給順路檢查。
+        # 原本是 30 分鐘,S16 5~26 分鐘的冷卻永遠達不到,在兩次進孵化器之間
+        # 到期的加速就整段閒置(2026-10-07)。10 分鐘仍足以抵掉來回的成本。
+        self.boost_visit_min_remaining_ms = 600_000
         # 一次長冷卻只跑一趟。券本身有 30 分鐘的使用間隔,真正需要防的是
         # 造訪沒用成券(按鈕不可用、加速已生效)時每個閒置窗口都重試一次,
         # 那會把省下來的切換成本又賠回去。

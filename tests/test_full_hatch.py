@@ -13,6 +13,7 @@ from dino_bot.cull import CAPACITY_REGION, CapacityRead, should_cull
 from dino_bot.detection import OpenCvDetector
 from dino_bot.digits import DigitReader
 from dino_bot.full_hatch import (
+    read_boost_remaining_seconds,
     FOREST_RECENTER,
     SHOP_CLOSE,
     SHOP_NOTICE,
@@ -4488,3 +4489,75 @@ def test_probe_is_not_used_once_recovery_has_moved_the_camera() -> None:
     seen = [detection(hatch.HOME_ANCHOR, 49, 562)]
 
     assert recovery._hud_probe_target(home, seen, landmark_seen=True) is None
+
+
+def _boost_incubator(tmp_path, monkeypatch, remaining: int | None):
+    now = [10_000.0]
+    inventory = HatchBoostInventoryStore(tmp_path / "stats.sqlite3", clock=lambda: now[0])
+    inventory.set_enabled(True)
+    planner = FullHatchPlanner(
+        DigitReader(GLYPHS),
+        egg_pile_point=(450, 1330),
+        boost_inventory=inventory,
+        clock=lambda: now[0],
+    )
+    planner._child = planner._new_hatch()
+    planner._start_hatch_cycle()
+    planner._observed_cooldown_until = now[0] + 600
+    monkeypatch.setattr(
+        "dino_bot.full_hatch.read_boost_remaining_seconds",
+        lambda frame, reader: remaining,
+    )
+    grid = [
+        detection(hatch.INCUBATOR_TITLE, 450, 169),
+        detection(hatch.CLOSE_BUTTON, 798, 1421),
+    ]
+    return planner, inventory, now, grid
+
+
+def test_boost_ending_within_a_minute_is_waited_for_in_the_incubator(
+    tmp_path, monkeypatch
+) -> None:
+    # S16 2026-10-07 17:34: the incubator closed 8s before the running boost
+    # ended, so the next ticket waited for the next visit.
+    planner, inventory, now, grid = _boost_incubator(tmp_path, monkeypatch, 8)
+    inventory.align_next_use(600)  # our own timer is wrong
+
+    assert planner.choose(frame(), grid) is None
+    assert inventory.ready_delay_seconds() == 8  # aligned to the bar
+
+    now[0] += 9
+    ready = grid + [detection(HATCH_BOOST_READY, 450, 1380)]
+    target = planner.choose(boost_ready_frame(), ready)
+    assert target is not None and target.type == HATCH_BOOST_BUTTON
+
+
+def test_long_running_boost_only_aligns_the_schedule(tmp_path, monkeypatch) -> None:
+    planner, inventory, now, grid = _boost_incubator(tmp_path, monkeypatch, 806)
+
+    target = planner.choose(frame(), grid)
+
+    assert target is not None and target.type == hatch.CLOSE_BUTTON
+    assert inventory.ready_delay_seconds() == 806
+
+
+def test_chain_wait_gives_up_if_the_bar_never_turns_ready(tmp_path, monkeypatch) -> None:
+    planner, inventory, now, grid = _boost_incubator(tmp_path, monkeypatch, 5)
+
+    assert planner.choose(frame(), grid) is None
+    now[0] += 20  # well past 5s + slack, bar still reads as running
+    target = planner.choose(frame(), grid)
+
+    assert target is not None and target.type == hatch.CLOSE_BUTTON
+
+
+def test_live_boost_bar_timer_is_read_on_both_layouts() -> None:
+    reader = DigitReader(GLYPHS)
+    # S9 (permanent speed maxed): gray bar at y~1303, 00:08:02.
+    assert read_boost_remaining_seconds(
+        frame(_v3_fixture("incubator-v3-ready.jpg")), reader
+    ) == 8 * 60 + 2
+    # S16 (not maxed): ready label instead of a countdown.
+    assert read_boost_remaining_seconds(
+        frame(_v3_fixture("incubator-v3-permanent-bar-boost-ready.jpg")), reader
+    ) is None

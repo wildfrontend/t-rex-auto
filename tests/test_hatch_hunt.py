@@ -1169,7 +1169,7 @@ def _boost_capable(combined, full, *, delay_ms: int = 0) -> list[bool]:
 
 
 def test_a_long_cooldown_makes_a_dedicated_boost_trip() -> None:
-    """Past 30 minutes a ticket is worth its own trip home.
+    """Past 10 minutes a ticket is worth its own trip home.
 
     The only caller used to be "an incubator is already open for some other
     reason", so a long cooldown could run its whole length without a boost
@@ -1195,7 +1195,7 @@ def test_a_short_cooldown_makes_no_dedicated_boost_trip() -> None:
     """Under the threshold the existing in-passing check is enough."""
 
     now = [0.0]
-    combined, full, hunt = planner(cooldown_ms=600_000)  # 10 minutes
+    combined, full, hunt = planner(cooldown_ms=300_000)  # 5 minutes
     combined.clock = lambda: now[0]
     started = _boost_capable(combined, full)
     hunt.next_target = target("dinosaur", 300, 700)
@@ -1291,3 +1291,20 @@ def test_handoff_resumes_hatch_on_hud_button_without_centring() -> None:
     chosen = combined.choose(home, seen)
     assert chosen is not None and chosen.type == hatch.HOME_HATCH_ALL_BUTTON
     assert hunt_planner.reset_count == 1
+
+
+def test_a_ten_minute_cooldown_now_earns_a_dedicated_boost_trip() -> None:
+    # S16 2026-10-07: 5-26 minute egg cooldowns never reached the old 30
+    # minute bar, so a boost that expired between incubator visits sat idle.
+    now = [0.0]
+    combined, full, hunt = planner(cooldown_ms=900_000)  # 15 minutes
+    combined.clock = lambda: now[0]
+    started = _boost_capable(combined, full)
+    hunt.next_target = target("dinosaur", 300, 700)
+
+    combined.choose(frame(), [])
+    hunt.delay_ms = 30_000
+    combined.choose(frame(), [])
+
+    assert started == [False]  # a trip of its own, not an inline check
+    assert combined._handoff_reason == "boost"

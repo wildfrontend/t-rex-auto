@@ -118,6 +118,10 @@ HATCH_BOOST_CONFIRM = "hatch_cooldown_boost_confirm_yes"
 # shows its countdown there instead - and the bar must also be saturated at
 # the matched spot.
 HATCH_BOOST_READY = "hatch_cooldown_boost_ready"
+# Wait in the incubator for a running boost that ends this soon, then use the
+# next ticket immediately instead of leaving the cooldown unboosted.
+BOOST_CHAIN_WAIT_SECONDS = 60
+BOOST_CHAIN_WAIT_SLACK_SECONDS = 10
 _BOOST_LABEL_SAMPLE_HALF = (70, 20)
 # Live S16: ready label V~207; under the 想使用黃金票嗎 dialog V~28.
 _BOOST_LABEL_MIN_VALUE = 120.0
@@ -790,6 +794,41 @@ def home_pile_offset(frame: Frame) -> tuple[float, float] | None:
 # icons span x~25-95, y~1082-1328; the zone adds a 25px finger margin.
 FLOATING_ICON_ZONE = (0.0, 1060.0, 120.0, 1350.0)
 FLOATING_ICON_CLEARANCE = 15.0
+
+
+# Countdown on the gray (running) ticket boost bar, "HH:MM:SS". The bar sits
+# at a different height per layout: permanent egg speed maxed (S9, y~1303),
+# not maxed (S16, y~1358), and the old v2 position. Its heavy colons read as
+# digits, so an 8-glyph read drops positions 2 and 5.
+BOOST_TIMER_ROWS: tuple[tuple[int, int, int, int], ...] = (
+    (395, 1283, 560, 1323),
+    (395, 1338, 560, 1378),
+    (395, 1405, 560, 1445),
+)
+BOOST_TIMER_DARK_MAX = 60
+BOOST_TIMER_MAX_SECONDS = 1860
+
+
+def read_boost_remaining_seconds(frame: Frame, reader: DigitReader) -> int | None:
+    """Return the running ticket boost's remaining seconds, or ``None``."""
+
+    if frame.image.size == 0:
+        return None
+    scale = frame.width / 900.0
+    for row in BOOST_TIMER_ROWS:
+        x0, y0, x1, y1 = (round(value * scale) for value in row)
+        crop = frame.image[y0:y1, x0:x1]
+        if crop.size == 0:
+            continue
+        gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+        glyphs = np.where(gray < BOOST_TIMER_DARK_MAX, 0, 255).astype(np.uint8)
+        text = reader.read(cv2.cvtColor(glyphs, cv2.COLOR_GRAY2BGR)).replace("?", "")
+        if len(text) == 8:
+            text = text[0:2] + text[3:5] + text[6:8]
+        value = hatch_feature.parse_hatch_timer_text(text)
+        if value is not None and 0 < value <= BOOST_TIMER_MAX_SECONDS:
+            return value
+    return None
 
 
 def _clear_of_floating_icons(item: Detection, frame: Frame) -> Detection | None:
@@ -3055,6 +3094,7 @@ class FullHatchPlanner:
         self._capacity_management_trigger = self.cull_threshold
         self.screening_growth_interval = max(1, screening_growth_interval)
         self.boost_inventory = boost_inventory
+        self._boost_wait_until: float | None = None
         self.cave_safe_margin = max(0, cave_safe_margin)
         self.cave_bottom_exclusion_px = max(0, cave_bottom_exclusion_px)
         self.recovery_timeout_seconds = max(1.0, recovery_timeout_seconds)
@@ -3314,6 +3354,51 @@ class FullHatchPlanner:
         method = getattr(self._child, "next_ready_delay_ms", None)
         delay = int(method()) if callable(method) else 0
         return delay
+
+    def _sync_boost_from_screen(
+        self,
+        frame: Frame,
+        detections: Sequence[Detection],
+    ) -> bool:
+        """Align the boost schedule with the bar; return True to wait for it.
+
+        The schedule used to be only our own 30-minute timer, so a boost that
+        ended 8s after an incubator visit (S16 17:34) waited for the next
+        visit, and an unrecorded use left the timer wrong for a whole period.
+        """
+
+        assert self.boost_inventory is not None
+        if _hatch_boost_button(frame, detections) is not None:
+            self._boost_wait_until = None
+            if (self.boost_ready_delay_ms() or 0) > 0:
+                self.boost_inventory.align_next_use(0.0)
+            return False
+        remaining = read_boost_remaining_seconds(frame, self.reader)
+        if remaining is None:
+            self._boost_wait_until = None
+            return False
+        self.boost_inventory.align_next_use(remaining)
+        if remaining > BOOST_CHAIN_WAIT_SECONDS:
+            self._boost_wait_until = None
+            return False
+        now = self.clock()
+        if self._boost_wait_until is None:
+            self._boost_wait_until = now + remaining + BOOST_CHAIN_WAIT_SLACK_SECONDS
+            self.logger.info(
+                "Cooldown boost | running boost ends in %ds | waiting in the"
+                " incubator to chain the next ticket",
+                remaining,
+            )
+        if now >= self._boost_wait_until:
+            # The bar never turned ready; stop holding the run on it.
+            self.logger.warning(
+                "Cooldown boost | bar still running after the chain wait"
+                " | resuming"
+            )
+            self._boost_wait_until = None
+            self.boost_inventory.defer("boost bar did not become ready")
+            return False
+        return True
 
     def boost_ready_delay_ms(self) -> int | None:
         if self.capacity_retry_pending:
@@ -4033,7 +4118,7 @@ class FullHatchPlanner:
         # Check boosts during a normal incubator visit, after ready eggs.
         # Keep the panel open so the child can finish its scan and read timers.
         # Only this check owns a confirmation raised by its boost-button action.
-        if self._boost_visit is None and self.boost_ready_delay_ms() == 0:
+        if self._boost_visit is None and self.boost_ready_delay_ms() is not None:
             safe_panel = (
                 self._stage == "hatch"
                 and hatch_feature.INCUBATOR_TITLE in by_type
@@ -4050,7 +4135,13 @@ class FullHatchPlanner:
                 and _unready_egg_detail_close(frame) is None
             )
             if safe_panel:
-                self.begin_boost_visit(keep_incubator_open=True)
+                if self._sync_boost_from_screen(frame, detections):
+                    # The running boost ends within the wait window: keep the
+                    # incubator open and chain the next ticket straight on.
+                    self._no_target_since = None
+                    return None
+                if self.boost_ready_delay_ms() == 0:
+                    self.begin_boost_visit(keep_incubator_open=True)
         if self._boost_visit is not None:
             visit = self._boost_visit
             boost_button = _hatch_boost_button(frame, detections)
