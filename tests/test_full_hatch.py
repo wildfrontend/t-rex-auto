@@ -4172,3 +4172,67 @@ def test_cooldown_preserves_wait_on_shifted_home_and_recovers_only_when_due():
     planner.choose(frame(shifted), home)
     assert planner._stage == 'recover_home'
     assert not planner.is_hunt_cooldown_active()
+
+
+# -- incubator v3: no permanent egg-speed bar, 全部孵化 header (2026-10-07) --
+
+
+def _v3_fixture(name: str) -> np.ndarray:
+    image = cv2.imread(str(FIXTURES / name))
+    assert image is not None
+    return image
+
+
+def test_v3_layout_moves_ticket_boost_up_into_the_old_permanent_bar_slot() -> None:
+    image = _v3_fixture("incubator-v3-ready.jpg")
+
+    assert _hatch_boost_point(frame(image)) == (450, 1303)
+    # Live capture: the ticket boost is counting down (gray).
+    assert not _hatch_boost_ready(frame(image))
+
+    ready = image.copy()
+    ready[1280:1330, 380:520] = (30, 140, 240)
+    # A saturated ready bar sits inside the v2 marker sample; the v3 header
+    # must still win so the tap does not go to the empty v2 position.
+    assert hatch.uses_permanent_boost_layout(ready)
+    assert _hatch_boost_point(frame(ready)) == (450, 1303)
+    assert _hatch_boost_ready(frame(ready))
+
+
+def test_v3_full_workflow_hatches_the_whole_incubator_at_once() -> None:
+    planner = make_full_planner()
+    planner._child = planner._new_hatch()
+    planner._start_hatch_cycle()
+    image = _v3_fixture("incubator-v3-ready.jpg")
+    grid = [
+        detection(hatch.INCUBATOR_TITLE, 447, 169),
+        detection(hatch.CLOSE_BUTTON, 798, 1421),
+        detection(hatch.HATCH_LABEL, 270, 436),
+    ]
+
+    target = planner.choose(frame(image), grid)
+
+    assert target is not None and target.type == hatch.HATCH_ALL_BUTTON
+
+
+def test_v3_full_workflow_bounds_a_batch_by_the_population_stop_line() -> None:
+    planner = make_full_planner()
+    planner._cave_enabled = False
+    planner._child = planner._new_hatch()
+    planner._start_hatch_cycle()
+    planner._capacity_checked = True
+    planner._cave_population = planner.cull_threshold - 5  # nine eggs waiting
+    image = _v3_fixture("incubator-v3-ready.jpg")
+    grid = [
+        detection(hatch.INCUBATOR_TITLE, 447, 169),
+        detection(hatch.CLOSE_BUTTON, 798, 1421),
+        detection(hatch.HATCH_LABEL, 270, 436),
+    ]
+
+    target = planner.choose(frame(image), grid)
+
+    assert target is not None and target.type == hatch.HATCH_LABEL
+
+    planner._cave_population = planner.cull_threshold - 9
+    target = planner.choose(frame(image), grid)
+    assert target is not None and target.type == hatch.HATCH_ALL_BUTTON

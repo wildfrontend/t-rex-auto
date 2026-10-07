@@ -39,6 +39,16 @@
       "threshold": 0.9
     },
     {
+      "type": "hatch_result_title",
+      "file": "templates/hatch-result-title.png",
+      "threshold": 0.88
+    },
+    {
+      "type": "hatch_claim_all_button",
+      "file": "templates/hatch-claim-all-button.png",
+      "threshold": 0.9
+    },
+    {
       "type": "hatch_home_anchor",
       "file": "templates/hatch-home-anchor.png",
       "threshold": 0.78,

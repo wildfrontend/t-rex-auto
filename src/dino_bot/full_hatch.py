@@ -114,6 +114,9 @@ _BOOST_BAR_SAMPLE = (380, 1355, 520, 1405)
 # Incubator v2: a new permanent egg-speed bar pushes the ticket boost down.
 HATCH_BOOST_POINT_V2 = (450.0, 1420.0)
 _BOOST_BAR_SAMPLE_V2 = (380, 1405, 520, 1455)
+# Incubator v3: the permanent bar is gone and the ticket bar sits at y~1262-1345.
+HATCH_BOOST_POINT_V3 = (450.0, 1303.0)
+_BOOST_BAR_SAMPLE_V3 = (380, 1280, 520, 1330)
 # 按鈕帶中段(避開左側 50% 圖示與右側票券圖示)的取樣框,900 寬座標。
 _BOOST_BAR_MIN_SATURATION = 80.0
 
@@ -510,6 +513,8 @@ HOME_FOREGROUND_TYPES: frozenset[str] = frozenset(
         hatch_feature.INCUBATOR_TITLE,
         hatch_feature.HATCH_BUTTON,
         hatch_feature.CLAIM_BUTTON,
+        hatch_feature.RESULT_TITLE,
+        hatch_feature.CLAIM_ALL_BUTTON,
         NEST_TITLE,
         SELECT_TITLE,
         AUTOPLACE_TITLE,
@@ -833,6 +838,9 @@ def _hatch_boost_geometry(
 ) -> tuple[tuple[float, float], tuple[int, int, int, int]]:
     """Return the ticket boost point and sample for the visible UI version."""
 
+    # v3 first: its ready ticket bar is saturated inside the v2 marker sample.
+    if hatch_feature.uses_header_layout(frame.image, reference_width=reference_width):
+        return HATCH_BOOST_POINT_V3, _BOOST_BAR_SAMPLE_V3
     if hatch_feature.uses_permanent_boost_layout(
         frame.image,
         reference_width=reference_width,
@@ -1064,7 +1072,7 @@ def _egg_pile_safe_tap(frame: Frame) -> tuple[int, int] | None:
         hatch_feature.HOME_PILE_TAP_BOTTOM_EXCLUSION_PX * scale
     ):
         return None
-    return x, y
+    return hatch_feature.clear_of_pile_button(frame, (x, y))
 
 
 def _unready_egg_detail_close(frame: Frame) -> tuple[int, int] | None:
@@ -1493,7 +1501,9 @@ class HatchHomeRecoveryPlanner:
                 *_scaled(frame, (50.0, 800.0), self.reference_width),
             )
 
-        claim = best_detection(by_type.get(hatch_feature.CLAIM_BUTTON))
+        claim = best_detection(
+            by_type.get(hatch_feature.CLAIM_ALL_BUTTON)
+        ) or best_detection(by_type.get(hatch_feature.CLAIM_BUTTON))
         if claim is not None:
             # Collecting a completed hatch/battle result is safer than Back:
             # it preserves the result and leads to another named screen.
@@ -3037,6 +3047,25 @@ class FullHatchPlanner:
         )
         return estimate >= self.cull_threshold
 
+    def _hatch_all_headroom(self) -> int | None:
+        """Dinosaurs one 全部孵化 may add before the population stop line.
+
+        Mirrors ``_population_limit_pending``: only when that line can stop
+        hatching mid-visit does a batch need bounding; otherwise the single-egg
+        path would also have hatched every ready egg.
+        """
+
+        if (
+            self._cave_enabled or not self._capacity_checked
+            or self._cave_population is None or self._stage != "hatch"
+        ):
+            return None
+        estimate = (
+            self._cave_population + self._hatched_since_cave_read
+            + self._hatch_child.hatched - self._hatch_baseline
+        )
+        return max(0, self.cull_threshold - estimate)
+
     def next_ready_delay_ms(self) -> int:
         if self._boost_visit is not None:
             return 0
@@ -3368,7 +3397,10 @@ class FullHatchPlanner:
                 self._egg_pile_capacity_check_pending = False
                 self._egg_pile_capacity_rechecked = False
                 self._egg_pile_retry_pending = False
-            if target_type == hatch_feature.CLAIM_BUTTON:
+            if target_type in (
+                hatch_feature.CLAIM_BUTTON,
+                hatch_feature.CLAIM_ALL_BUTTON,
+            ):
                 self._pending_claim_verification = False
             if target_type == hatch_feature.CLOSE_BUTTON:
                 if self.standalone_stage == "hatch":
@@ -3605,7 +3637,10 @@ class FullHatchPlanner:
     def is_recovery_progress(target_type: str) -> bool:
         """A verified hatch claim is the workflow's productive milestone."""
 
-        return target_type == hatch_feature.CLAIM_BUTTON
+        return target_type in (
+            hatch_feature.CLAIM_BUTTON,
+            hatch_feature.CLAIM_ALL_BUTTON,
+        )
 
     def on_action_failure(self, target_type: str) -> None:
         if target_type in BOOST_ACTIONS:
@@ -3634,7 +3669,10 @@ class FullHatchPlanner:
             self._hatch_child.on_action_failure(target_type)
             if target_type == hatch_feature.CLAIM_BUTTON:
                 self._pending_claim_verification = True
-            if target_type == hatch_feature.HATCH_BUTTON:
+            if target_type in (
+                hatch_feature.HATCH_BUTTON,
+                hatch_feature.HATCH_ALL_BUTTON,
+            ):
                 self._capacity_checked = False
                 self._hatch_capacity_check_pending = True
                 self.logger.warning(
@@ -3751,8 +3789,12 @@ class FullHatchPlanner:
                 and not any(key in by_type for key in (
                     CONFIRM_YES, CONFIRM_NO, hatch_feature.CLAIM_BUTTON,
                     hatch_feature.EXPEL_BUTTON, hatch_feature.HATCH_LABEL,
-                    hatch_feature.HATCH_BUTTON,
+                    hatch_feature.HATCH_BUTTON, hatch_feature.RESULT_TITLE,
+                    hatch_feature.CLAIM_ALL_BUTTON,
                 ))
+                and not hatch_feature.hatch_all_ready(
+                    frame.image, reference_width=self.reference_width
+                )
                 and _unready_egg_detail_close(frame) is None
             )
             if safe_panel:
@@ -3840,6 +3882,8 @@ class FullHatchPlanner:
         hatch_result_visible = bool(
             by_type.get(hatch_feature.CLAIM_BUTTON)
             or by_type.get(hatch_feature.EXPEL_BUTTON)
+            or by_type.get(hatch_feature.CLAIM_ALL_BUTTON)
+            or by_type.get(hatch_feature.RESULT_TITLE)
         )
         auto_battle = (
             None
@@ -4148,6 +4192,7 @@ class FullHatchPlanner:
                         self._hatch_child.hatched,
                     )
                 return synthetic_target(HATCH_DETAIL_CLOSE, *detail_close)
+            self._hatch_child.hatch_all_headroom = self._hatch_all_headroom()
             target = self._hatch_child.choose(frame, detections)
             if target is not None and target.type == hatch_feature.EGG_PILE:
                 if not self._capacity_checked:
@@ -4864,6 +4909,7 @@ class FullHatchPlanner:
         if any(key in by_type for key in (
             CONFIRM_YES, CONFIRM_NO, hatch_feature.CLAIM_BUTTON,
             hatch_feature.EXPEL_BUTTON, hatch_feature.HATCH_BUTTON,
+            hatch_feature.RESULT_TITLE, hatch_feature.CLAIM_ALL_BUTTON,
         )):
             return
         seconds = hatch_feature.read_hatch_cooldown_seconds(

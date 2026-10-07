@@ -247,7 +247,10 @@ def test_claim_button_takes_priority_and_counts() -> None:
 
 
 def test_hatch_cycle_completes_only_after_claim() -> None:
-    assert hatch.DEFAULT_CYCLE_COMPLETE_TARGETS == (hatch.CLAIM_BUTTON,)
+    assert hatch.DEFAULT_CYCLE_COMPLETE_TARGETS == (
+        hatch.CLAIM_BUTTON,
+        hatch.CLAIM_ALL_BUTTON,
+    )
 
 
 def test_expel_button_is_never_a_target() -> None:
@@ -351,3 +354,127 @@ def test_hatch_config_rejects_zero_stat_multiple(tmp_path) -> None:
 
     with pytest.raises(ConfigError, match="multiple_of"):
         load_config(config_path)
+
+
+# -- incubator v3: 全部孵化 / 孵化結果 (live 900x1600 captures, 2026-10-07) --
+
+
+def _fixture(name: str) -> np.ndarray:
+    image = cv2.imread(str(FIXTURES / name))
+    assert image is not None
+    return image
+
+
+def _manifest_detections(image: np.ndarray) -> list[Detection]:
+    from dino_bot.detection import OpenCvDetector
+
+    detector = OpenCvDetector(
+        REPO / "assets" / "hatch" / "manifest.json",
+        default_threshold=0.85,
+        nms_iou=0.3,
+    )
+    return detector.detect(Frame(image))
+
+
+def test_v3_incubator_reads_timers_without_permanent_boost_bar() -> None:
+    reader = DigitReader(GLYPHS)
+    ready = _fixture("incubator-v3-ready.jpg")
+    empty = _fixture("incubator-v3-empty.jpg")
+
+    assert hatch.uses_header_layout(ready)
+    assert not hatch.uses_permanent_boost_layout(ready)
+    assert read_hatch_cooldown_seconds(ready, reader) == 4 * 3600 + 31 * 60 + 16
+    assert read_hatch_cooldown_seconds(empty, reader) == 4 * 3600 + 30 * 60
+
+
+def test_v3_hatch_all_button_is_lit_only_with_ready_eggs() -> None:
+    assert hatch.hatch_all_ready(_fixture("incubator-v3-ready.jpg"))
+    assert not hatch.hatch_all_ready(_fixture("incubator-v3-empty.jpg"))
+    # The cutscene dims the whole incubator; never re-tap through it.
+    assert not hatch.hatch_all_ready(_fixture("hatch-all-cutscene.jpg"))
+
+
+def test_v3_header_egg_count_and_result_count_are_read() -> None:
+    reader = DigitReader(GLYPHS)
+    assert hatch.read_incubator_egg_count(
+        _fixture("incubator-v3-ready.jpg"), reader
+    ) == 9
+    assert hatch.read_incubator_egg_count(
+        _fixture("incubator-v3-empty.jpg"), reader
+    ) == 5
+    assert hatch.read_hatch_result_count(
+        _fixture("hatch-all-result.jpg"), reader
+    ) == 4
+
+
+def test_v3_ready_incubator_taps_hatch_all_instead_of_single_egg() -> None:
+    planner, _ = make_planner(reader=DigitReader(GLYPHS))
+    image = _fixture("incubator-v3-ready.jpg")
+
+    target = planner.choose(Frame(image), _manifest_detections(image))
+
+    assert target is not None and target.type == hatch.HATCH_ALL_BUTTON
+    assert (target.x, target.y) == (645, 255)
+
+
+def test_v3_batch_larger_than_headroom_falls_back_to_single_egg() -> None:
+    planner, _ = make_planner(reader=DigitReader(GLYPHS))
+    planner.hatch_all_headroom = 8  # nine eggs in the incubator
+    image = _fixture("incubator-v3-ready.jpg")
+
+    target = planner.choose(Frame(image), _manifest_detections(image))
+
+    assert target is not None and target.type == hatch.HATCH_LABEL
+    planner.hatch_all_headroom = 9
+    target = planner.choose(Frame(image), _manifest_detections(image))
+    assert target is not None and target.type == hatch.HATCH_ALL_BUTTON
+
+
+def test_v3_empty_incubator_closes() -> None:
+    planner, _ = make_planner(reader=DigitReader(GLYPHS))
+    image = _fixture("incubator-v3-empty.jpg")
+
+    target = planner.choose(Frame(image), _manifest_detections(image))
+
+    assert target is not None and target.type == hatch.CLOSE_BUTTON
+
+
+def test_v3_result_panel_claims_all_and_credits_the_batch() -> None:
+    planner, _ = make_planner(reader=DigitReader(GLYPHS))
+    image = _fixture("hatch-all-result.jpg")
+    detections = _manifest_detections(image)
+    # The dimmed incubator X behind the panel still matches; it must lose.
+    assert any(item.type == hatch.CLOSE_BUTTON for item in detections)
+
+    target = planner.choose(Frame(image), detections)
+
+    assert target is not None and target.type == hatch.CLAIM_ALL_BUTTON
+    assert abs(target.x - 645) <= 5 and abs(target.y - 1246) <= 5
+    planner.on_action_success(hatch.CLAIM_ALL_BUTTON)
+    assert planner.hatched == 4
+
+
+def test_v3_result_panel_without_claim_match_waits() -> None:
+    planner, _ = make_planner()
+    detections = [
+        detection(hatch.RESULT_TITLE, 450, 231),
+        detection(hatch.CLOSE_BUTTON, 798, 1421),
+    ]
+    assert planner.choose(make_frame(), detections) is None
+
+
+def test_home_pile_tap_avoids_the_pile_action_button() -> None:
+    image = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    image[1100:1500] = _fixture("home-pile-hatch-all-button-y1100.jpg")
+    home = Frame(image)
+
+    button = hatch.pile_action_button(home)
+    assert button is not None
+    center_x, top = button
+    assert abs(center_x - 450) <= 3 and abs(top - 1360) <= 3
+
+    point = hatch.home_pile_tap_point(home, egg_pile_point=(450.0, 1330.0))
+    assert point is not None
+    assert point[1] <= top - 60
+    # A tap that already lands on the eggs is left alone.
+    assert hatch.clear_of_pile_button(home, (450, 1230)) == (450, 1230)

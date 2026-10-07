@@ -32,6 +32,13 @@ CLAIM_BUTTON = "hatch_claim_button"
 EXPEL_BUTTON = "hatch_expel_button"
 CLOSE_BUTTON = "hatch_close_button"
 SCROLL = "hatch_scroll"
+# Incubator v3 hatches every ready egg at once: the header's 全部孵化 button
+# opens one 孵化結果 panel whose 領取全部 claims the whole batch. The header
+# button keeps its shape when nothing is ready and only turns gray, so it is
+# located by colour (synthetic target) rather than by template.
+HATCH_ALL_BUTTON = "hatch_all_button"
+RESULT_TITLE = "hatch_result_title"
+CLAIM_ALL_BUTTON = "hatch_claim_all_button"
 
 DEFAULT_TARGET_ACTIONS: dict[str, str] = {
     EGG_PILE: "tap",
@@ -41,6 +48,8 @@ DEFAULT_TARGET_ACTIONS: dict[str, str] = {
     EXPEL_BUTTON: "tap",
     CLOSE_BUTTON: "tap",
     SCROLL: "swipe",
+    HATCH_ALL_BUTTON: "tap",
+    CLAIM_ALL_BUTTON: "tap",
 }
 
 # Post-action delays double as verification timeouts. The hatch button plays a
@@ -53,6 +62,9 @@ DEFAULT_POST_ACTION_DELAYS_MS: dict[str, int] = {
     CLAIM_BUTTON: 4000,
     CLOSE_BUTTON: 2500,
     SCROLL: 1500,
+    # The cracking-egg animation takes about 1.5s before the result panel.
+    HATCH_ALL_BUTTON: 8000,
+    CLAIM_ALL_BUTTON: 4000,
 }
 
 # What must be visible after each tap for it to count as done. Claiming may
@@ -63,12 +75,14 @@ DEFAULT_SUCCESS_TRANSITIONS: dict[str, tuple[str, ...]] = {
     HATCH_BUTTON: (CLAIM_BUTTON,),
     CLAIM_BUTTON: (HATCH_BUTTON, INCUBATOR_TITLE, HATCH_LABEL, CLAIM_BUTTON),
     CLOSE_BUTTON: (HOME_ANCHOR,),
+    HATCH_ALL_BUTTON: (CLAIM_ALL_BUTTON, RESULT_TITLE),
+    CLAIM_ALL_BUTTON: (INCUBATOR_TITLE,),
 }
 
 # One successfully claimed dinosaur is one hatch workflow cycle. This stays
 # feature-local because the shared config's cycle target normally belongs to
 # hunt (mail_reward_collect_button).
-DEFAULT_CYCLE_COMPLETE_TARGETS: tuple[str, ...] = (CLAIM_BUTTON,)
+DEFAULT_CYCLE_COMPLETE_TARGETS: tuple[str, ...] = (CLAIM_BUTTON, CLAIM_ALL_BUTTON)
 
 # Timer text positions in the original 900x1600 incubator grid. The visible
 # grid has three columns and three rows; each timer is read without the clock
@@ -92,6 +106,125 @@ HATCH_TIMER_REGIONS_V2: tuple[tuple[float, float, float, float], ...] = tuple(
 )
 HATCH_V2_PERMANENT_BOOST_SAMPLE = (380.0, 1280.0, 520.0, 1340.0)
 HATCH_V2_PERMANENT_BOOST_MIN_SATURATION = 80.0
+
+# Incubator v3 drops the permanent egg-speed bar for a row of small icons and
+# adds an 升級 / count / 全部孵化 header under the title. The egg grid keeps
+# the v2 position (verified: the v2 timer regions read all nine timers), while
+# the ticket boost bar moves up into the space the orange bar used. The orange
+# 升級 button is the layout marker; it must be checked before the v2 marker,
+# because a ready v3 ticket bar is saturated inside the v2 sample.
+HATCH_V3_UPGRADE_SAMPLE = (195.0, 232.0, 315.0, 278.0)
+HATCH_V3_HATCH_ALL_SAMPLE = (585.0, 232.0, 705.0, 278.0)
+HATCH_V3_HATCH_ALL_POINT = (645.0, 255.0)
+# Live 900x1600 samples: 升級 H20/S213/V242; active 全部孵化 H85/S106/V202;
+# the gray (nothing ready) button S0; both dim to V<30 under the cutscene.
+HATCH_V3_MIN_SATURATION = 60.0
+HATCH_V3_MIN_VALUE = 150.0
+# The 孵化結果 panel prints the batch size as 孵化的恐龍 N.
+HATCH_RESULT_COUNT_REGION = (400.0, 322.0, 520.0, 360.0)
+# The v3 header prints eggs-in-incubator / slots (e.g. 9/24); the egg count
+# bounds how many dinosaurs one 全部孵化 can add.
+HATCH_V3_EGG_COUNT_REGION = (375.0, 225.0, 525.0, 285.0)
+
+
+def _sample_hsv(
+    image: Image,
+    sample: tuple[float, float, float, float],
+    reference_width: float,
+) -> tuple[float, float, float] | None:
+    if image.size == 0 or image.ndim < 3 or image.shape[1] <= 0 or reference_width <= 0:
+        return None
+    scale = image.shape[1] / reference_width
+    x0, y0, x1, y1 = (round(value * scale) for value in sample)
+    roi = image[y0:y1, x0:x1]
+    if roi.size == 0:
+        return None
+    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+    return (
+        float(hsv[:, :, 0].mean()),
+        float(hsv[:, :, 1].mean()),
+        float(hsv[:, :, 2].mean()),
+    )
+
+
+def uses_header_layout(image: Image, *, reference_width: float = 900.0) -> bool:
+    """Return whether the v3 incubator header (升級 / 全部孵化) is visible."""
+
+    upgrade = _sample_hsv(image, HATCH_V3_UPGRADE_SAMPLE, reference_width)
+    if upgrade is None:
+        return False
+    hue, saturation, value = upgrade
+    return (
+        8.0 <= hue <= 30.0
+        and saturation >= HATCH_V3_MIN_SATURATION
+        and value >= HATCH_V3_MIN_VALUE
+    ) or hatch_all_ready(image, reference_width=reference_width)
+
+
+def hatch_all_ready(image: Image, *, reference_width: float = 900.0) -> bool:
+    """Return whether the v3 全部孵化 button is lit (ready eggs exist)."""
+
+    sample = _sample_hsv(image, HATCH_V3_HATCH_ALL_SAMPLE, reference_width)
+    if sample is None:
+        return False
+    hue, saturation, value = sample
+    return (
+        70.0 <= hue <= 100.0
+        and saturation >= HATCH_V3_MIN_SATURATION
+        and value >= HATCH_V3_MIN_VALUE
+    )
+
+
+def hatch_all_point(frame: Frame, *, reference_width: float = 900.0) -> tuple[int, int]:
+    scale = frame.width / reference_width
+    return (
+        round(HATCH_V3_HATCH_ALL_POINT[0] * scale),
+        round(HATCH_V3_HATCH_ALL_POINT[1] * scale),
+    )
+
+
+def read_incubator_egg_count(
+    image: Image,
+    reader: DigitReader,
+    *,
+    reference_width: float = 900.0,
+) -> int | None:
+    """Read the eggs-in-incubator count from the v3 header, or ``None``."""
+
+    if image.ndim < 2 or image.shape[1] <= 0 or reference_width <= 0:
+        return None
+    scale = image.shape[1] / reference_width
+    x0, y0, x1, y1 = (round(value * scale) for value in HATCH_V3_EGG_COUNT_REGION)
+    crop = image[y0:y1, x0:x1]
+    if crop.size == 0:
+        return None
+    eggs, sep, slots = reader.read(crop).partition("/")
+    if not sep or not eggs.isdigit() or not slots.isdigit():
+        return None
+    count, total = int(eggs), int(slots)
+    return count if 0 <= count <= total else None
+
+
+def read_hatch_result_count(
+    image: Image,
+    reader: DigitReader,
+    *,
+    reference_width: float = 900.0,
+) -> int | None:
+    """Read the batch size on the 孵化結果 panel, or ``None``."""
+
+    if image.ndim < 2 or image.shape[1] <= 0 or reference_width <= 0:
+        return None
+    scale = image.shape[1] / reference_width
+    x0, y0, x1, y1 = (round(value * scale) for value in HATCH_RESULT_COUNT_REGION)
+    crop = image[y0:y1, x0:x1]
+    if crop.size == 0:
+        return None
+    text = reader.read(crop).replace("?", "")
+    if not text.isdigit() or len(text) > 3:
+        return None
+    count = int(text)
+    return count if count > 0 else None
 
 
 def uses_permanent_boost_layout(
@@ -236,6 +369,74 @@ def has_home_pile_structure(
     )
 
 
+# The home pile now carries a contextual button over its lower half: teal
+# 全部孵化 while eggs are ready, green 自動放置 otherwise. Both sit exactly where
+# the base-minus-offset tap used to land; on 2026-10-06 S9 opened the auto-place
+# confirmation three times in a row and fused hatching off. Live 900x1600 frame:
+# a 164x77 component at (368,1360), 62% filled.
+PILE_BUTTON_HSV_LOWER = (35, 60, 120)
+PILE_BUTTON_HSV_UPPER = (105, 255, 255)
+PILE_BUTTON_WIDTH_RANGE = (130.0, 200.0)
+PILE_BUTTON_HEIGHT_RANGE = (55.0, 100.0)
+PILE_BUTTON_MIN_FILL = 0.45
+PILE_BUTTON_MIN_Y = 1000.0
+PILE_BUTTON_MAX_X_OFFSET = 180.0
+# Clearance kept above the button: lands on the front eggs of the pile.
+PILE_BUTTON_TAP_ABOVE_PX = 70.0
+
+
+def pile_action_button(
+    frame: Frame,
+    *,
+    reference_width: float = 900.0,
+) -> tuple[float, float] | None:
+    """Return the home pile button's (centre x, top y), or ``None``."""
+
+    if frame.image.size == 0 or frame.width <= 0 or reference_width <= 0:
+        return None
+    scale = frame.width / reference_width
+    hsv = cv2.cvtColor(frame.image, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv, PILE_BUTTON_HSV_LOWER, PILE_BUTTON_HSV_UPPER)
+    count, _, stats, _ = cv2.connectedComponentsWithStats(mask)
+    candidates: list[tuple[int, float, float]] = []
+    for index in range(1, count):
+        x, y, width, height, area = map(int, stats[index])
+        center_x = x + width / 2.0
+        if (
+            PILE_BUTTON_WIDTH_RANGE[0] * scale <= width <= PILE_BUTTON_WIDTH_RANGE[1] * scale
+            and PILE_BUTTON_HEIGHT_RANGE[0] * scale
+            <= height
+            <= PILE_BUTTON_HEIGHT_RANGE[1] * scale
+            and area >= PILE_BUTTON_MIN_FILL * width * height
+            and y >= PILE_BUTTON_MIN_Y * scale
+            and abs(center_x - frame.width / 2.0) <= PILE_BUTTON_MAX_X_OFFSET * scale
+        ):
+            candidates.append((area, center_x, float(y)))
+    if not candidates:
+        return None
+    _, center_x, top = max(candidates)
+    return center_x, top
+
+
+def clear_of_pile_button(
+    frame: Frame,
+    point: tuple[int, int],
+    *,
+    reference_width: float = 900.0,
+) -> tuple[int, int]:
+    """Move a pile tap off the pile's action button onto the eggs above it."""
+
+    button = pile_action_button(frame, reference_width=reference_width)
+    if button is None:
+        return point
+    scale = frame.width / reference_width
+    center_x, top = button
+    safe_y = top - PILE_BUTTON_TAP_ABOVE_PX * scale
+    if point[1] <= safe_y:
+        return point
+    return round(center_x), round(safe_y)
+
+
 def home_pile_tap_point(
     frame: Frame,
     *,
@@ -256,7 +457,7 @@ def home_pile_tap_point(
     y = round(base[1] - HOME_PILE_TAP_OFFSET_PX * scale)
     if y >= frame.height - round(HOME_PILE_TAP_BOTTOM_EXCLUSION_PX * scale):
         return None
-    return x, y
+    return clear_of_pile_button(frame, (x, y), reference_width=reference_width)
 
 
 def parse_hatch_timer_text(text: str) -> int | None:
@@ -295,7 +496,8 @@ def read_hatch_cooldown_seconds(
     scale = image.shape[1] / reference_width
     regions = (
         HATCH_TIMER_REGIONS_V2
-        if uses_permanent_boost_layout(image, reference_width=reference_width)
+        if uses_header_layout(image, reference_width=reference_width)
+        or uses_permanent_boost_layout(image, reference_width=reference_width)
         else HATCH_TIMER_REGIONS
     )
     values: list[int] = []
@@ -367,6 +569,16 @@ class HatchPlanner:
         self._home_failures = 0
         self._stage = "start"
         self.hatched = 0
+        # Batch size of the open 孵化結果 panel, credited when 領取全部 is
+        # verified; the ready labels last seen on the grid are the fallback
+        # when the panel's count cannot be read.
+        self._pending_batch: int | None = None
+        self._ready_labels_seen = 0
+        # Dinosaurs the caller still allows before its population stop line;
+        # ``None`` means unlimited. A batch that might exceed it falls back to
+        # the single-egg path, which re-checks the line after every claim.
+        self.hatch_all_headroom: int | None = None
+        self._headroom_fallback_logged = False
 
     def _record_best_stats(self, verdict: HatchVerdict | None) -> None:
         """Log the breeding line's best HP and attack when either improves.
@@ -452,6 +664,18 @@ class HatchPlanner:
         elif target_type == CLAIM_BUTTON:
             self.hatched += 1
             self._scrolls_done = 0
+        elif target_type == CLAIM_ALL_BUTTON:
+            batch = self._pending_batch or max(1, self._ready_labels_seen)
+            self.hatched += batch
+            self.logger.info(
+                "Hatch | claimed batch of %d%s | hatched=%d",
+                batch,
+                "" if self._pending_batch else " (count unreadable; estimated)",
+                self.hatched,
+            )
+            self._pending_batch = None
+            self._ready_labels_seen = 0
+            self._scrolls_done = 0
         elif target_type == CLOSE_BUTTON:
             self._begin_wait("closed incubator")
 
@@ -479,6 +703,26 @@ class HatchPlanner:
         for item in detections:
             by_type.setdefault(item.type, []).append(item)
 
+        claim_all = best_detection(by_type.get(CLAIM_ALL_BUTTON))
+        if claim_all is not None:
+            # 選擇 and 驅逐 share this panel and are never targets: the whole
+            # batch is always kept, exactly like the single-egg claim.
+            if self.reader is not None:
+                count = read_hatch_result_count(
+                    frame.image,
+                    self.reader,
+                    reference_width=self.reference_width,
+                )
+                if count is not None:
+                    self._pending_batch = count
+            self._stage = "claim_all"
+            return detection_target(claim_all)
+        if RESULT_TITLE in by_type:
+            # The panel is up but its claim button is not matched yet (still
+            # animating in). Never fall through to the dimmed close button
+            # behind it.
+            self._stage = "result_settling"
+            return None
         claim = best_detection(by_type.get(CLAIM_BUTTON))
         if claim is not None:
             expel = best_detection(by_type.get(EXPEL_BUTTON))
@@ -514,13 +758,25 @@ class HatchPlanner:
             return detection_target(hatch_button)
         if INCUBATOR_TITLE in by_type:
             labels = by_type.get(HATCH_LABEL)
+            if hatch_all_ready(
+                frame.image, reference_width=self.reference_width
+            ) and self._batch_fits(frame):
+                self._stage = "hatch_all"
+                self._ready_labels_seen = len(labels or ())
+                return synthetic_target(
+                    HATCH_ALL_BUTTON,
+                    *hatch_all_point(frame, reference_width=self.reference_width),
+                )
             if labels:
                 self._stage = "grid"
                 # Template hits in one visual row can differ by a few pixels
                 # vertically. Lock onto the top row first, then choose its
                 # leftmost egg so processing is deterministic row-major.
                 return detection_target(self._top_left(labels, frame))
-            if self._scrolls_done < self.max_scrolls:
+            # On v3 a gray 全部孵化 already proves no egg anywhere is ready.
+            if self._scrolls_done < self.max_scrolls and not uses_header_layout(
+                frame.image, reference_width=self.reference_width
+            ):
                 self._stage = "scroll"
                 return self._scroll_target(frame)
             close = best_detection(by_type.get(CLOSE_BUTTON))
@@ -563,6 +819,32 @@ class HatchPlanner:
         top_row = [item for item in items if item.y <= top_y + row_tolerance]
         return min(top_row, key=lambda item: item.x)
 
+    def _batch_fits(self, frame: Frame) -> bool:
+        headroom = self.hatch_all_headroom
+        if headroom is None:
+            return True
+        eggs = (
+            None
+            if self.reader is None
+            else read_incubator_egg_count(
+                frame.image,
+                self.reader,
+                reference_width=self.reference_width,
+            )
+        )
+        if eggs is not None and eggs <= headroom:
+            self._headroom_fallback_logged = False
+            return True
+        if not self._headroom_fallback_logged:
+            self._headroom_fallback_logged = True
+            self.logger.info(
+                "Hatch | 全部孵化 skipped | eggs=%s exceeds headroom=%d"
+                " | hatching one egg at a time",
+                "?" if eggs is None else eggs,
+                headroom,
+            )
+        return False
+
     def _scale(self, frame: Frame) -> float:
         return frame.width / self.reference_width
 
@@ -574,8 +856,14 @@ class HatchPlanner:
             reference_width=self.reference_width,
         )
         if pile is None:
-            x = int(self.egg_pile_point[0] * scale)
-            y = int(self.egg_pile_point[1] * scale)
+            x, y = clear_of_pile_button(
+                frame,
+                (
+                    int(self.egg_pile_point[0] * scale),
+                    int(self.egg_pile_point[1] * scale),
+                ),
+                reference_width=self.reference_width,
+            )
         else:
             point = home_pile_tap_point(
                 frame,

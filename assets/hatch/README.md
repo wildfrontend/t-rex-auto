@@ -15,10 +15,15 @@
 | `hatch_claim_button` | 孵化結果頁 | 青色「獲取」按鈕 |
 | `hatch_expel_button` | 孵化結果頁 | 紅色「驅逐」按鈕——**只用於防呆辨識，絕不點擊** |
 | `hatch_close_button` | 孵化器 | 紅色 X 關閉鈕 |
+| `hatch_result_title` | 孵化結果面板 | 「孵化結果」標題（全部孵化後出現） |
+| `hatch_claim_all_button` | 孵化結果面板 | 黃色「領取全部」按鈕；同列的「選擇」「驅逐」絕不點擊 |
 | `hatch_place_sort_attack` | 自動放置排序選單 | 「攻擊力」選項；攻擊特化自動放置使用 |
 | `hatch_place_sort_hp` | 自動放置排序選單 | 「HP」選項；HP 特化自動放置使用 |
 
 注意：
+
+- 孵化器上方的「全部孵化」不做 template——可孵時青色、沒蛋可孵時灰色，形狀相同，
+  以顏色判斷（`hatch.hatch_all_ready`）。
 
 - 大蛋堆平台**不做 template**——樣式會變，用 `hatch.egg_pile` 座標
   （900 寬參考座標系）點擊，進場後以 `hatch_incubator_title` 驗證。
