@@ -306,6 +306,11 @@
       "type": "hatch_shop_reset_notice",
       "file": "templates/hatch-shop-reset-notice.png",
       "threshold": 0.88
+    },
+    {
+      "type": "hatch_nest_set_title",
+      "file": "templates/hatch-nest-set-title.png",
+      "threshold": 0.88
     }
   ]
 }

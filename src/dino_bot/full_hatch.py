@@ -104,6 +104,10 @@ AUTOPLACE_BUTTON = "hatch_autoplace_button"
 AUTOPLACE_YES = "hatch_autoplace_yes"
 COLLECT_EGGS_BUTTON = "hatch_collect_eggs_button"
 NEST_MASK_CLOSE = "hatch_nest_mask_close"
+# The second My Nest tab (巢穴組合變異效果). The game reopens My Nest on its
+# last tab, and a pile tap opens My Nest instead of the incubator when the
+# incubator is full with nothing ready (S16 2026-10-07 18:27).
+NEST_SET_TITLE = "hatch_nest_set_title"
 # 「我的巢」面板左外側的遮罩,900 寬座標。點它就關閉面板回主畫面。
 NEST_MASK_POINT = (50.0, 800.0)
 HATCH_DETAIL_CLOSE = "hatch_unready_detail_close"
@@ -342,6 +346,13 @@ DEFAULT_POST_ACTION_DELAYS_MS: dict[str, int] = {
 DEFAULT_SUCCESS_TRANSITIONS: dict[str, tuple[str, ...]] = {
     **hatch_feature.DEFAULT_SUCCESS_TRANSITIONS,
     **replacement_feature.DEFAULT_SUCCESS_TRANSITIONS,
+    # A full incubator with nothing ready makes the pile open My Nest (on its
+    # last tab) instead; that is an answer, not a missed tap.
+    hatch_feature.EGG_PILE: (
+        hatch_feature.INCUBATOR_TITLE,
+        NEST_TITLE,
+        NEST_SET_TITLE,
+    ),
     OPEN_NEST: (NEST_TITLE,),
     NEST_GEAR: (AUTOPLACE_TITLE,),
     AUTOPLACE_SORT_HEADER: (
@@ -541,6 +552,7 @@ HOME_FOREGROUND_TYPES: frozenset[str] = frozenset(
         hatch_feature.RESULT_TITLE,
         hatch_feature.CLAIM_ALL_BUTTON,
         NEST_TITLE,
+        NEST_SET_TITLE,
         SELECT_TITLE,
         AUTOPLACE_TITLE,
         AUTOPLACE_PROMPT,
@@ -1645,7 +1657,12 @@ class HatchHomeRecoveryPlanner:
                 *_scaled(frame, NEST_MASK_POINT, self.reference_width),
             )
 
-        if AUTOPLACE_TITLE in by_type or SELECT_TITLE in by_type or NEST_TITLE in by_type:
+        if (
+            AUTOPLACE_TITLE in by_type
+            or SELECT_TITLE in by_type
+            or NEST_TITLE in by_type
+            or NEST_SET_TITLE in by_type
+        ):
             self._stage = "close_mask_layer"
             return synthetic_target(
                 RECOVERY_MASK_CLOSE,
@@ -4517,6 +4534,19 @@ class FullHatchPlanner:
     ) -> Target | None:
         by_type = _group(detections)
         if self._stage == "hatch":
+            if NEST_TITLE in by_type or NEST_SET_TITLE in by_type:
+                # Only a pile tap opens My Nest during this stage: the
+                # incubator is full and nothing in it is ready. Close the
+                # panel and wait instead of counting a failed pile tap until
+                # hatching locks itself out.
+                if self._hatch_child.next_ready_delay_ms() == 0:
+                    self._hatch_child.begin_rescan_wait(
+                        "egg pile opened My Nest; incubator full with nothing ready"
+                    )
+                return synthetic_target(
+                    NEST_MASK_CLOSE,
+                    *_scaled(frame, NEST_MASK_POINT, self.reference_width),
+                )
             if self.capacity_retry_pending:
                 if self.is_hunt_cooldown_active():
                     return None

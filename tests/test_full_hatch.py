@@ -13,6 +13,7 @@ from dino_bot.cull import CAPACITY_REGION, CapacityRead, should_cull
 from dino_bot.detection import OpenCvDetector
 from dino_bot.digits import DigitReader
 from dino_bot.full_hatch import (
+    NEST_SET_TITLE,
     _group,
     read_boost_remaining_seconds,
     FOREST_RECENTER,
@@ -4587,3 +4588,36 @@ def test_spent_cave_legs_fall_back_to_a_measured_nudge() -> None:
 
     assert target is not None and target.type == RECOVERY_RECENTER
     assert recovery._last_offset is not None  # a measured nudge, not a cave leg
+
+
+@pytest.mark.parametrize("panel", [NEST_SET_TITLE, "hatch_nest_title"])
+def test_pile_opening_my_nest_closes_it_and_waits(panel: str) -> None:
+    # S16 2026-10-07 18:27: with the incubator full and nothing ready the
+    # pile opened My Nest on its 巢穴組合 tab; Back cannot close it, so the
+    # pile tap counted as failed until hatching locked itself out.
+    planner = make_full_planner()
+    planner._child = planner._new_hatch()
+    planner._start_hatch_cycle()
+    planner._capacity_checked = True
+    from dino_bot.full_hatch import DEFAULT_SUCCESS_TRANSITIONS
+    assert panel in DEFAULT_SUCCESS_TRANSITIONS[hatch.EGG_PILE]
+
+    target = planner.choose(frame(), [detection(panel, 450, 260)])
+
+    assert target is not None and target.type == NEST_MASK_CLOSE
+    assert planner._hatch_child.next_ready_delay_ms() > 0
+
+
+def test_recovery_closes_the_nest_set_tab_through_the_mask() -> None:
+    image = _v3_fixture("s16-pile-opened-nest-set-tab.jpg")
+    detections = OpenCvDetector(
+        REPO / "assets" / "hatch" / "manifest.json",
+        default_threshold=0.85,
+        nms_iou=0.3,
+    ).detect(frame(image))
+    assert any(item.type == NEST_SET_TITLE for item in detections)
+
+    recovery = HatchHomeRecoveryPlanner(reference_width=900.0)
+    target = recovery.choose(frame(image), detections)
+
+    assert target is not None and target.type == RECOVERY_MASK_CLOSE
