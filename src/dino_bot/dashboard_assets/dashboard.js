@@ -189,10 +189,6 @@ function render(data) {
   $("boostStockValue").textContent = stock;
   $("boostUsedTotal").textContent = Number(inventory.used_total || 0);
   const boostEnabled = inventory.enabled === true;
-  $("boostEnabled").checked = boostEnabled;
-  $("boostEnabledLabel").textContent = boostEnabled
-    ? "孵化時自動檢查加速：開啟"
-    : "孵化時自動檢查加速：關閉";
   const boostWait = Math.max(0, Math.ceil(Number(inventory.next_check_at || 0) - Date.now() / 1000));
   $("boostSchedule").textContent = !boostEnabled
     ? "已關閉自動使用"
@@ -203,57 +199,18 @@ function render(data) {
     : boostWait > 0
       ? `最早可再檢查：${Math.floor(boostWait / 60)} 分 ${boostWait % 60} 秒${inventory.waiting_reason ? `（${inventory.waiting_reason}）` : ""}`
       : "等待正常開啟孵化器時檢查（不中斷狩獵）";
-  if (document.activeElement !== $("boostStockInput")) {
-    $("boostStockInput").value = stock;
-  }
   const tuning = data.hatch_tuning || {};
-  const tuningFields = [
-    ["capacity_limit", "capacityLimitValue", "capacityLimitInput"],
-    ["cull_threshold", "cullThresholdValue", "cullThresholdInput"],
-    ["screening_growth_interval", "screeningIntervalValue", "screeningIntervalInput"],
-  ];
-  for (const [key, valueId, inputId] of tuningFields) {
-    const value = tuning[key];
-    $(valueId).textContent = value ?? "—";
-    // 只在使用者沒有正在編輯時覆寫,否則每次輪詢都會把輸入到一半的值抹掉。
-    if (document.activeElement !== $(inputId) && value != null) {
-      $(inputId).value = value;
-    }
-  }
-  const extremeParentProtection = $("extremeParentProtection");
-  const extremeParentEnabled = tuning.allow_extreme_specialization_parent === true;
-  if (document.activeElement !== extremeParentProtection) {
-    extremeParentProtection.checked = extremeParentEnabled;
-  }
-  const displayedExtremeParentEnabled = document.activeElement === extremeParentProtection
-    ? extremeParentProtection.checked
-    : extremeParentEnabled;
-  $("extremeParentProtectionLabel").textContent = displayedExtremeParentEnabled
-    ? "10/1/1 極端親代保護：開啟"
-    : "10/1/1 極端親代保護：關閉";
-  const specializationAutoPlace = $("specializationAutoPlace");
-  const specializationAutoPlaceEnabled = tuning.auto_place_specializations === true;
-  if (document.activeElement !== specializationAutoPlace) {
-    specializationAutoPlace.checked = specializationAutoPlaceEnabled;
-  }
-  const displayedSpecializationAutoPlace = document.activeElement === specializationAutoPlace
-    ? specializationAutoPlace.checked
-    : specializationAutoPlaceEnabled;
-  $("specializationAutoPlaceLabel").textContent = displayedSpecializationAutoPlace
-    ? "攻擊／HP 自動放置＋純化：開啟"
-    : "攻擊／HP 自動放置＋純化：關閉";
+  $("capacityLimitValue").textContent = tuning.capacity_limit ?? "—";
+  $("cullThresholdValue").textContent = tuning.cull_threshold ?? "—";
+  $("screeningIntervalValue").textContent = tuning.screening_growth_interval ?? "—";
   const customWorkflow = data.custom_workflow || {};
   const selectedStages = new Set(customWorkflow.stages || ["collect", "hatch", "hunt"]);
-  document.querySelectorAll("input[data-custom-stage]").forEach((input) => {
-    if (document.activeElement !== input && !input.disabled) {
-      input.checked = selectedStages.has(input.dataset.customStage);
-    }
-  });
   const orderedStages = Object.keys(customWorkflowStageLabels)
     .filter((stage) => selectedStages.has(stage));
   $("customWorkflowSummary").textContent = orderedStages
     .map((stage) => customWorkflowStageLabels[stage])
     .join(" → ");
+  syncSettingsForm(data);
   const metrics = data.metrics || {};
   const counters = metrics.counters || {};
   setCounter("hunt", counters.hunt);
@@ -373,6 +330,7 @@ function openNewInstanceForm() {
 function openEditInstanceForm(instanceId) {
   const item = knownInstances.find((candidate) => candidate.id === instanceId);
   if (!item) return;
+  if (instanceId !== selectedInstanceId && !confirmDiscardSettings()) return;
   const form = $("instanceForm");
   form.dataset.editingId = instanceId;
   $("instanceName").value = item.name || "";
@@ -464,6 +422,7 @@ $("instanceList").addEventListener("click", (event) => {
     return;
   }
   if (!button || button.dataset.instanceAction === "select") {
+    if (instanceId !== selectedInstanceId && !confirmDiscardSettings()) return;
     selectedInstanceId = instanceId;
     refresh();
     return;
@@ -516,164 +475,223 @@ $("instanceForm").addEventListener("submit", async (event) => {
   }
 });
 
-$("boostStockUpdate").addEventListener("click", async () => {
-  const remaining = Number($("boostStockInput").value);
-  const result = $("commandResult");
-  if (!Number.isInteger(remaining) || remaining < 0 || remaining > 100) {
-    result.classList.add("error");
-    result.textContent = "Bot 額度必須是 0 到 100 的整數。";
-    return;
+// 運行設定表單:輪詢只在沒有未儲存的修改時回填,改好後一次送出。原本每個欄位
+// 各自儲存,而每 2.5 秒的輪詢會把沒有焦點的欄位蓋回 Bot 的值——勾了第二個
+// 選項,第一個就被還原。
+let savedSettings = null;
+let settingsInstanceId = null;
+let settingsDirty = false;
+let settingsSaving = false;
+// 儲存結果或驗證錯誤要留到下一次修改,不能被下一輪輪詢的預設狀態文字蓋掉。
+let settingsNotice = null;
+
+const tuningInputs = {
+  capacity_limit: "capacityLimitInput",
+  cull_threshold: "cullThresholdInput",
+  screening_growth_interval: "screeningIntervalInput",
+};
+
+function settingsFromServer(data) {
+  const inventory = data.hatch_boost_inventory || {};
+  const tuning = data.hatch_tuning || {};
+  const stages = new Set(data.custom_workflow?.stages || ["collect", "hatch", "hunt"]);
+  return {
+    stages: Array.from(document.querySelectorAll("input[data-custom-stage]"))
+      .filter((input) => input.disabled ? input.checked : stages.has(input.dataset.customStage))
+      .map((input) => input.dataset.customStage),
+    boostEnabled: inventory.enabled === true,
+    boostRemaining: Number(inventory.remaining ?? 100),
+    tuning: {
+      capacity_limit: tuning.capacity_limit ?? null,
+      cull_threshold: tuning.cull_threshold ?? null,
+      screening_growth_interval: tuning.screening_growth_interval ?? null,
+      allow_extreme_specialization_parent: tuning.allow_extreme_specialization_parent === true,
+      auto_place_specializations: tuning.auto_place_specializations === true,
+    },
+  };
+}
+
+function settingsFromForm() {
+  const number = (id) => ($(id).value === "" ? null : Number($(id).value));
+  return {
+    stages: Array.from(document.querySelectorAll("input[data-custom-stage]"))
+      .filter((input) => input.checked)
+      .map((input) => input.dataset.customStage),
+    boostEnabled: $("boostEnabled").checked,
+    boostRemaining: number("boostStockInput"),
+    tuning: {
+      capacity_limit: number(tuningInputs.capacity_limit),
+      cull_threshold: number(tuningInputs.cull_threshold),
+      screening_growth_interval: number(tuningInputs.screening_growth_interval),
+      allow_extreme_specialization_parent: $("extremeParentProtection").checked,
+      auto_place_specializations: $("specializationAutoPlace").checked,
+    },
+  };
+}
+
+function fillSettingsForm(settings) {
+  const stages = new Set(settings.stages);
+  document.querySelectorAll("input[data-custom-stage]").forEach((input) => {
+    if (!input.disabled) input.checked = stages.has(input.dataset.customStage);
+  });
+  $("boostEnabled").checked = settings.boostEnabled;
+  $("boostStockInput").value = settings.boostRemaining;
+  for (const [key, id] of Object.entries(tuningInputs)) {
+    $(id).value = settings.tuning[key] ?? "";
   }
-  $("boostStockUpdate").disabled = true;
-  result.classList.remove("error");
-  result.textContent = "更新本機庫存…";
-  try {
-    const suffix = selectedInstanceId ? `?instance=${encodeURIComponent(selectedInstanceId)}` : "";
-    const response = await fetch(`/api/control/set-boost-stock${suffix}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Dino-Dashboard": "1",
-      },
-      body: JSON.stringify({ remaining }),
-    });
-    const payload = await response.json();
-    if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
-    result.textContent = payload.message;
-    await refresh();
-  } catch (error) {
-    result.classList.add("error");
-    result.textContent = String(error.message || error);
-  } finally {
-    $("boostStockUpdate").disabled = false;
+  $("extremeParentProtection").checked = settings.tuning.allow_extreme_specialization_parent;
+  $("specializationAutoPlace").checked = settings.tuning.auto_place_specializations;
+}
+
+function changedSettingsSections(form, saved) {
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  return {
+    stages: !same(form.stages, saved.stages),
+    boostEnabled: form.boostEnabled !== saved.boostEnabled,
+    boostRemaining: form.boostRemaining !== saved.boostRemaining,
+    tuning: !same(form.tuning, saved.tuning),
+  };
+}
+
+function updateToggleLabels() {
+  $("boostEnabledLabel").textContent = $("boostEnabled").checked
+    ? "孵化時自動檢查加速：開啟"
+    : "孵化時自動檢查加速：關閉";
+  $("extremeParentProtectionLabel").textContent = $("extremeParentProtection").checked
+    ? "10/1/1 極端親代保護：開啟"
+    : "10/1/1 極端親代保護：關閉";
+  $("specializationAutoPlaceLabel").textContent = $("specializationAutoPlace").checked
+    ? "攻擊／HP 自動放置＋純化：開啟"
+    : "攻擊／HP 自動放置＋純化：關閉";
+}
+
+function renderSettingsState(message, isError = false) {
+  if (message !== undefined) settingsNotice = { message, isError };
+  const count = savedSettings
+    ? Object.values(changedSettingsSections(settingsFromForm(), savedSettings)).filter(Boolean).length
+    : 0;
+  settingsDirty = count > 0;
+  $("settingsForm").classList.toggle("dirty", settingsDirty);
+  $("settingsSave").disabled = settingsSaving || !settingsDirty;
+  $("settingsDiscard").disabled = settingsSaving || !settingsDirty;
+  const state = $("settingsState");
+  state.classList.toggle("error", settingsNotice?.isError === true);
+  state.textContent = settingsNotice?.message
+    || (settingsDirty ? `有 ${count} 個區塊尚未儲存` : "設定與 Bot 一致");
+  updateToggleLabels();
+}
+
+function syncSettingsForm(data) {
+  const dataInstance = data.selected_instance || selectedInstanceId;
+  if (dataInstance !== selectedInstanceId) return;
+  savedSettings = settingsFromServer(data);
+  if (settingsInstanceId !== selectedInstanceId) {
+    settingsInstanceId = selectedInstanceId;
+    settingsDirty = false;
+    settingsNotice = null;
   }
+  if (!settingsDirty && !settingsSaving) fillSettingsForm(savedSettings);
+  if (!settingsSaving) renderSettingsState();
+}
+
+function confirmDiscardSettings() {
+  if (!settingsDirty) return true;
+  if (!window.confirm("這台的設定還沒儲存，切換會放棄這些修改。確定切換？")) return false;
+  settingsDirty = false;
+  return true;
+}
+
+function validateSettings(form) {
+  const positiveInteger = (value) => Number.isInteger(value) && value > 0;
+  if (!Number.isInteger(form.boostRemaining) || form.boostRemaining < 0 || form.boostRemaining > 100) {
+    return "加速券庫存必須是 0 到 100 的整數。";
+  }
+  const { capacity_limit: limit, cull_threshold: threshold, screening_growth_interval: interval } = form.tuning;
+  if (!positiveInteger(limit) || !positiveInteger(threshold) || !positiveInteger(interval)) {
+    return "上限人口、安全人口與篩選間隔都必須是大於 0 的整數。";
+  }
+  if (threshold > limit) return "安全人口不能大於上限人口。";
+  return null;
+}
+
+async function postSetting(action, body) {
+  const suffix = selectedInstanceId ? `?instance=${encodeURIComponent(selectedInstanceId)}` : "";
+  const response = await fetch(`/api/control/${action}${suffix}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Dino-Dashboard": "1" },
+    body: JSON.stringify(body),
+  });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+  return payload;
+}
+
+function onSettingsEdited() {
+  settingsNotice = null;
+  renderSettingsState();
+}
+
+$("settingsForm").addEventListener("input", onSettingsEdited);
+$("settingsForm").addEventListener("change", onSettingsEdited);
+
+$("settingsDiscard").addEventListener("click", () => {
+  if (savedSettings) fillSettingsForm(savedSettings);
+  onSettingsEdited();
 });
 
-$("boostEnabled").addEventListener("change", async () => {
-  const checkbox = $("boostEnabled");
-  const result = $("commandResult");
-  checkbox.disabled = true;
-  result.classList.remove("error");
-  result.textContent = checkbox.checked
-    ? "開啟孵化時自動檢查加速券…"
-    : "關閉加速券使用…";
-  try {
-    const suffix = selectedInstanceId ? `?instance=${encodeURIComponent(selectedInstanceId)}` : "";
-    const response = await fetch(`/api/control/set-boost-enabled${suffix}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Dino-Dashboard": "1",
-      },
-      body: JSON.stringify({ enabled: checkbox.checked }),
-    });
-    const payload = await response.json();
-    if (!response.ok) throw new Error(payload.error || "HTTP " + response.status);
-    result.textContent = payload.message;
-    await refresh();
-  } catch (error) {
-    checkbox.checked = !checkbox.checked;
-    result.classList.add("error");
-    result.textContent = String(error.message || error);
-  } finally {
-    checkbox.disabled = false;
+$("settingsForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!savedSettings || settingsSaving) return;
+  const form = settingsFromForm();
+  const problem = validateSettings(form);
+  if (problem) {
+    renderSettingsState(problem, true);
+    return;
   }
+  const changed = changedSettingsSections(form, savedSettings);
+  const steps = [
+    changed.stages && ["自訂流程", "set-custom-workflow", { stages: form.stages }],
+    changed.boostEnabled && ["自動加速", "set-boost-enabled", { enabled: form.boostEnabled }],
+    changed.boostRemaining && ["加速券庫存", "set-boost-stock", { remaining: form.boostRemaining }],
+    changed.tuning && ["孵蛋參數", "set-hatch-tuning", form.tuning],
+  ].filter(Boolean);
+  if (!steps.length) return;
+  settingsSaving = true;
+  renderSettingsState("儲存中…");
+  const done = [];
+  let restartRequired = false;
+  let failure = null;
+  try {
+    for (const [label, action, body] of steps) {
+      try {
+        const payload = await postSetting(action, body);
+        restartRequired = restartRequired || payload.restart_required === true;
+        done.push(label);
+      } catch (error) {
+        failure = `${label}儲存失敗：${error.message || error}`;
+        break;
+      }
+    }
+  } finally {
+    settingsSaving = false;
+  }
+  const summary = done.length ? `已儲存：${done.join("、")}` : "";
+  const message = failure
+    ? [summary, failure, "其餘修改仍保留在表單上"].filter(Boolean).join("；")
+    : `${summary}${restartRequired ? "；重新啟動 Bot 後生效" : ""}`;
+  const result = $("commandResult");
+  result.classList.toggle("error", Boolean(failure));
+  result.textContent = message;
+  if (!failure) settingsDirty = false;
+  await refresh();
+  renderSettingsState(failure ? message : summary, Boolean(failure));
+});
+
+window.addEventListener("beforeunload", (event) => {
+  if (!settingsDirty) return;
+  event.preventDefault();
+  event.returnValue = "";
 });
 
 refresh();
 window.setInterval(refresh, 2500);
-
-$("extremeParentProtection").addEventListener("change", (event) => {
-  $("extremeParentProtectionLabel").textContent = event.target.checked
-    ? "10/1/1 極端親代保護：開啟"
-    : "10/1/1 極端親代保護：關閉";
-});
-
-$("specializationAutoPlace").addEventListener("change", (event) => {
-  $("specializationAutoPlaceLabel").textContent = event.target.checked
-    ? "攻擊／HP 自動放置＋純化：開啟"
-    : "攻擊／HP 自動放置＋純化：關閉";
-});
-
-$("hatchTuningUpdate").addEventListener("click", async () => {
-  const capacityLimit = Number($("capacityLimitInput").value);
-  const cullThreshold = Number($("cullThresholdInput").value);
-  const screeningInterval = Number($("screeningIntervalInput").value);
-  const allowExtremeSpecializationParent = $("extremeParentProtection").checked;
-  const autoPlaceSpecializations = $("specializationAutoPlace").checked;
-  const result = $("commandResult");
-  const positiveInteger = (value) => Number.isInteger(value) && value > 0;
-  if (
-    !positiveInteger(capacityLimit) ||
-    !positiveInteger(cullThreshold) ||
-    !positiveInteger(screeningInterval)
-  ) {
-    result.classList.add("error");
-    result.textContent = "上限人口、安全人口與篩選間隔都必須是大於 0 的整數。";
-    return;
-  }
-  if (cullThreshold > capacityLimit) {
-    result.classList.add("error");
-    result.textContent = "安全人口不能大於上限人口。";
-    return;
-  }
-  $("hatchTuningUpdate").disabled = true;
-  result.classList.remove("error");
-  result.textContent = "儲存孵蛋參數…";
-  try {
-    const suffix = selectedInstanceId ? `?instance=${encodeURIComponent(selectedInstanceId)}` : "";
-    const response = await fetch(`/api/control/set-hatch-tuning${suffix}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Dino-Dashboard": "1",
-      },
-      body: JSON.stringify({
-        capacity_limit: capacityLimit,
-        cull_threshold: cullThreshold,
-        screening_growth_interval: screeningInterval,
-        allow_extreme_specialization_parent: allowExtremeSpecializationParent,
-        auto_place_specializations: autoPlaceSpecializations,
-      }),
-    });
-    const payload = await response.json();
-    if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
-    result.textContent = payload.message;
-    await refresh();
-  } catch (error) {
-    result.classList.add("error");
-    result.textContent = String(error.message || error);
-  } finally {
-    $("hatchTuningUpdate").disabled = false;
-  }
-});
-
-$("customWorkflowSave").addEventListener("click", async () => {
-  const stages = Array.from(document.querySelectorAll("input[data-custom-stage]"))
-    .filter((input) => input.checked)
-    .map((input) => input.dataset.customStage);
-  const result = $("commandResult");
-  $("customWorkflowSave").disabled = true;
-  result.classList.remove("error");
-  result.textContent = "儲存自訂循環流程…";
-  try {
-    const suffix = selectedInstanceId ? `?instance=${encodeURIComponent(selectedInstanceId)}` : "";
-    const response = await fetch(`/api/control/set-custom-workflow${suffix}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Dino-Dashboard": "1",
-      },
-      body: JSON.stringify({ stages }),
-    });
-    const payload = await response.json();
-    if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
-    result.textContent = payload.message;
-    await refresh();
-  } catch (error) {
-    result.classList.add("error");
-    result.textContent = String(error.message || error);
-  } finally {
-    $("customWorkflowSave").disabled = false;
-  }
-});

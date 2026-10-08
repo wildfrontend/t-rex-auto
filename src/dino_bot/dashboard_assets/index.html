@@ -147,6 +147,11 @@
             <button data-action="start-custom-workflow" data-mode="custom-workflow">啟動自訂循環</button>
             <button data-action="start-hunt" data-mode="hunt">啟動純狩獵</button>
           </div>
+          <form id="settingsForm" class="settings-form" novalidate>
+          <div class="settings-form-head">
+            <span>運行設定</span>
+            <small>各區塊改好後，按最下方「儲存設定」一次送出；未儲存前不會被自動更新蓋掉</small>
+          </div>
           <div class="inventory-control custom-workflow-control">
             <div>
               <span>自訂循環流程</span>
@@ -165,9 +170,8 @@
               <label><input type="checkbox" data-custom-stage="hatch" checked disabled>孵蛋（循環必要）</label>
               <label><input type="checkbox" data-custom-stage="hunt">狩獵</label>
             </div>
-            <button id="customWorkflowSave" type="button">儲存自訂流程</button>
           </div>
-          <div class="inventory-control">
+          <div class="inventory-control boost-control">
             <div>
               <span>冷卻加速券</span>
               <strong><b id="boostStockValue">100</b> / 100 張</strong>
@@ -180,12 +184,11 @@
               <span id="boostEnabledLabel">孵化時自動檢查加速：關閉</span>
             </label>
             <label>
-              <span>校正庫存</span>
+              <span>校正庫存（張）</span>
               <input id="boostStockInput" type="number" min="0" max="100" step="1" value="100">
             </label>
-            <button id="boostStockUpdate" type="button">更新</button>
           </div>
-          <div class="inventory-control">
+          <div class="inventory-control hatch-tuning-control">
             <div>
               <span>孵蛋參數</span>
               <strong>上限 <b id="capacityLimitValue">—</b>／安全 <b id="cullThresholdValue">—</b></strong>
@@ -214,8 +217,13 @@
               <span>篩選間隔</span>
               <input id="screeningIntervalInput" type="number" min="1" max="9999" step="1">
             </label>
-            <button id="hatchTuningUpdate" type="button">儲存（重啟後生效）</button>
           </div>
+          <div class="settings-actions">
+            <span id="settingsState" class="settings-state">設定與 Bot 一致</span>
+            <button id="settingsDiscard" type="button" disabled>放棄變更</button>
+            <button id="settingsSave" class="primary" type="submit" disabled>儲存設定</button>
+          </div>
+          </form>
           <div class="inventory-control stop-timer-control">
             <div>
               <span>停止計時器</span>
