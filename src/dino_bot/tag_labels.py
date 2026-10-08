@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import difflib
 import logging
+import threading
 import unicodedata
 from collections.abc import Mapping
 from typing import Any, Protocol
@@ -106,17 +107,30 @@ def match_role(text: str, names: Mapping[str, str]) -> str | None:
 
 
 class RapidOcrReader:
-    """Offline Chinese/English line reader, loaded on first use."""
+    """Offline Chinese/English line reader.
 
-    def __init__(self) -> None:
+    Loading the models takes ~8s on the Mac runtime against ~0.15s per read
+    afterwards. Paid inside a tag step, that load outlasts the verification
+    window of the very tap waiting on it, so it is started in the background
+    as soon as the reader exists.
+    """
+
+    def __init__(self, *, preload: bool = True) -> None:
         self._engine: Any = None
+        self._lock = threading.Lock()
+        if preload:
+            threading.Thread(target=self._load, name="tag-ocr-preload", daemon=True).start()
+
+    def _load(self) -> Any:
+        with self._lock:
+            if self._engine is None:
+                from rapidocr import RapidOCR
+
+                self._engine = RapidOCR()
+            return self._engine
 
     def read(self, image: np.ndarray) -> list[tuple[str, float, tuple[int, int, int, int]]]:
-        if self._engine is None:
-            from rapidocr import RapidOCR
-
-            self._engine = RapidOCR()
-        result = self._engine(image)
+        result = self._load()(image)
         lines: list[tuple[str, float, tuple[int, int, int, int]]] = []
         if result.boxes is None or result.txts is None:
             return lines
