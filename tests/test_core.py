@@ -1821,6 +1821,44 @@ def test_verifier_rejects_duplicate_hunt_alert() -> None:
     assert "duplicate_hunt_alert" in result.reason
 
 
+def test_verifier_fails_hunt_confirm_on_the_autoplace_prompt_only() -> None:
+    """「巢的自動配置」框代表確認鍵被擋下,不是點了沒反應。
+
+    原本確認鍵要等滿驗證時間才判定失敗,每次白等 3–5 秒;而且這個框只能讓
+    「確認」失敗——按「取消」的那一下畫面上還殘留著框,不能也被判失敗。
+    """
+
+    verifier = TargetChangedVerifier(
+        failure_transitions={"hunt_confirm_button": ("hunt_autoplace_cancel_button",)},
+        success_transitions={
+            "hunt_confirm_button": ("mailbox_button",),
+            "hunt_autoplace_cancel_button": ("mailbox_button",),
+        },
+    )
+    prompt = make_detection(type="hunt_autoplace_cancel_button")
+    confirm = make_detection(type="hunt_confirm_button")
+    confirm_target = Target("hunt_confirm_button", confirm.x, confirm.y, 0.9, confirm)
+
+    result = verifier.verify(
+        make_frame(), make_frame(255), confirm_target, [confirm], [prompt]
+    )
+    assert not result.success
+    assert result.reason.startswith("failure indicator detected:")
+    assert "hunt_autoplace_cancel_button" in verifier.relevant_detection_types(
+        "hunt_confirm_button"
+    )
+
+    cancel_target = Target("hunt_autoplace_cancel_button", prompt.x, prompt.y, 0.9, prompt)
+    result = verifier.verify(
+        make_frame(),
+        make_frame(),
+        cancel_target,
+        [prompt],
+        [prompt, make_detection(type="mailbox_button")],
+    )
+    assert not result.reason.startswith("failure indicator detected:")
+
+
 def test_verifier_accepts_expected_next_ui() -> None:
     detection = make_detection(type="dinosaur")
     target = Target("dinosaur", detection.x, detection.y, detection.confidence, detection)
@@ -3674,6 +3712,38 @@ def test_nest_autoplace_prompt_is_refused_then_waited_out() -> None:
     assert planner.last_stage() == "capacity_wait"
     assert 0 < planner.next_ready_delay_ms() <= 180_000
     assert planner.choose(frame, [Detection("dinosaur", 400, 800, 0.9)]) is None
+
+
+def test_autoplace_refusal_that_lands_on_the_map_keeps_hunting() -> None:
+    """實機上按「取消」幾乎都直接回到地圖,面板不會留著。
+
+    S13 一個早上拒絕了 86 次,只有 1 次面板還開著。拒絕旗標若一直留著,下一次
+    正常打開的隊伍面板會被當成「卡住的面板」直接關掉;改成等 180 秒更糟,
+    因為下一隻恐龍通常就組得出不含巢中親代的隊伍。
+    """
+
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(
+        (*HUNT_TARGET_TYPES, "hunt_autoplace_cancel_button"),
+        autoplace_refused_wait_seconds=180.0,
+    )
+    planner.on_action_success("hunt_autoplace_cancel_button")
+
+    on_map = [
+        Detection("mailbox_button", 841, 1210, 0.99),
+        Detection("map_exit_nest_button", 841, 1295, 0.96),
+        Detection("dinosaur", 400, 800, 0.9),
+    ]
+    planner.choose(frame, on_map)
+    assert planner.last_stage() != "capacity_wait"
+
+    # 下一個正常的隊伍面板要照常按「狩獵」,不能被當成拒絕後殘留的面板關掉。
+    sheet = [
+        Detection("hunt_confirm_button", 451, 1411, 0.87),
+        Detection("hunt_dialog_close_button", 628, 1409, 0.96),
+    ]
+    target = planner.choose(frame, sheet)
+    assert target is None or target.type != "hunt_dialog_close_button"
 
 
 def test_the_autoplace_prompt_is_watched_for_on_every_hunt_scan() -> None:

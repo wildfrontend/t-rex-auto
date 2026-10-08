@@ -199,6 +199,7 @@ class VerifyConfig:
     pixel_change_threshold: float = 0.08
     minimum_checks: int = 2
     failure_types: tuple[str, ...] = ()
+    failure_transitions: dict[str, tuple[str, ...]] = field(default_factory=dict)
     success_transitions: dict[str, tuple[str, ...]] = field(default_factory=dict)
     success_requires_target_absence: tuple[str, ...] = ()
 
@@ -740,6 +741,12 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
             pixel_change_threshold=float(verify_data.get("pixel_change_threshold", 0.08)),
             minimum_checks=int(verify_data.get("minimum_checks", 2)),
             failure_types=tuple(verify_data.get("failure_types", [])),
+            failure_transitions={
+                str(target_type): tuple(str(item) for item in indicators)
+                for target_type, indicators in verify_data.get(
+                    "failure_transitions", {}
+                ).items()
+            },
             success_transitions={
                 str(target_type): tuple(str(item) for item in successors)
                 for target_type, successors in verify_data.get(

@@ -24,10 +24,18 @@ class TargetChangedVerifier:
         success_requires_detection_disappearance: Mapping[
             str, Sequence[str]
         ] | None = None,
+        failure_transitions: Mapping[str, Sequence[str]] | None = None,
     ):
         self.max_distance = max_distance
         self.pixel_change_threshold = pixel_change_threshold
         self.failure_types = frozenset(failure_types)
+        # Screens that prove one particular tap was refused. Unlike
+        # ``failure_types`` they only count after their own target, so a dialog
+        # can fail the tap that raised it without failing the tap that answers it.
+        self.failure_transitions = {
+            target_type: frozenset(indicators)
+            for target_type, indicators in (failure_transitions or {}).items()
+        }
         self.success_transitions = {
             target_type: frozenset(successors)
             for target_type, successors in (success_transitions or {}).items()
@@ -60,6 +68,7 @@ class TargetChangedVerifier:
                 *target_presence,
                 *required_disappearances,
                 *self.failure_types,
+                *self.failure_transitions.get(target_type, ()),
             }
         )
 
@@ -78,8 +87,11 @@ class TargetChangedVerifier:
                 reason="verification frame is black",
                 confidence=1.0,
             )
+        failure_types = self.failure_types | self.failure_transitions.get(
+            target.type, frozenset()
+        )
         failures = sorted(
-            {item.type for item in after_detections if item.type in self.failure_types}
+            {item.type for item in after_detections if item.type in failure_types}
         )
         if failures:
             return VerificationResult(

@@ -233,6 +233,11 @@
       "duplicate_hunt_alert",
       "hunt_team_return_button"
     ],
+    "failure_transitions": {
+      "hunt_confirm_button": [
+        "hunt_autoplace_cancel_button"
+      ]
+    },
     "success_requires_target_absence": [
       "forest_recenter_button"
     ],
@@ -249,7 +254,9 @@
         "mailbox_button"
       ],
       "hunt_autoplace_cancel_button": [
-        "hunt_dialog_close_button"
+        "hunt_dialog_close_button",
+        "mailbox_button",
+        "map_exit_nest_button"
       ],
       "hunt_dialog_close_button": [
         "mailbox_button",

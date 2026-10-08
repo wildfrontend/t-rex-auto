@@ -166,6 +166,7 @@ def _create_hunt_engine(config: AppConfig, *, verbose: bool = False) -> BotEngin
         max_distance=config.verify.max_distance,
         pixel_change_threshold=config.verify.pixel_change_threshold,
         failure_types=config.verify.failure_types,
+        failure_transitions=config.verify.failure_transitions,
         success_transitions=config.verify.success_transitions,
         black_mean_threshold=config.recovery.black_mean_threshold,
         success_requires_target_absence=(
@@ -651,6 +652,7 @@ def _create_hatch_engine(
         max_distance=config.verify.max_distance,
         pixel_change_threshold=config.verify.pixel_change_threshold,
         failure_types=(config.verify.failure_types if hunt_during_cooldown else ()),
+        failure_transitions=config.verify.failure_transitions,
         success_transitions=success_transitions,
         success_frame_predicates=(
             {

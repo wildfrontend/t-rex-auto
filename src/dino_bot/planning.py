@@ -416,8 +416,10 @@ class HuntPlanner(TargetPlanner):
         """Commit hunt counters only after the confirmation tap is verified."""
 
         if target_type == self.autoplace_cancel_type:
-            # The dialog is gone; the sheet underneath still is not. Mark the
-            # refusal so the close rung fires even though Hunt looks pressable.
+            # The dialog is gone; the sheet underneath may still be open. Mark
+            # the refusal so the close rung fires even though Hunt looks
+            # pressable. `_settle_autoplace_refusal` drops it again when the
+            # game went straight back to the map instead.
             self._autoplace_refused = True
             self._awaiting_hunt_button = False
             self._waited_frames = 0
@@ -1417,6 +1419,7 @@ class HuntPlanner(TargetPlanner):
         return None
 
     def choose(self, frame: Frame, detections: Sequence[Detection]) -> Target | None:
+        self._settle_autoplace_refusal(detections)
         target = self._choose_target(frame, detections)
         # A scoped scan earns the next one by producing work. Counting the
         # empty ones is what lets `planning_detection_types` widen the view
@@ -1427,6 +1430,26 @@ class HuntPlanner(TargetPlanner):
             self._scoped_idle_cycles = 0
         self._observe_blind_idle(frame, target)
         return target
+
+    def _settle_autoplace_refusal(self, detections: Sequence[Detection]) -> None:
+        """Drop a refusal the game already resolved by returning to the map.
+
+        The refusal rung was written for a Cancel that leaves the team sheet
+        open. On the live game it almost always lands straight back on the
+        map instead: s13 refused 86 prompts in one morning and saw the sheet
+        stay open once. Holding the flag there would make the next ordinary
+        team sheet look like a stranded one and get closed unseen, and the
+        180-second wait would cost far more than the hunts it protects - the
+        next dinosaur usually fields a team without a nest parent.
+        """
+
+        if not self._autoplace_refused:
+            return
+        types = {item.type for item in detections}
+        if self.hunt_dialog_close_type in types:
+            return
+        if types & {self.mailbox_type, self.map_exit_type}:
+            self._autoplace_refused = False
 
     def _observe_blind_idle(self, frame: Frame, target: Target | None) -> None:
         """Time the cycles where the planner can neither act nor name a wait.

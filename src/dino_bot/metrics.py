@@ -543,7 +543,7 @@ class MetricsStore:
             target = state.get("current_target")
             if target == "hunt_confirm_button":
                 self._record(connection, source, occurred_at, "hunt")
-            elif target == "hatch_claim_button":
+            elif target in {"hatch_claim_button", "hatch_claim_all_button"}:
                 if not state.get("in_cave", False):
                     self._record(connection, source, occurred_at, "hatch")
                 state["in_cave"] = False

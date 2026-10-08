@@ -166,6 +166,30 @@ def test_metrics_does_not_count_cave_claim_as_hatched_dinosaur(tmp_path: Path) -
     assert result["counters"]["hatch"]["total"] == 0
 
 
+def test_metrics_counts_v3_claim_all_as_a_hatch(tmp_path: Path) -> None:
+    # v3 版面一次孵整台孵化器,領取鍵換成 hatch_claim_all_button;只認舊鍵的
+    # 統計從改版那天起孵蛋數一直是 0。
+    logs = tmp_path / "logs"
+    today = datetime.now().astimezone().date()
+    append_log(
+        logs / f"{today:%Y%m%d}.log",
+        """
+05:48:00 | INFO | Feature | custom-workflow | stages=attack,hp,collect,cave,hatch,hunt
+05:48:01 | INFO | Bot started | Sense -> Think -> Act
+05:48:54 | INFO | Planning | hatch_all_button at (645,255) confidence=1.000
+05:48:58 | INFO | Verify | Success | next UI detected: hatch_claim_all_button, hatch_result_title
+05:49:01 | INFO | Planning | hatch_claim_all_button at (645,1246) confidence=1.000
+05:49:02 | INFO | Hatch | claimed batch of 4 | hatched=4
+05:49:02 | INFO | Verify | Success | next UI detected: hatch_incubator_title
+""",
+    )
+    store = MetricsStore(tmp_path / "data" / "stats.sqlite3", logs)
+
+    result = store.snapshot()
+
+    assert result["counters"]["hatch"]["total"] == 1
+
+
 def test_metrics_incrementally_ingests_appended_lines(tmp_path: Path) -> None:
     logs = tmp_path / "logs"
     today = datetime.now().astimezone().date()
