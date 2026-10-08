@@ -115,7 +115,7 @@ def frame(image: np.ndarray | None = None) -> Frame:
     if image is None:
         image = np.full((1600, 900, 3), 255, dtype=np.uint8)
         # Stable cyan base line of the centred home egg pile.
-        image[1448:1460, 330:573] = (220, 180, 20)
+        image[1299:1311, 330:573] = (220, 180, 20)
     return Frame(
         image
     )
@@ -1398,6 +1398,87 @@ def test_open_nest_visual_match_requires_unobscured_centered_home() -> None:
     assert planner.choose(dimmed, home_anchor) is None
 
 
+def test_open_nest_taps_the_hud_icon_when_the_pile_is_below_the_screen() -> None:
+    """S13 v0.0.92: hatch locked after a 全部孵化 round it had just finished.
+
+    Hatching went through the HUD 全部孵化 button, so home was never centred,
+    and the incubator closed onto a map with the pile pushed under the bottom
+    edge. ``open_nest`` demanded a centred map, recovery had no base to
+    measure and could not prove one, and the hatch side locked itself out.
+    The My Nest icon is fixed HUD art, so an unobscured home is enough.
+    """
+
+    image = _v3_fixture("s13-home-pile-below-screen-after-hatch-all.jpg")
+    live = frame(image)
+    home = [detection(hatch.HOME_ANCHOR, 49, 562)]
+    assert is_home_screen(live, home)
+
+    planner = make_full_planner()
+    planner._enter_open_nest(collect_only=False)
+    target = planner.choose(live, home)
+    assert target is not None and target.type == OPEN_NEST
+    assert (target.x, target.y) == (49, 562)
+
+
+def test_open_nest_relaxed_gate_still_requires_the_hud_slot() -> None:
+    # The anchor threshold is loose enough for map eggs to match; off its HUD
+    # slot a match on an uncentred map is not the My Nest icon.
+    image = _v3_fixture("s13-home-pile-below-screen-after-hatch-all.jpg")
+    planner = make_full_planner()
+    planner._enter_open_nest(collect_only=False)
+    egg = [detection(hatch.HOME_ANCHOR, 180, 820)]
+    assert planner.choose(frame(image), egg) is None
+
+
+def test_home_recovery_resets_an_unmeasurable_home_through_forest() -> None:
+    """S13 v0.0.92 14:24: pile below the screen edge, recovery gave up.
+
+    Nothing on the frame could be measured, Back cannot move the camera, and
+    hatching locked itself out. Switching to Forest and back makes the game
+    park the camera at its rest position, which is now HOME_PILE_BASE.
+    """
+
+    stalled = frame(_v3_fixture("s13-home-pile-below-screen-after-hatch-all.jpg"))
+    home = [
+        detection(hatch.HOME_ANCHOR, 49, 562),
+        detection(FOREST_RECENTER, 841, 1296),
+    ]
+    assert home_pile_offset(stalled) is None
+
+    planner = HatchHomeRecoveryPlanner()
+    target = planner.choose(stalled, home)
+    assert target is not None and target.type == RECOVERY_FOREST
+    assert (target.x, target.y) == (841, 1296)
+    planner.on_action_success(target.type)
+
+    hunt_map = frame(np.full((1600, 900, 3), 255, dtype=np.uint8))
+    target = planner.choose(hunt_map, [detection("map_exit_nest_button", 841, 1295)])
+    assert target is not None and target.type == RECOVERY_MAP_EXIT
+    planner.on_action_success(target.type)
+
+    # Back home at the rest position: two frames prove it, nothing to drag.
+    for _ in range(planner.required_home_frames):
+        assert planner.choose(frame(), home) is None
+    assert planner.is_complete() and not planner.is_failed()
+
+
+def test_forest_round_trip_is_spent_once_per_recovery() -> None:
+    # A home the trip did not fix must fall through to the escape ladder
+    # instead of bouncing between maps.
+    stalled = frame(_v3_fixture("s13-home-pile-below-screen-after-hatch-all.jpg"))
+    home = [
+        detection(hatch.HOME_ANCHOR, 49, 562),
+        detection(FOREST_RECENTER, 841, 1296),
+    ]
+    planner = HatchHomeRecoveryPlanner()
+    first = planner.choose(stalled, home)
+    assert first is not None and first.type == RECOVERY_FOREST
+    planner.on_action_success(first.type)
+
+    second = planner.choose(stalled, home)
+    assert second is not None and second.type == RECOVERY_BACK
+
+
 def test_incubator_close_accepts_centered_home_structure_without_anchor() -> None:
     close = detection(hatch.CLOSE_BUTTON, 798, 1384)
     target = Target(close.type, close.x, close.y, close.confidence, close)
@@ -1425,7 +1506,7 @@ def test_incubator_close_rejects_dimmed_or_shifted_home_structure() -> None:
         frame(np.zeros((1600, 900, 3), dtype=np.uint8))
     )
     shifted = np.full((1600, 900, 3), 255, dtype=np.uint8)
-    shifted[1248:1260, 330:573] = (220, 180, 20)
+    shifted[1099:1111, 330:573] = (220, 180, 20)
     assert not is_centered_home_frame(frame(shifted))
 
 
@@ -2121,8 +2202,8 @@ def lava_home_frame(dx: int = 0, dy: int = 0) -> Frame:
     image = np.full((1600, 900, 3), 255, dtype=np.uint8)
     cv2.rectangle(
         image,
-        (335 + dx, 1318 + dy),
-        (563 + dx, 1472 + dy),
+        (335 + dx, 1169 + dy),
+        (563 + dx, 1323 + dy),
         (20, 90, 220),
         thickness=-1,
     )
@@ -2136,8 +2217,8 @@ def blue_stone_home_frame(dx: int = 0, dy: int = 0) -> Frame:
     cv2.rectangle(
         image,
         # Its colour centroid is 40px above the shared structural anchor.
-        (375 + dx, 1387 + dy),
-        (525 + dx, 1443 + dy),
+        (375 + dx, 1238 + dy),
+        (525 + dx, 1294 + dy),
         (212, 149, 108),
         thickness=-1,
     )
@@ -2282,7 +2363,7 @@ def test_blue_stone_base_is_measured_by_stable_colour() -> None:
     offset = home_pile_offset(centered)
     assert offset is not None
     assert max(abs(offset[0]), abs(offset[1])) <= 1
-    assert _egg_pile_safe_tap(centered) == (450, 1355)
+    assert _egg_pile_safe_tap(centered) == (450, 1206)
     assert is_centered_home_screen(
         centered,
         [detection(hatch.HOME_ANCHOR, 59, 561)],
@@ -2304,7 +2385,7 @@ def test_shifted_blue_stone_base_is_not_accepted_as_centered_home() -> None:
     offset = home_pile_offset(shifted)
     assert offset is not None
     assert 314 <= offset[1] <= 316
-    assert _egg_pile_safe_tap(shifted) == (450, 1040)
+    assert _egg_pile_safe_tap(shifted) == (450, 891)
     assert not is_centered_home_screen(
         shifted,
         [
@@ -2315,7 +2396,7 @@ def test_shifted_blue_stone_base_is_not_accepted_as_centered_home() -> None:
 
 
 def test_blue_stone_measurement_ignores_dark_roaming_dinosaur_group() -> None:
-    shifted = blue_stone_home_frame(dy=-500)
+    shifted = blue_stone_home_frame(dy=-351)
     # A large dark connected group below the pile satisfies the old generic
     # structure fallback and changes shape as dinosaurs roam.  The blue-stone
     # colour anchor must remain tied to the pile itself.
@@ -2325,7 +2406,7 @@ def test_blue_stone_measurement_ignores_dark_roaming_dinosaur_group() -> None:
 
     assert offset is not None
     assert abs(offset[0]) <= 1
-    assert 499 <= offset[1] <= 501
+    assert 350 <= offset[1] <= 352
 
 
 def test_regular_small_orange_nest_is_not_a_home_base() -> None:
@@ -2426,7 +2507,7 @@ def test_full_flow_recovers_shifted_cave_view_before_tapping_egg_pile() -> None:
 def test_full_flow_resumes_vertical_recovery_after_restart_mid_return() -> None:
     planner = make_full_planner()
     partially_returned = np.full((1600, 900, 3), 255, dtype=np.uint8)
-    partially_returned[1085:1097, 342:585] = (220, 180, 20)
+    partially_returned[936:948, 342:585] = (220, 180, 20)
 
     target = planner.choose(
         frame(partially_returned),
@@ -2548,7 +2629,7 @@ def test_recovery_stops_dismissing_a_hunt_prompt_that_never_clears() -> None:
 def test_full_flow_tracks_shifted_egg_pile_instead_of_tapping_roaming_dinosaur() -> None:
     planner = make_full_planner()
     image = np.full((1600, 900, 3), 255, dtype=np.uint8)
-    image[1532:1544, 324:567] = (220, 180, 20)
+    image[1383:1395, 324:567] = (220, 180, 20)
 
     target = planner.choose(
         frame(image),
@@ -2679,8 +2760,8 @@ def test_home_recovery_ignores_growth_layout_match_on_bright_shifted_home() -> N
     """A false launch-card match must not consume recovery's escape ladder."""
 
     image = frame().image.copy()
-    image[1448:1460, 330:573] = 255
-    image[1328:1340, 330:573] = (220, 180, 20)
+    image[1299:1311, 330:573] = 255
+    image[1179:1191, 330:573] = (220, 180, 20)
     planner = HatchHomeRecoveryPlanner()
 
     target = planner.choose(
@@ -3234,7 +3315,7 @@ def test_home_recovery_keeps_correcting_a_damped_but_converging_camera_move() ->
 
     def shifted_home(offset_y: int) -> Frame:
         image = np.full((1600, 900, 3), 255, dtype=np.uint8)
-        image[1448 - offset_y : 1460 - offset_y, 330:573] = (220, 180, 20)
+        image[1299 - offset_y : 1311 - offset_y, 330:573] = (220, 180, 20)
         return frame(image)
 
     planner = HatchHomeRecoveryPlanner()
@@ -3434,7 +3515,7 @@ def test_home_recovery_undoes_latest_swipe_after_undo_then_new_nudge() -> None:
 
     def shifted_home(offset_y: int) -> Frame:
         image = np.full((1600, 900, 3), 255, dtype=np.uint8)
-        image[1448 - offset_y : 1460 - offset_y, 330:573] = (220, 180, 20)
+        image[1299 - offset_y : 1311 - offset_y, 330:573] = (220, 180, 20)
         return frame(image)
 
     planner = HatchHomeRecoveryPlanner()
@@ -3701,7 +3782,7 @@ def test_home_recovery_accepts_pile_the_camera_cannot_move_further() -> None:
     planner = HatchHomeRecoveryPlanner()
     home = [detection(hatch.HOME_ANCHOR, 59, 561)]
     # 165px short of HOME_PILE_BASE, exactly as the live trace measured.
-    stuck = _edge_home_frame(1285)
+    stuck = _edge_home_frame(1136)
 
     # The map does not move, so every measurement returns the same offset.
     for _ in range(2):
@@ -3740,7 +3821,7 @@ def test_open_nest_accepts_the_edge_home_recovery_just_approved() -> None:
 
     planner = FullHatchPlanner(DigitReader(GLYPHS), egg_pile_point=(450, 1330))
     home = [detection(hatch.HOME_ANCHOR, 59, 561)]
-    stuck = _edge_home_frame(1285)
+    stuck = _edge_home_frame(1136)
 
     # The stage gate rejects the off-centre map while nothing has proven the
     # camera is stuck - that strictness is still what protects a normal frame.
@@ -3780,12 +3861,12 @@ def test_home_recovery_still_corrects_a_camera_that_is_actually_moving() -> None
     planner = HatchHomeRecoveryPlanner()
     home = [detection(hatch.HOME_ANCHOR, 59, 561)]
 
-    first = planner.choose(_edge_home_frame(1100), home)
+    first = planner.choose(_edge_home_frame(951), home)
     assert first is not None and first.type == RECOVERY_RECENTER
     planner.on_action_success(first.type)
 
     # The offset shrank by well over the stall threshold: keep correcting.
-    second = planner.choose(_edge_home_frame(1285), home)
+    second = planner.choose(_edge_home_frame(1136), home)
     assert second is not None and second.type == RECOVERY_RECENTER
     assert planner._camera_at_limit is False
 
@@ -4349,10 +4430,12 @@ def test_home_hud_hatch_all_waits_for_capacity_preflight() -> None:
 @pytest.mark.parametrize(
     ("fixture", "expected_dy"),
     [
-        # Centred, two eggs left: only the water shows, cut off by the button.
-        ("s16-home-centred-two-eggs-behind-hud-y1100.jpg", 0),
-        # Full pile parked 149px high: its flat base strip clears the button.
-        ("s16-home-hatch-all-22-y1100.jpg", 149),
+        # Two eggs left, dragged down behind the button by the pre-v3
+        # reference: 149px below the rest position.
+        ("s16-home-centred-two-eggs-behind-hud-y1100.jpg", -149),
+        # Full pile where the game parks it after a map switch: its flat base
+        # strip clears the button, and that is the centred position now.
+        ("s16-home-hatch-all-22-y1100.jpg", 0),
     ],
 )
 def test_pile_offset_with_hud_button_in_front(fixture: str, expected_dy: int) -> None:
@@ -4421,17 +4504,31 @@ def _hud_home(fixture: str) -> Frame:
 
 
 def test_measured_drag_into_the_hud_row_is_accepted_as_centred() -> None:
-    # S16 2026-10-07 16:45: a (156,151) drag centred the full pile behind the
-    # 自動放置 + 全部孵化 row; recovery saw the pile vanish, undid the correct
-    # drag four times, and fused hatching off.
+    # S16 2026-10-07 16:45: a (156,151) drag hid the full pile behind the
+    # 自動放置 + 全部孵化 row; recovery saw the pile vanish, undid the drag four
+    # times, and fused hatching off. A drag that overshoots into the row is
+    # still close enough to home to accept.
     recovery = HatchHomeRecoveryPlanner(reference_width=900.0)
-    recovery._last_offset = (156.0, 151.0)
+    recovery._last_offset = (156.0, 2.0)
     recovery._applied_swipes = [(372, 724, 528, 875)]
     home = _hud_home("s16-home-centred-behind-two-hud-buttons-y1100.jpg")
     assert home_pile_offset(home) is None  # the pile really is hidden
 
     assert recovery._pile_hidden_behind_hud(home)
     assert recovery.camera_at_limit
+
+
+def test_drag_aimed_at_the_rest_position_that_hides_the_pile_is_not_accepted() -> None:
+    # Against the v3 rest position the same (156,151) drag should leave the
+    # base above the row. Vanishing behind it means the drag went 149px too
+    # far, which the undo rung has to reverse rather than accept.
+    recovery = HatchHomeRecoveryPlanner(reference_width=900.0)
+    recovery._last_offset = (156.0, 151.0)
+    recovery._applied_swipes = [(372, 724, 528, 875)]
+    home = _hud_home("s16-home-centred-behind-two-hud-buttons-y1100.jpg")
+
+    assert not recovery._pile_hidden_behind_hud(home)
+    assert not recovery.camera_at_limit
 
 
 def test_drag_predicted_outside_the_hud_row_is_still_undone() -> None:
@@ -4573,7 +4670,9 @@ def test_spent_cave_legs_fall_back_to_a_measured_nudge() -> None:
     # no calibrated legs left, and logged the same error every frame.
     recovery = HatchHomeRecoveryPlanner(reference_width=900.0)
     image = np.full((1600, 900, 3), 255, dtype=np.uint8)
-    image[1100:1500] = cv2.imread(
+    # Placed 149px higher than captured so the base keeps its live 176px
+    # distance from the v3 rest position.
+    image[951:1351] = cv2.imread(
         str(FIXTURES / "s16-home-low-with-cave-in-view-y1100.jpg")
     )
     home = frame(image)

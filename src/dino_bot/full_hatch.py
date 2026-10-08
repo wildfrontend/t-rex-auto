@@ -443,13 +443,29 @@ MAX_SCREENING_RECOVERY_FAILURES = 3
 # itself, because the pile artwork changes with its contents while the base
 # stays put.  Reference and tolerance live together so the "is it centred" test
 # and the correction that follows it cannot drift apart.
-HOME_PILE_BASE: tuple[float, float] = (450.0, 1455.0)
+#
+# This is where the game itself parks the home camera whenever the map is
+# switched (Forest and back). Since the v3 layout added the bottom 全部孵化 /
+# 自動放置 row, that rest position has the base at y~1306, just above the row:
+# 225 returns from the hunt map on 2026-10-07/08 measured (0,149) on S13 and
+# S16 and (-4,146) on S9 against the old 1455 reference, every single time.
+# The old value predates the row and dragged every correctly parked pile down
+# behind it, where nothing could measure it again.
+HOME_PILE_BASE: tuple[float, float] = (450.0, 1306.0)
 HOME_PILE_TOLERANCE = 100.0
+# Where a pile hidden behind the bottom HUD row has its base: the pre-v3 rest
+# position, 149px below the current one.
+HUD_ROW_PILE_BASE_Y = 1455.0
+# Base locators ignore anything above this line. It was 850 against the old
+# 1455 reference and moved up with it, so a pile parked above centre stays
+# measurable over the same ~600px it always was.
+HOME_BASE_SEARCH_TOP = 701.0
 # How far outside the bottom HUD button row a predicted pile base may land and
 # still count as hidden behind it (the base sits ~10px below the row's bottom).
 HUD_ROW_ACCEPT_SLACK_PX = 40.0
-# One-off lift that shows a pile hidden behind that row: the centred base
-# (y~1455) rises to ~1235, clear above the row top (~1357).
+# One-off lift that shows a pile hidden behind that row: a base hidden there
+# (y~1455) rises to ~1235, clear above the row top (~1357) and within the
+# centring tolerance of HOME_PILE_BASE.
 HUD_PROBE_START_Y = 900.0
 HUD_PROBE_LIFT_PX = 220.0
 # Frames to let the map glide after a measured drag before treating a missing
@@ -516,7 +532,7 @@ BLUE_STONE_HEIGHT_RANGE = (25.0, 120.0)
 # while the cyan locator describes the lower common map anchor.  Normalize
 # the skin-specific colour centroid before any shared centering or tap logic
 # consumes it.  Live centred S13 evidence measures the blue centroid at
-# y~=1415, 40px above HOME_PILE_BASE.
+# y~=1415, 40px above the structural base it normalises to.
 BLUE_STONE_ANCHOR_Y_OFFSET = 40.0
 _HOME_BASE_TEMPLATE_PATH = (
     Path(__file__).resolve().parents[2]
@@ -765,6 +781,25 @@ def is_home_screen(frame: Frame, detections: Sequence[Detection]) -> bool:
     return _is_bright_outdoor_map(frame)
 
 
+HOME_ANCHOR_HUD_SLOT = (49.0, 562.0)
+HOME_ANCHOR_HUD_TOLERANCE = 40.0
+
+
+def _anchor_in_hud_slot(frame: Frame, anchor: Detection) -> bool:
+    """Whether a home-anchor match sits on the fixed left-HUD My Nest icon.
+
+    The relaxed threshold lets eggs on the map score as the anchor too, so a
+    match only counts as the HUD icon where that icon is always painted.
+    """
+
+    scale = frame.width / 900.0
+    x, y = HOME_ANCHOR_HUD_SLOT
+    return (
+        math.hypot(anchor.x - x * scale, anchor.y - y * scale)
+        <= HOME_ANCHOR_HUD_TOLERANCE * scale
+    )
+
+
 def _is_bright_outdoor_map(frame: Frame) -> bool:
     """Reject dimmed/unknown foregrounds without requiring a template."""
 
@@ -998,7 +1033,7 @@ def _straw_base_center(frame: Frame) -> tuple[float, float] | None:
     # halved again, because matchTemplate costs scale with the searched pixel
     # count and a sweep pays that cost once per scale.  The 2px of reference
     # precision this trades away is nothing against a 100px tolerance.
-    top = 850
+    top = round(HOME_BASE_SEARCH_TOP)
     region = cv2.resize(image[top:, :], None, fx=0.5, fy=0.5, interpolation=cv2.INTER_AREA)
     best: tuple[float, float, float] | None = None
     for scale in HOME_BASE_SCALES:
@@ -1048,7 +1083,7 @@ def _lava_base_center(frame: Frame) -> tuple[float, float] | None:
             and LAVA_BASE_HEIGHT_RANGE[0] * scale
             <= height
             <= LAVA_BASE_HEIGHT_RANGE[1] * scale
-            and y >= 850 * scale
+            and y >= HOME_BASE_SEARCH_TOP * scale
             and 150 * scale <= center_x <= 750 * scale
         ):
             candidates.append((area, x, y, width, height))
@@ -1139,7 +1174,7 @@ def _pile_behind_button(
             bx0 <= center_x <= bx1
             and mask_top - PILE_BEHIND_BUTTON_MAX_GAP * scale <= bottom <= mask_top + 2
         ):
-            return center_x, HOME_PILE_BASE[1] * scale
+            return center_x, HUD_ROW_PILE_BASE_Y * scale
     return None
 
 
@@ -1202,7 +1237,7 @@ def _egg_pile_base_center(frame: Frame) -> tuple[float, float] | None:
         center_x, center_y = centers[index]
         if (
             area < 350 * scale * scale
-            or y < 850 * scale
+            or y < HOME_BASE_SEARCH_TOP * scale
             or not 150 * scale <= center_x <= 750 * scale
         ):
             continue
@@ -1403,7 +1438,7 @@ class HatchHomeRecoveryPlanner:
         logger: logging.Logger | None = None,
         max_back_attempts: int = 2,
         required_home_frames: int = 2,
-        max_forest_trips: int = 0,
+        max_forest_trips: int = 1,
         # ADB map drags can be damped by the game's camera inertia.  The S13
         # recovery trace reduced a 474px vertical error to 161px in two
         # strictly improving moves, but two was not enough to cross the 100px
@@ -1422,10 +1457,11 @@ class HatchHomeRecoveryPlanner:
         self.logger = logger or logging.getLogger("dino_bot")
         self.max_back_attempts = max(0, max_back_attempts)
         self.required_home_frames = max(1, required_home_frames)
-        # Kept as a compatibility argument for callers built against older
-        # releases.  Entering Forest never recentres the home camera; recovery
-        # must stay on one measurable map instead.
-        self.max_forest_trips = 0
+        # Since the v3 layout, switching to Forest and back parks the home
+        # camera at the game's fixed rest position (HOME_PILE_BASE) instead of
+        # restoring the previous one. That is the only reset available when
+        # the pile is off screen and nothing can be measured.
+        self.max_forest_trips = max(0, max_forest_trips)
         self.max_hunt_dialog_dismissals = max(0, max_hunt_dialog_dismissals)
         self.max_bubble_dismissals = max(0, max_bubble_dismissals)
         self.expect_dinosaur_detail = bool(expect_dinosaur_detail)
@@ -1876,6 +1912,25 @@ class HatchHomeRecoveryPlanner:
         )
         if probe is not None:
             return probe
+        # A bright, unobscured home map with nothing left to measure (S13
+        # 14:24: the pile pushed below the screen edge) cannot be fixed by Back
+        # or by a drag. A round trip through Forest makes the game park the
+        # camera at its rest position; the hunt map's exit control above
+        # brings it home again.
+        if (
+            forest is not None
+            and self._forest_trips < self.max_forest_trips
+            and is_home_screen(frame, home_detections)
+        ):
+            self._stage = (
+                f"forest_round_trip_{self._forest_trips + 1}/{self.max_forest_trips}"
+            )
+            self.logger.warning(
+                "Hatch recovery | home pile not measurable | switching to Forest"
+                " and back to reset the camera"
+            )
+            return synthetic_target(RECOVERY_FOREST, forest.x, forest.y)
+
         if self._back_attempts < self.max_back_attempts:
             self._back_attempts += 1
             self._stage = f"back_{self._back_attempts}/{self.max_back_attempts}"
@@ -2118,12 +2173,11 @@ class HatchHomeRecoveryPlanner:
     def _pile_hidden_behind_hud(self, frame: Frame) -> bool:
         """Accept a measured drag whose pile landed behind the HUD button row.
 
-        The centred pile base (450,1455) sits right behind the fixed bottom
-        全部孵化 / 自動放置 row, so a correct drag hides the very landmark that
-        would prove it - in a different way for every pile skin and egg count
-        (S16 2026-10-07: full pile, water only, two buttons). The drag itself
-        is the proof: when the pile measured before it was predicted to land
-        inside the row and it is now gone, the map is centred.
+        Written when the centred reference (450,1455) sat behind the fixed
+        bottom 全部孵化 / 自動放置 row, so a correct drag hid the very landmark
+        that would prove it. With the reference back on the game's own rest
+        position this only fires for a drag that overshoots into the row;
+        the drag itself is still the proof that the map is near home.
         """
 
         if self._last_offset is None:
@@ -4753,7 +4807,21 @@ class FullHatchPlanner:
             # threshold must not turn into permission to tap a matching egg
             # behind a dimmed item/detail overlay: require the independently
             # measured, bright and centred home map before using the match.
-            if not self._home_is_actionable(frame, detections):
+            #
+            # The anchor itself is fixed left-HUD art, though, not part of the
+            # map. S13 v0.0.92 hatched straight from the HUD 全部孵化 button,
+            # so home was never centred, and came back with the pile pushed
+            # below the screen edge: nothing to measure, recovery could not
+            # prove a centre, and the hatch side locked itself out. An
+            # unobscured home with the anchor at its HUD slot is the same
+            # protection without asking the map to be anywhere in particular.
+            if not (
+                self._home_is_actionable(frame, detections)
+                or (
+                    is_home_screen(frame, detections)
+                    and _anchor_in_hud_slot(frame, anchor)
+                )
+            ):
                 return None
             return synthetic_target(OPEN_NEST, anchor.x, anchor.y)
         if self._stage in ("attack", "hp"):

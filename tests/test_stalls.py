@@ -200,7 +200,7 @@ def test_home_recovery_snapshot_distinguishes_panned_map_from_lost_pile(
     # the answer is not "wait longer" - it is whatever this frame shows.
     assert payload["forest_trips"] == 1
     assert payload["measured_base"] == [463.0, 1090.5]
-    assert payload["expected_base"] == [450, 1455]
+    assert payload["expected_base"] == [450, 1306]
 
 
 def test_home_recovery_snapshot_reports_an_unmeasurable_pile_as_absent(

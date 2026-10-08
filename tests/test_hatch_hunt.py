@@ -26,7 +26,7 @@ from dino_bot.parent_open import NEST_TITLE
 
 def frame() -> Frame:
     image = np.full((1600, 900, 3), 255, dtype=np.uint8)
-    image[1448:1460, 330:573] = (220, 180, 20)
+    image[1299:1311, 330:573] = (220, 180, 20)
     return Frame(image)
 
 
