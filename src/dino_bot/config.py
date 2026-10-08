@@ -253,6 +253,10 @@ class HatchConfig:
     # digits binarised to black, and the stage aborted into home recovery - so
     # the pass was most likely to break right after it did something useful.
     auto_place_specializations: bool = False
+    # Names the player gave the My Nest tags, by role (attack, hp, top, mass).
+    # Roles left out, or still on the game's default name, are recognised by
+    # their screenshots; renamed ones are read with OCR (tag_labels.py).
+    tag_names: dict[str, str] = field(default_factory=dict)
     # OCR values must repeat across complete frames before any parent or
     # candidate tap is allowed. Retries include the initial observations.
     stat_consistent_reads: int = 2
@@ -452,6 +456,22 @@ def _number_tuple(
         return tuple(float(value) for value in raw)
     except (TypeError, ValueError) as exc:
         raise ConfigError(f"{label} must contain numbers") from exc
+
+
+def _tag_names(raw: Any) -> dict[str, str]:
+    from .tag_labels import DEFAULT_TAG_NAMES
+
+    if not isinstance(raw, dict):
+        raise ConfigError("hatch.tag_names must be an object")
+    names: dict[str, str] = {}
+    for role, name in raw.items():
+        if role not in DEFAULT_TAG_NAMES:
+            raise ConfigError(f"hatch.tag_names has unknown role: {role}")
+        if not isinstance(name, str):
+            raise ConfigError(f"hatch.tag_names.{role} must be a string")
+        if name.strip():
+            names[str(role)] = name.strip()
+    return names
 
 
 def _stat_upgrade_guards(data: dict[str, Any]) -> dict[str, StatUpgradeGuard]:
@@ -786,6 +806,7 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
             auto_place_specializations=bool(
                 hatch_data.get("auto_place_specializations", False)
             ),
+            tag_names=_tag_names(hatch_data.get("tag_names", {})),
             expel_below_hp=int(hatch_data.get("expel_below_hp", 0)),
             expel_below_attack=int(hatch_data.get("expel_below_attack", 0)),
             expel_dry_run=bool(hatch_data.get("expel_dry_run", True)),

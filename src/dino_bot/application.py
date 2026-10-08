@@ -50,6 +50,7 @@ from .stalls import (
     ParentStatsSnapshotWriter,
     StallSnapshotWriter,
 )
+from .tag_labels import TagLabelOcrDetector, custom_tag_names, ocr_available
 from .verification import TargetChangedVerifier
 
 
@@ -457,6 +458,7 @@ def _create_hatch_engine(
             "Hatch detector has no assets; capture templates into %s first",
             hatch.manifest,
         )
+    tag_label_detectors = _tag_label_detectors(hatch.tag_names, logger)
     if hunt_during_cooldown or standalone_stage is not None:
         hunt_cv_detector = OpenCvDetector(
             config.detector.manifest,
@@ -465,6 +467,7 @@ def _create_hatch_engine(
         )
         detector = CompositeDetector(
             open_cv_detector,
+            *tag_label_detectors,
             hunt_cv_detector,
             *([HatchAutoplaceDialogDetector()] if full else []),
             HuntTeamAvailabilityDetector(),
@@ -481,6 +484,7 @@ def _create_hatch_engine(
     else:
         detector = CompositeDetector(
             open_cv_detector,
+            *tag_label_detectors,
             reference_size=open_cv_detector.reference_size,
         )
     parent_stats_snapshots = (
@@ -794,3 +798,24 @@ def _create_hatch_engine(
 
 def close_logging() -> None:
     logging.shutdown()
+
+
+def _tag_label_detectors(
+    names: dict[str, str],
+    logger: logging.Logger,
+) -> list[TagLabelOcrDetector]:
+    """OCR for the tags the player renamed; none while every name is default."""
+
+    custom = custom_tag_names(names)
+    if not custom:
+        return []
+    if not ocr_available():
+        raise RuntimeError(
+            "標籤改名需要 OCR 套件(rapidocr),目前的執行環境沒有安裝;"
+            "請重新執行安裝,或在儀表板把標籤名稱改回遊戲預設"
+        )
+    logger.info(
+        "Hatch tags | reading renamed tags with OCR | %s",
+        ", ".join(f"{role}={name}" for role, name in custom.items()),
+    )
+    return [TagLabelOcrDetector(custom, logger=logger)]

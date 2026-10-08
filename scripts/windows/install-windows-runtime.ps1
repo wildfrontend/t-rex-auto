@@ -42,8 +42,8 @@ Invoke-Python "pip bootstrap" @($Bootstrap, "--disable-pip-version-check")
 Invoke-Python "pip upgrade" @("-m", "pip", "install", "--upgrade", "pip")
 Invoke-Python "dependency install" @(
     "-m", "pip", "install",
-    "numpy>=2,<3", "opencv-python-headless>=4.10,<5", "mss>=9,<11",
-    "pywin32>=306"
+    "numpy>=2,<3", "opencv-python>=4.10,<5", "mss>=9,<11",
+    "pywin32>=306", "rapidocr>=3,<4", "onnxruntime>=1.20,<2"
 )
 
 Write-Host "Portable Windows runtime ready: $PythonExecutable"

@@ -10,7 +10,7 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 1
 fi
 
-# Prefer 3.12/3.13: opencv-python-headless ships prebuilt wheels for them,
+# Prefer 3.12/3.13: opencv-python ships prebuilt wheels for them,
 # while newer interpreters may trigger a slow source build that needs Xcode.
 python_command=""
 for candidate in "${DINO_BOT_PYTHON:-}" python3.12 python3.13 python3; do

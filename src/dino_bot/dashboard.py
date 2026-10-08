@@ -994,6 +994,99 @@ class DashboardController:
         }
 
     @staticmethod
+    def tag_names(instance: BotInstance) -> dict[str, Any]:
+        """Effective My Nest tag names for the instance, defaults filled in."""
+
+        from .config import ConfigError, load_config
+        from .tag_labels import DEFAULT_TAG_NAMES, ocr_available
+
+        try:
+            configured = load_config(instance.config_path).hatch.tag_names
+        except (ConfigError, OSError, ValueError):
+            configured = {}
+        return {
+            "names": {
+                role: configured.get(role, default)
+                for role, default in DEFAULT_TAG_NAMES.items()
+            },
+            "defaults": dict(DEFAULT_TAG_NAMES),
+            "ocr_available": ocr_available(),
+        }
+
+    def set_tag_names(
+        self,
+        instance_id: str | None,
+        names: Any,
+    ) -> dict[str, Any]:
+        """Persist what the player named each My Nest tag in the game."""
+
+        from .tag_labels import (
+            DEFAULT_TAG_NAMES,
+            custom_tag_names,
+            normalize_tag_name,
+            ocr_available,
+        )
+
+        if not isinstance(names, dict):
+            raise ValueError("names must be an object")
+        cleaned: dict[str, str] = {}
+        for role in DEFAULT_TAG_NAMES:
+            value = names.get(role, DEFAULT_TAG_NAMES[role])
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{role} tag name must be a non-empty string")
+            if len(value.strip()) > 20:
+                raise ValueError(f"{role} tag name is longer than 20 characters")
+            cleaned[role] = value.strip()
+        unknown = set(names) - set(DEFAULT_TAG_NAMES)
+        if unknown:
+            raise ValueError("unknown tag roles: " + ", ".join(sorted(unknown)))
+        folded = [normalize_tag_name(name) for name in cleaned.values()]
+        if len(set(folded)) != len(folded):
+            raise ValueError("每個標籤名稱必須不同")
+        if normalize_tag_name("所有") in folded:
+            raise ValueError("「所有」是遊戲內建的標籤，不能用來當自訂名稱")
+
+        instance = self._instance(instance_id)
+        try:
+            config = json.loads(instance.config_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise RuntimeError(f"cannot read instance config: {exc}") from exc
+        if not isinstance(config, dict):
+            raise RuntimeError("instance config must be a JSON object")
+        hatch = config.setdefault("hatch", {})
+        if not isinstance(hatch, dict):
+            raise RuntimeError("instance config hatch section must be an object")
+        custom = custom_tag_names(cleaned)
+        if custom:
+            hatch["tag_names"] = custom
+        else:
+            hatch.pop("tag_names", None)
+        temporary = instance.config_path.with_suffix(".tmp")
+        temporary.write_text(
+            json.dumps(config, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        temporary.replace(instance.config_path)
+
+        running = bool(self.discover(instance.instance_id)["running"])
+        message = (
+            "標籤名稱已儲存："
+            + "、".join(f"{cleaned[role]}" for role in DEFAULT_TAG_NAMES)
+        )
+        if custom and not ocr_available():
+            message += "；注意：改名的標籤需要 OCR 套件，請重新執行安裝"
+        if running:
+            message += "；重新啟動 Bot 後生效"
+        return {
+            "accepted": True,
+            "action": "set-tag-names",
+            "instance": instance.instance_id,
+            "tag_names": {"names": cleaned, "defaults": dict(DEFAULT_TAG_NAMES)},
+            "restart_required": running,
+            "message": message,
+        }
+
+    @staticmethod
     def _instance_serial(instance: BotInstance) -> str | None:
         try:
             payload = json.loads(instance.config_path.read_text(encoding="utf-8"))
@@ -2109,6 +2202,12 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                     instance_id,
                     payload.get("stages"),
                 )
+            elif action == "set-tag-names":
+                payload = self._read_json()
+                result = self.server.controller.set_tag_names(
+                    instance_id,
+                    payload.get("names"),
+                )
             elif action == "set-boost-stock":
                 payload = self._read_json()
                 remaining = payload.get("remaining")
@@ -2267,6 +2366,7 @@ class DashboardServer:
                     "hatch_boost_inventory": inventory.as_dict(),
                     "hatch_tuning": self.controller.hatch_tuning(definition),
                     "custom_workflow": self.controller.custom_workflow(definition),
+                    "tag_names": self.controller.tag_names(definition),
                 }
             )
         selected = next(
@@ -2285,6 +2385,7 @@ class DashboardServer:
             "hatch_boost_inventory": selected["hatch_boost_inventory"],
             "hatch_tuning": selected["hatch_tuning"],
             "custom_workflow": selected["custom_workflow"],
+            "tag_names": selected["tag_names"],
         }
 
     def start(self) -> None:

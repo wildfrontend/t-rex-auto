@@ -12,7 +12,12 @@ requires-python = ">=3.12"
 dependencies = [
   "mss>=9,<11",
   "numpy>=2,<3",
-  "opencv-python-headless>=4.10,<5",
+  # The full build rather than -headless: rapidocr depends on opencv-python
+  # by name, and two wheels both providing cv2 overwrite each other.
+  "opencv-python>=4.10,<5",
+  # Reads renamed My Nest tags (tag_labels.py); bundles its own models.
+  "rapidocr>=3,<4",
+  "onnxruntime>=1.20,<2",
   "pywin32>=306; sys_platform == 'win32'",
 ]
 

@@ -1210,3 +1210,62 @@ def test_launch_log_tail_reads_only_the_end_of_a_huge_file(tmp_path):
     tail = controller._launch_log_tail(instance, "hunt", lines=2)
 
     assert tail.endswith("Traceback: boom")
+
+
+def test_dashboard_reports_default_tag_names(tmp_path: Path) -> None:
+    controller = tuning_controller(tmp_path)
+
+    tags = controller.tag_names(controller.instances[0])
+
+    assert tags["names"] == {
+        "attack": "攻擊特化",
+        "hp": "HP特化",
+        "top": "頂尖",
+        "mass": "量產",
+    }
+
+
+def test_dashboard_saves_only_the_renamed_tags(tmp_path: Path) -> None:
+    # 玩家在遊戲裡把標籤改名後,在儀表板填上去;沒改的維持預設、照舊用截圖比對。
+    controller = tuning_controller(tmp_path)
+    instance = controller.instances[0]
+
+    result = controller.set_tag_names(
+        instance.instance_id,
+        {"attack": " attack ", "hp": "hp", "top": "頂尖", "mass": "量產"},
+    )
+
+    assert result["accepted"] is True
+    saved = json.loads(instance.config_path.read_text(encoding="utf-8"))
+    assert saved["hatch"]["tag_names"] == {"attack": "attack", "hp": "hp"}
+    assert saved["hatch"]["capacity_limit"] == 350
+    assert controller.tag_names(instance)["names"]["attack"] == "attack"
+
+    # Going back to the game's names drops the override entirely.
+    controller.set_tag_names(
+        instance.instance_id,
+        {"attack": "攻擊特化", "hp": "HP特化", "top": "頂尖", "mass": "量產"},
+    )
+    saved = json.loads(instance.config_path.read_text(encoding="utf-8"))
+    assert "tag_names" not in saved["hatch"]
+
+
+@pytest.mark.parametrize(
+    "names",
+    [
+        {"attack": "hp", "hp": "HP"},  # two roles, one tag
+        {"attack": "所有"},  # the built-in show-all entry
+        {"attack": ""},
+        {"speed": "spd"},
+        {"attack": "x" * 21},
+    ],
+)
+def test_dashboard_rejects_ambiguous_tag_names(tmp_path: Path, names: dict) -> None:
+    controller = tuning_controller(tmp_path)
+    instance = controller.instances[0]
+    before = instance.config_path.read_text(encoding="utf-8")
+
+    with pytest.raises(ValueError):
+        controller.set_tag_names(instance.instance_id, names)
+
+    assert instance.config_path.read_text(encoding="utf-8") == before

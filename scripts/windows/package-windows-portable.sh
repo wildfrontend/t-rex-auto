@@ -67,7 +67,8 @@ if [[ "${actual_md5}" != "${python_archive_md5}" ]]; then
 fi
 
 # --- 2. 取得 Windows 相依套件(在 macOS 上跨平台下載 win_amd64 輪子)-------
-site_cache="${cache_root}/site-packages-${python_version}"
+# 相依清單一改就換快取名稱,否則舊快取會被沿用而拿不到新套件。
+site_cache="${cache_root}/site-packages-${python_version}-ocr1"
 if [[ ! -d "${site_cache}" ]]; then
   echo "下載 Windows 相依套件 ..."
   tmp_site="${site_cache}.part"
@@ -75,7 +76,8 @@ if [[ ! -d "${site_cache}" ]]; then
   "${host_python}" -m pip install --quiet --target "${tmp_site}" \
     --platform win_amd64 --python-version "${python_version%.*}" \
     --only-binary=:all: \
-    "numpy>=2,<3" "opencv-python-headless>=4.10,<5" "mss>=9,<11" "pywin32>=306"
+    "numpy>=2,<3" "opencv-python>=4.10,<5" "mss>=9,<11" "pywin32>=306" \
+    "rapidocr>=3,<4" "onnxruntime>=1.20,<2"
 
   # 這個專案只用 imread/imwrite 與矩陣運算,沒有任何 VideoCapture/CascadeClassifier。
   # 影片編解碼 DLL 與 haarcascade 資料合計約 38MB,對使用者是純粹的下載成本。

@@ -491,8 +491,12 @@ const tuningInputs = {
   screening_growth_interval: "screeningIntervalInput",
 };
 
+const tagRoles = ["attack", "hp", "top", "mass"];
+const defaultTagNames = { attack: "攻擊特化", hp: "HP特化", top: "頂尖", mass: "量產" };
+
 function settingsFromServer(data) {
   const inventory = data.hatch_boost_inventory || {};
+  const tagNames = data.tag_names?.names || defaultTagNames;
   const tuning = data.hatch_tuning || {};
   const stages = new Set(data.custom_workflow?.stages || ["collect", "hatch", "hunt"]);
   return {
@@ -508,6 +512,9 @@ function settingsFromServer(data) {
       allow_extreme_specialization_parent: tuning.allow_extreme_specialization_parent === true,
       auto_place_specializations: tuning.auto_place_specializations === true,
     },
+    tagNames: Object.fromEntries(
+      tagRoles.map((role) => [role, tagNames[role] ?? defaultTagNames[role]]),
+    ),
   };
 }
 
@@ -526,6 +533,12 @@ function settingsFromForm() {
       allow_extreme_specialization_parent: $("extremeParentProtection").checked,
       auto_place_specializations: $("specializationAutoPlace").checked,
     },
+    tagNames: Object.fromEntries(
+      tagRoles.map((role) => [
+        role,
+        document.querySelector(`input[data-tag-role="${role}"]`).value.trim(),
+      ]),
+    ),
   };
 }
 
@@ -541,6 +554,9 @@ function fillSettingsForm(settings) {
   }
   $("extremeParentProtection").checked = settings.tuning.allow_extreme_specialization_parent;
   $("specializationAutoPlace").checked = settings.tuning.auto_place_specializations;
+  for (const role of tagRoles) {
+    document.querySelector(`input[data-tag-role="${role}"]`).value = settings.tagNames[role];
+  }
 }
 
 function changedSettingsSections(form, saved) {
@@ -550,6 +566,7 @@ function changedSettingsSections(form, saved) {
     boostEnabled: form.boostEnabled !== saved.boostEnabled,
     boostRemaining: form.boostRemaining !== saved.boostRemaining,
     tuning: !same(form.tuning, saved.tuning),
+    tagNames: !same(form.tagNames, saved.tagNames),
   };
 }
 
@@ -591,6 +608,8 @@ function syncSettingsForm(data) {
     settingsNotice = null;
   }
   if (!settingsDirty && !settingsSaving) fillSettingsForm(savedSettings);
+  const renamed = tagRoles.some((role) => savedSettings.tagNames[role] !== defaultTagNames[role]);
+  $("tagNamesOcrWarning").hidden = !(renamed && data.tag_names?.ocr_available === false);
   if (!settingsSaving) renderSettingsState();
 }
 
@@ -611,6 +630,10 @@ function validateSettings(form) {
     return "上限人口、安全人口與篩選間隔都必須是大於 0 的整數。";
   }
   if (threshold > limit) return "安全人口不能大於上限人口。";
+  const folded = tagRoles.map((role) => form.tagNames[role].normalize("NFKC").toLowerCase().replace(/\s+/g, ""));
+  if (folded.some((name) => !name)) return "巢穴標籤名稱不能空白。";
+  if (new Set(folded).size !== folded.length) return "每個巢穴標籤名稱必須不同。";
+  if (folded.includes("所有")) return "「所有」是遊戲內建的標籤，不能當自訂名稱。";
   return null;
 }
 
@@ -654,6 +677,7 @@ $("settingsForm").addEventListener("submit", async (event) => {
     changed.boostEnabled && ["自動加速", "set-boost-enabled", { enabled: form.boostEnabled }],
     changed.boostRemaining && ["加速券庫存", "set-boost-stock", { remaining: form.boostRemaining }],
     changed.tuning && ["孵蛋參數", "set-hatch-tuning", form.tuning],
+    changed.tagNames && ["巢穴標籤名稱", "set-tag-names", { names: form.tagNames }],
   ].filter(Boolean);
   if (!steps.length) return;
   settingsSaving = true;

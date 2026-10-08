@@ -218,6 +218,30 @@
               <input id="screeningIntervalInput" type="number" min="1" max="9999" step="1">
             </label>
           </div>
+          <div class="inventory-control tag-names-control">
+            <div>
+              <span>巢穴標籤名稱</span>
+              <strong>遊戲裡的標籤叫什麼，這裡就填什麼</strong>
+              <small>沒改名的維持預設；改過名的標籤會用文字辨識（OCR）找，重啟 Bot 後生效</small>
+              <small id="tagNamesOcrWarning" class="tag-ocr-warning" hidden>這台的執行環境沒有 OCR 套件，改名的標籤會認不到；請重新執行安裝</small>
+            </div>
+            <label>
+              <span>攻擊特化</span>
+              <input data-tag-role="attack" type="text" maxlength="20" autocomplete="off" spellcheck="false">
+            </label>
+            <label>
+              <span>HP 特化</span>
+              <input data-tag-role="hp" type="text" maxlength="20" autocomplete="off" spellcheck="false">
+            </label>
+            <label>
+              <span>頂尖</span>
+              <input data-tag-role="top" type="text" maxlength="20" autocomplete="off" spellcheck="false">
+            </label>
+            <label>
+              <span>量產</span>
+              <input data-tag-role="mass" type="text" maxlength="20" autocomplete="off" spellcheck="false">
+            </label>
+          </div>
           <div class="settings-actions">
             <span id="settingsState" class="settings-state">設定與 Bot 一致</span>
             <button id="settingsDiscard" type="button" disabled>放棄變更</button>
