@@ -1479,6 +1479,24 @@ def test_forest_round_trip_is_spent_once_per_recovery() -> None:
     assert second is not None and second.type == RECOVERY_BACK
 
 
+def test_cave_drawn_smaller_than_its_template_is_still_found() -> None:
+    """S13 v0.0.93 16:47 and 16:59: the cave was on screen, the cull was not.
+
+    Both calibrated swipes landed with the cave in full view, but it was drawn
+    at 82% of the template; the 0.85-1.05 sweep topped out at 0.79 against a
+    0.82 threshold, so a 350/350 cave was reported unavailable twice.
+    """
+
+    detector = OpenCvDetector(REPO / "assets" / "hatch" / "manifest.json")
+    image = _v3_fixture("s13-cave-view-small-cave-x082.jpg")
+
+    found = detector.detect_types(Frame(image), {CAVE})
+
+    assert len(found) == 1
+    assert abs(found[0].x - 250) <= 30 and abs(found[0].y - 1040) <= 40
+    assert found[0].confidence >= 0.9
+
+
 def test_incubator_close_accepts_centered_home_structure_without_anchor() -> None:
     close = detection(hatch.CLOSE_BUTTON, 798, 1384)
     target = Target(close.type, close.x, close.y, close.confidence, close)
