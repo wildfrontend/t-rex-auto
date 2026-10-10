@@ -39,7 +39,12 @@ class CooldownBoostVisit:
         self.clock = clock
         self.logger = logger or logging.getLogger("dino_bot")
         self.phase = "open"
-        self.deadline = clock() + 45.0
+        # A dedicated visit is created while hunting, before the combined
+        # planner navigates home.  Starting the 45-second visit budget here
+        # made an ordinary 50-90 second handoff expire before the incubator
+        # could even be opened.  Arm it on the first frame actually handed to
+        # this visit instead; HatchHuntPlanner owns the bounded journey home.
+        self.deadline: float | None = None
         self.complete = False
         self.failed = False
         self.used = False
@@ -75,6 +80,8 @@ class CooldownBoostVisit:
         close = best_detection(by_type.get(hatch.CLOSE_BUTTON))
         panel = title and close is not None and yes is None and no is None
 
+        if self.deadline is None:
+            self.deadline = self.clock() + 45.0
         if self.clock() >= self.deadline:
             if self.phase == "close":
                 self.failed = True

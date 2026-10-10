@@ -351,13 +351,13 @@ class HatchHuntPlanner:
             # trip of its own: it shortens the very wait being served, and the
             # visit navigates home and back by itself.
             #
-            # Deliberately behind the same idle gate as the errand. A boost
-            # must never interrupt live hunting - it is worth less than a hunt
-            # in progress - so this only spends a window the hunt side has
-            # already declared empty.
+            # Do not put this behind the hunt-idle gate. Busy maps can always
+            # offer another dinosaur, which used to postpone a due ticket for
+            # the entire egg cooldown. The inventory clock and the visit
+            # throttle make this one bounded handoff every 30 minutes; it
+            # happens between hunt actions, then returns to hunting.
             if (
-                hunt_idle >= self.errand_min_idle_ms
-                and remaining >= self.boost_visit_min_remaining_ms
+                remaining >= self.boost_visit_min_remaining_ms
                 and self.clock() >= self._next_boost_visit_at
                 and self._boost_ready()
                 and self.hatch.begin_boost_visit()
@@ -405,6 +405,19 @@ class HatchHuntPlanner:
         if not hunt_delay:
             return 0
         delay = hunt_delay if self._hatch_is_blocked() else min(hunt_delay, until_handoff)
+        boost_delay = self._boost_ready_delay_ms()
+        if (
+            boost_delay is not None
+            and self._hatch_cooldown_delay_ms() >= self.boost_visit_min_remaining_ms
+        ):
+            throttle_delay = max(
+                0,
+                round((self._next_boost_visit_at - self.clock()) * 1000),
+            )
+            # Wake when both the ticket clock and the retry throttle permit a
+            # visit. Without this, a quiet hunt can sleep straight past the
+            # 30-minute ticket deadline even though choose() knows to visit.
+            delay = min(delay, max(boost_delay, throttle_delay))
         return delay
 
     def _hatch_cooldown_delay_ms(self) -> int:
@@ -420,14 +433,20 @@ class HatchHuntPlanner:
         navigate home safely, and a ticket is not worth risking that.
         """
 
+        return self._boost_ready_delay_ms() == 0
+
+    def _boost_ready_delay_ms(self) -> int | None:
+        """Return the inventory deadline only when a safe visit is available."""
+
         if self._hatch_is_blocked():
-            return False
+            return None
         ready = getattr(self.hatch, "boost_ready_delay_ms", None)
         if not callable(ready):
-            return False
+            return None
         if not callable(getattr(self.hatch, "begin_boost_visit", None)):
-            return False
-        return ready() == 0
+            return None
+        delay = ready()
+        return None if delay is None else max(0, int(delay))
 
     def planning_detection_types(self) -> frozenset[str] | None:
         if self._mode == "hunt":

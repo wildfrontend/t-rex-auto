@@ -1233,8 +1233,8 @@ def test_a_dedicated_boost_trip_happens_once_per_long_cooldown() -> None:
     assert len(started) == 1, f"expected one trip, made {len(started)}"
 
 
-def test_live_hunting_is_never_interrupted_for_a_boost() -> None:
-    """A hunt in progress is worth more than a ticket."""
+def test_a_due_boost_preempts_continuous_live_hunting() -> None:
+    """A busy map must not postpone a due ticket for the whole egg cooldown."""
 
     now = [0.0]
     combined, full, hunt = planner(cooldown_ms=3_600_000)
@@ -1244,10 +1244,47 @@ def test_live_hunting_is_never_interrupted_for_a_boost() -> None:
 
     combined.choose(frame(), [])
     hunt.delay_ms = 0  # hunting is ready right now, not idle
-    chosen = combined.choose(frame(), [])
+    combined.choose(frame(), [])
 
-    assert started == []
-    assert chosen is not None and chosen.type == "dinosaur"
+    assert started == [False]
+    assert combined._handoff_reason == "boost"
+
+
+def test_continuous_hunting_gets_one_boost_check_every_half_hour() -> None:
+    now = [0.0]
+    combined, full, hunt = planner(cooldown_ms=7_200_000)
+    combined.clock = lambda: now[0]
+    started = _boost_capable(combined, full)
+    hunt.next_target = target("dinosaur", 300, 700)
+
+    combined.choose(frame(), [])
+    hunt.delay_ms = 0
+    combined.choose(frame(), [])
+    assert len(started) == 1
+
+    # Returning to a permanently busy map must not trigger another visit
+    # before the 30-minute ticket interval expires.
+    combined._mode = "hunt"
+    combined._handoff_reason = ""
+    now[0] = 1_799.0
+    combined.choose(frame(), [])
+    assert len(started) == 1
+
+    combined._mode = "hunt"
+    combined._handoff_reason = ""
+    now[0] = 1_800.0
+    combined.choose(frame(), [])
+    assert len(started) == 2
+
+
+def test_idle_hunting_wakes_at_the_half_hour_boost_deadline() -> None:
+    combined, full, hunt = planner(cooldown_ms=7_200_000)
+    _boost_capable(combined, full, delay_ms=1_800_000)
+    hunt.delay_ms = 3_600_000
+
+    combined.choose(frame(), [])
+
+    assert combined.next_ready_delay_ms() == 1_800_000
 
 
 def test_a_blocked_hatch_side_makes_no_boost_trip() -> None:

@@ -101,6 +101,7 @@ def test_gray_bar_without_own_confirmation_defers_without_consuming(setup_visit)
 
 def test_visit_and_return_timeouts_are_bounded(setup_visit):
     visit, inventory, now = setup_visit
+    choose(visit, [])
     now[0] += 46
     assert choose(visit, []) is None
     assert inventory.ready_delay_seconds() == 60
@@ -108,6 +109,23 @@ def test_visit_and_return_timeouts_are_bounded(setup_visit):
     assert choose(visit, []) is None
     assert visit.complete and visit.failed
     assert inventory.snapshot().remaining == 100
+
+
+def test_navigation_before_first_visit_frame_does_not_consume_timeout(setup_visit):
+    visit, inventory, now = setup_visit
+
+    # Hatch+Hunt may spend longer than the visit budget navigating home. The
+    # visit has not begun until the hatch side receives its first frame.
+    now[0] += 90
+    assert choose(visit, [], home=True).type == BOOST_OPEN
+    assert inventory.ready_delay_seconds() == 0
+
+    now[0] += 44
+    assert choose(visit, []) is None
+    assert inventory.ready_delay_seconds() == 0
+    now[0] += 2
+    assert choose(visit, []) is None
+    assert inventory.ready_delay_seconds() == 60
 
 
 @pytest.mark.parametrize("ready", [False, True])
