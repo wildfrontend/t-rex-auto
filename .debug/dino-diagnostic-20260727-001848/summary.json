@@ -1,0 +1,17 @@
+{
+  "needs_attention": true,
+  "issues": [
+    {
+      "code": "bot_not_running",
+      "severity": "info",
+      "evidence": {
+        "current_stage": "stopped"
+      }
+    },
+    {
+      "code": "action_retries_exhausted",
+      "severity": "warning",
+      "evidence": 1
+    }
+  ]
+}

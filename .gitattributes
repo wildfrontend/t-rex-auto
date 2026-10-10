@@ -1,0 +1,11 @@
+# Windows 批次檔必須是 CRLF。cmd.exe 的 `^` 續行與跨行 `if (...)` 區塊在 LF
+# 換行下會解析錯誤,使用者看到的症狀是雙擊後視窗一閃就關、沒有任何訊息。
+# 這些檔案在 macOS 上開發、由打包腳本原樣複製進發佈包,所以換行必須由 git
+# 強制,不能靠編輯器習慣。
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+# macOS/Linux 端的啟動器則必須維持 LF。
+*.command text eol=lf
+*.sh text eol=lf

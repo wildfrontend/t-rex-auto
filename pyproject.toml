@@ -4,14 +4,20 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dino-mutant-bot"
-version = "0.2.15"
+# 版號的唯一來源是 src/dino_bot/__init__.py 的 __version__。
+dynamic = ["version"]
 description = "Extensible Sense-Think-Act framework for Android emulator automation"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
   "mss>=9,<11",
   "numpy>=2,<3",
-  "opencv-python-headless>=4.10,<5",
+  # The full build rather than -headless: rapidocr depends on opencv-python
+  # by name, and two wheels both providing cv2 overwrite each other.
+  "opencv-python>=4.10,<5",
+  # Reads renamed My Nest tags (tag_labels.py); bundles its own models.
+  "rapidocr>=3,<4",
+  "onnxruntime>=1.20,<2",
   "pywin32>=306; sys_platform == 'win32'",
 ]
 
@@ -28,6 +34,9 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.dynamic]
+version = {attr = "dino_bot.__version__"}
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

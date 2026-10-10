@@ -1,0 +1,240 @@
+import base64
+from pathlib import Path
+
+import cv2
+import numpy as np
+
+from dino_bot.digits import DigitReader
+from dino_bot.nest_readout import (
+    ATTACK_PARENT_REGIONS,
+    NEST_CARD_PITCH,
+    count_visible_nests,
+    shift_parent_regions,
+    SELECT_FIRST_ROW_REGIONS,
+    SELECT_ROW_PITCH,
+    read_attack_parents,
+    read_candidate_rows,
+    rehearse_attack_replacement,
+)
+from dino_bot.nests import Stats
+
+
+class EncodedReader:
+    def __init__(self, values: dict[int, int]) -> None:
+        self.values = values
+
+    def read_int(self, image: np.ndarray) -> int | None:
+        return self.values.get(int(image[0, 0, 0])) if image.size else None
+
+
+def fill_regions(
+    frame: np.ndarray,
+    regions: tuple[tuple[float, float, float, float], ...],
+    codes: tuple[int, int, int],
+) -> None:
+    for region, code in zip(regions, codes, strict=True):
+        x0, y0, x1, y1 = map(int, region)
+        frame[y0:y1, x0:x1] = code
+
+
+def test_reads_both_parent_sides_and_candidate_rows() -> None:
+    frame = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    reader = EncodedReader({10: 30, 20: 282, 30: 1, 40: 2230, 50: 276, 60: 150})
+    fill_regions(frame, ATTACK_PARENT_REGIONS[0], (10, 20, 30))
+    fill_regions(frame, ATTACK_PARENT_REGIONS[1], (40, 50, 60))
+    fill_regions(frame, SELECT_FIRST_ROW_REGIONS, (10, 20, 30))
+    second = tuple(
+        (x0, y0 + SELECT_ROW_PITCH, x1, y1 + SELECT_ROW_PITCH)
+        for x0, y0, x1, y1 in SELECT_FIRST_ROW_REGIONS
+    )
+    fill_regions(frame, second, (40, 50, 60))
+
+    assert read_attack_parents(frame, reader) == (Stats(30, 282, 1), Stats(2230, 276, 150))
+    assert read_candidate_rows(frame, reader) == [Stats(30, 282, 1), Stats(2230, 276, 150)]
+
+
+def test_speed_reading_below_game_range_does_not_block_numeric_readout() -> None:
+    frame = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    reader = EncodedReader({10: 30, 20: 282, 30: 0, 40: 2230, 50: 276, 60: 1})
+    fill_regions(frame, ATTACK_PARENT_REGIONS[0], (10, 20, 30))
+    fill_regions(frame, ATTACK_PARENT_REGIONS[1], (40, 50, 60))
+
+    assert read_attack_parents(frame, reader) == (
+        Stats(30, 282, 0),
+        Stats(2230, 276, 1),
+    )
+
+
+def test_speed_ocr_above_game_range_is_capped_instead_of_blocking() -> None:
+    frame = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    reader = EncodedReader({10: 1960, 20: 213, 30: 1, 40: 1930, 50: 750})
+    fill_regions(frame, ATTACK_PARENT_REGIONS[0], (10, 20, 30))
+    fill_regions(frame, ATTACK_PARENT_REGIONS[1], (40, 20, 50))
+
+    assert read_attack_parents(frame, reader) == (
+        Stats(1960, 213, 1),
+        Stats(1930, 213, 150),
+    )
+
+
+def test_hp_outside_guard_does_not_block_numeric_readout() -> None:
+    frame = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    reader = EncodedReader({10: 2920, 20: 3, 30: 1, 40: 2926})
+    fill_regions(frame, ATTACK_PARENT_REGIONS[0], (10, 20, 30))
+    fill_regions(frame, ATTACK_PARENT_REGIONS[1], (40, 20, 30))
+
+    assert read_attack_parents(frame, reader) == (
+        Stats(2920, 3, 1),
+        Stats(2926, 3, 1),
+    )
+
+
+def test_left_parent_hp_crop_keeps_the_complete_leading_digit() -> None:
+    # Regression for the live 2320 -> 7320 misread: the old x0=252 cut the
+    # first digit down to four pixels, while the glyph starts around x=249.
+    assert ATTACK_PARENT_REGIONS[0][0] == (244, 478, 302, 500)
+
+
+def test_equal_top_attack_recommends_no_replacement() -> None:
+    parent = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    candidates = parent.copy()
+    reader = EncodedReader({10: 30, 20: 282, 30: 1})
+    for regions in ATTACK_PARENT_REGIONS:
+        fill_regions(parent, regions, (10, 20, 30))
+    fill_regions(candidates, SELECT_FIRST_ROW_REGIONS, (10, 20, 30))
+
+    suggestion = rehearse_attack_replacement(parent, candidates, reader)
+    assert suggestion is not None
+    assert suggestion.parent == Stats(30, 282, 1)
+    assert suggestion.replacement_index is None
+
+
+def test_higher_attack_recommends_first_row_without_a_screen_coordinate() -> None:
+    parent = np.full((1600, 900, 3), 255, dtype=np.uint8)
+    candidates = parent.copy()
+    reader = EncodedReader({10: 30, 20: 282, 21: 285, 30: 1})
+    for regions in ATTACK_PARENT_REGIONS:
+        fill_regions(parent, regions, (10, 20, 30))
+    fill_regions(candidates, SELECT_FIRST_ROW_REGIONS, (10, 21, 30))
+
+    suggestion = rehearse_attack_replacement(parent, candidates, reader)
+    assert suggestion is not None
+    assert suggestion.replacement_index == 0
+
+
+FIXTURES = Path(__file__).parent / "fixtures" / "hatch"
+GLYPHS = Path(__file__).parents[1] / "assets" / "hatch" / "digits"
+
+
+def s9_nest_list() -> np.ndarray:
+    """S9's live My Nest list with three attack-tagged nests on screen.
+
+    Only the marker column and the two stat columns are kept; the rest of the
+    capture is blacked out, so the fixture proves the coordinates without
+    carrying the account's screen into the repository.
+    """
+
+    encoded = (FIXTURES / "s9-nest-list-3up-20260906.png.b64").read_text()
+    image = cv2.imdecode(
+        np.frombuffer(base64.b64decode(encoded), dtype=np.uint8), cv2.IMREAD_COLOR
+    )
+    assert image is not None
+    return image
+
+
+def s9_hp_nest_list() -> np.ndarray:
+    """The same list under the HP tag, whose marker bars are blue not green."""
+
+    encoded = (FIXTURES / "s9-nest-list-hp-3up-20260906.png.b64").read_text()
+    image = cv2.imdecode(
+        np.frombuffer(base64.b64decode(encoded), dtype=np.uint8), cv2.IMREAD_COLOR
+    )
+    assert image is not None
+    return image
+
+
+def test_three_nest_cards_are_counted_from_the_live_list() -> None:
+    assert count_visible_nests(s9_nest_list()) == 3
+
+
+def test_hp_tagged_nests_are_counted_despite_a_different_bar_colour() -> None:
+    # The bar takes the tag's colour: green for attack, blue for HP. Matching
+    # one specific hue silently counted zero HP nests and screened only the
+    # first card, so the count keys on saturation instead.
+    assert count_visible_nests(s9_hp_nest_list()) == 3
+
+
+def test_hp_nests_read_their_own_parents() -> None:
+    image = s9_hp_nest_list()
+    reader = DigitReader(GLYPHS)
+    assert read_attack_parents(image, reader, nest_index=0) == (
+        Stats(10, 1, 150),
+        Stats(5530, 9, 150),
+    )
+    assert read_attack_parents(image, reader, nest_index=1) == (
+        Stats(10, 1, 150),
+        Stats(5530, 9, 150),
+    )
+    # This nest's left parent has already been replaced, proving the crop
+    # follows the card rather than repeating nest 1.
+    assert read_attack_parents(image, reader, nest_index=2) == (
+        Stats(5530, 9, 150),
+        Stats(5530, 9, 150),
+    )
+
+
+def test_each_nest_reads_its_own_parents_from_the_live_list() -> None:
+    # The three nests hold near-identical parents (626/620/627). Reading the
+    # wrong card would silently screen the same nest three times, so pin the
+    # per-nest values rather than only the count.
+    image = s9_nest_list()
+    reader = DigitReader(GLYPHS)
+    assert read_attack_parents(image, reader, nest_index=0) == (
+        Stats(10, 1, 150),
+        Stats(40, 626, 150),
+    )
+    assert read_attack_parents(image, reader, nest_index=1) == (
+        Stats(10, 1, 150),
+        Stats(40, 620, 150),
+    )
+    assert read_attack_parents(image, reader, nest_index=2) == (
+        Stats(10, 1, 150),
+        Stats(40, 627, 150),
+    )
+
+
+def test_nest_regions_shift_by_exactly_one_card_pitch() -> None:
+    base = ATTACK_PARENT_REGIONS
+    assert shift_parent_regions(base, 0) == base
+    shifted = shift_parent_regions(base, 2)
+    for side, original in enumerate(base):
+        for index, (x0, y0, x1, y1) in enumerate(original):
+            assert shifted[side][index] == (
+                x0,
+                y0 + 2 * NEST_CARD_PITCH,
+                x1,
+                y1 + 2 * NEST_CARD_PITCH,
+            )
+
+
+def test_missing_nest_markers_count_as_none_rather_than_guessing() -> None:
+    # A screen that is not the nest list must not report phantom cards; the
+    # planner turns 0 into "screen the anchor nest only".
+    assert count_visible_nests(np.zeros((1600, 900, 3), dtype=np.uint8)) == 0
+
+
+def test_partially_scrolled_cards_are_not_counted() -> None:
+    # A card clipped by the list boundary would put its parents off-card, so
+    # only bars tall enough to be a whole card count.
+    image = np.zeros((1600, 900, 3), dtype=np.uint8)
+    image[347:603, 181:191] = (105, 211, 115)
+    image[627:700, 181:191] = (105, 211, 115)
+    assert count_visible_nests(image) == 1
+
+
+def test_neutral_greys_are_never_mistaken_for_marker_bars() -> None:
+    # The column also holds the white card, a grey gap and a black border.
+    # None are coloured, so none may inflate the count.
+    for shade in (0, 128, 231, 255):
+        image = np.full((1600, 900, 3), shade, dtype=np.uint8)
+        assert count_visible_nests(image) == 0

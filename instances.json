@@ -1,0 +1,18 @@
+{
+  "instances": [
+    {
+      "id": "main",
+      "name": "S9",
+      "config": "instances/s9/config.json",
+      "status_port": 8765,
+      "allowed_modes": ["hunt", "hatch-hunt", "custom-workflow"]
+    },
+    {
+      "id": "s13",
+      "name": "S13",
+      "config": "instances/s13/config.json",
+      "status_port": 8775,
+      "allowed_modes": ["hunt", "hatch-hunt", "custom-workflow", "hatch-stage"]
+    }
+  ]
+}
