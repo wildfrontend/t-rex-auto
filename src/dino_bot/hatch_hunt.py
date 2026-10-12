@@ -97,6 +97,7 @@ class HatchHuntPlanner:
         handoff_seconds: float = 30.0,
         handoff_timeout_seconds: float = 90.0,
         nest_close_attempt_limit: int = 6,
+        collect_max_interval_seconds: float = 900.0,
         clock: Callable[[], float] | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
@@ -136,6 +137,11 @@ class HatchHuntPlanner:
         self.errand_margin_ms = 90_000
         self.errand_interval_seconds = 180.0
         self._next_errand_at = 0.0
+        # A busy map never idles for 15s, so the idle-only errand never ran:
+        # S9 hunted an hour on 2026-10-12 without one trip home. Past this
+        # long without a collection the errand goes anyway (0 disables it).
+        self.collect_max_interval_seconds = max(0.0, float(collect_max_interval_seconds))
+        self._last_collection_at = self.clock()
         # A blocked egg-pile recovery normally borrows a natural hunt idle
         # window. Busy maps may always have another target, however, turning
         # that courtesy into a permanent hatch lock. Give the idle path first
@@ -371,20 +377,31 @@ class HatchHuntPlanner:
                     remaining / 1000,
                 )
                 return self._choose_handoff(frame, detections)
+            since_collection = self.clock() - self._last_collection_at
+            collection_overdue = (
+                self.collect_max_interval_seconds > 0
+                and since_collection >= self.collect_max_interval_seconds
+            )
             if (
-                hunt_idle >= self.errand_min_idle_ms
+                (hunt_idle >= self.errand_min_idle_ms or collection_overdue)
                 and remaining > self.handoff_ms + self.errand_margin_ms
                 and self.clock() >= self._next_errand_at
                 and self.hatch.begin_interim_collection()
             ):
-                # 狩獵側全目標都在冷卻;把這段空窗換成一趟回家收蛋,
+                # 狩獵側全目標都在冷卻,或太久沒收蛋;換成一趟回家收蛋,
                 # 收完由既有的冷卻切換邏輯自動回到狩獵。
                 self._next_errand_at = self.clock() + self.errand_interval_seconds
                 self._enter_handoff("errand")
-                self.logger.info(
-                    "Hatch+Hunt | hunt idle %.0fs | interim collection errand",
-                    hunt_idle / 1000,
-                )
+                if hunt_idle >= self.errand_min_idle_ms:
+                    self.logger.info(
+                        "Hatch+Hunt | hunt idle %.0fs | interim collection errand",
+                        hunt_idle / 1000,
+                    )
+                else:
+                    self.logger.info(
+                        "Hatch+Hunt | no collection for %.0fs | interim collection errand",
+                        since_collection,
+                    )
                 return self._choose_handoff(frame, detections)
             return self._choose_owned(self.hunt, frame, detections)
 
@@ -676,6 +693,9 @@ class HatchHuntPlanner:
         return nest_mask_close_target(frame, self.hatch.reference_width)
 
     def _enter_handoff(self, reason: str) -> None:
+        if reason in {"errand", "cooldown", "blocked_collection"}:
+            # Each of these trips ends in a nest collection on the hatch side.
+            self._last_collection_at = self.clock()
         self._mode = "handoff"
         self._centered_frames = 0
         self._anchor_only_frames = 0

@@ -507,6 +507,62 @@ def test_hunt_idle_window_triggers_interim_collection_errand() -> None:
     assert combined._mode == "handoff"
 
 
+def test_busy_hunt_still_goes_home_to_collect_after_the_max_interval() -> None:
+    """S9 2026-10-12 hunted an hour on a map that never idled: zero collections.
+
+    The idle-only errand needs every hunt target cooling down for 15s. A busy
+    map never gets there, so past the maximum interval the errand goes anyway.
+    """
+
+    now = [1_000.0]
+    hatch_planner = StubHatch(3_600_000)
+    hunt_planner = StubHunt()
+    combined = HatchHuntPlanner(  # type: ignore[arg-type]
+        hatch_planner,
+        hunt_planner,
+        handoff_seconds=30,
+        collect_max_interval_seconds=900,
+        clock=lambda: now[0],
+    )
+    calls: list[bool] = []
+    hatch_planner.begin_interim_collection = lambda: calls.append(True) or True
+    hunt_planner.next_target = target("dinosaur", 300, 700)
+    hunt_planner.delay_ms = 0  # always another target: never idle
+
+    assert combined.choose(frame(), []) is not None
+    now[0] += 899
+    assert combined.choose(frame(), []) is not None
+    assert calls == [] and combined._mode == "hunt"
+
+    now[0] += 2
+    combined.choose(frame(), [])
+    assert calls == [True]
+    assert combined._mode == "handoff"
+    assert combined._handoff_reason == "errand"
+
+
+def test_max_collection_interval_zero_keeps_errands_idle_only() -> None:
+    now = [1_000.0]
+    hatch_planner = StubHatch(3_600_000)
+    hunt_planner = StubHunt()
+    combined = HatchHuntPlanner(  # type: ignore[arg-type]
+        hatch_planner,
+        hunt_planner,
+        handoff_seconds=30,
+        collect_max_interval_seconds=0,
+        clock=lambda: now[0],
+    )
+    calls: list[bool] = []
+    hatch_planner.begin_interim_collection = lambda: calls.append(True) or True
+    hunt_planner.next_target = target("dinosaur", 300, 700)
+    hunt_planner.delay_ms = 0
+
+    combined.choose(frame(), [])
+    now[0] += 10_000
+    combined.choose(frame(), [])
+    assert calls == []
+
+
 def test_hunt_idle_errand_skipped_when_handback_is_near() -> None:
     combined, hatch_planner, hunt_planner = planner(cooldown_ms=100_000)
     hunt_planner.next_target = target("dinosaur", 300, 700)

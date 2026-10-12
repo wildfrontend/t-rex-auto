@@ -210,6 +210,11 @@ function render(data) {
   $("customWorkflowSummary").textContent = orderedStages
     .map((stage) => customWorkflowStageLabels[stage])
     .join(" → ");
+  const timingLabel = tuning.hatch_timing === "batch" ? "整批（等最慢那顆）" : "最快那顆";
+  const collectMinutes = Math.round(Number(tuning.collect_max_interval_seconds ?? 900) / 60);
+  $("hatchTimingSummary").textContent = `${timingLabel}・收巢蛋${
+    collectMinutes ? `最長 ${collectMinutes} 分鐘` : "只在空檔"
+  }`;
   syncSettingsForm(data);
   const metrics = data.metrics || {};
   const counters = metrics.counters || {};
@@ -511,6 +516,8 @@ function settingsFromServer(data) {
       screening_growth_interval: tuning.screening_growth_interval ?? null,
       allow_extreme_specialization_parent: tuning.allow_extreme_specialization_parent === true,
       auto_place_specializations: tuning.auto_place_specializations === true,
+      hatch_timing: tuning.hatch_timing || "earliest",
+      collect_max_interval_seconds: Number(tuning.collect_max_interval_seconds ?? 900),
     },
     tagNames: Object.fromEntries(
       tagRoles.map((role) => [role, tagNames[role] ?? defaultTagNames[role]]),
@@ -532,6 +539,10 @@ function settingsFromForm() {
       screening_growth_interval: number(tuningInputs.screening_growth_interval),
       allow_extreme_specialization_parent: $("extremeParentProtection").checked,
       auto_place_specializations: $("specializationAutoPlace").checked,
+      hatch_timing: $("hatchTimingInput").value,
+      collect_max_interval_seconds: $("collectIntervalInput").value === ""
+        ? null
+        : Number($("collectIntervalInput").value) * 60,
     },
     tagNames: Object.fromEntries(
       tagRoles.map((role) => [
@@ -554,6 +565,8 @@ function fillSettingsForm(settings) {
   }
   $("extremeParentProtection").checked = settings.tuning.allow_extreme_specialization_parent;
   $("specializationAutoPlace").checked = settings.tuning.auto_place_specializations;
+  $("hatchTimingInput").value = settings.tuning.hatch_timing;
+  $("collectIntervalInput").value = Math.round(settings.tuning.collect_max_interval_seconds / 60);
   for (const role of tagRoles) {
     document.querySelector(`input[data-tag-role="${role}"]`).value = settings.tagNames[role];
   }
@@ -630,6 +643,10 @@ function validateSettings(form) {
     return "上限人口、安全人口與篩選間隔都必須是大於 0 的整數。";
   }
   if (threshold > limit) return "安全人口不能大於上限人口。";
+  const collect = form.tuning.collect_max_interval_seconds;
+  if (!Number.isInteger(collect) || collect < 0 || collect > 1440 * 60) {
+    return "收巢蛋最長間隔必須是 0 到 1440 分鐘的整數。";
+  }
   const folded = tagRoles.map((role) => form.tagNames[role].normalize("NFKC").toLowerCase().replace(/\s+/g, ""));
   if (folded.some((name) => !name)) return "巢穴標籤名稱不能空白。";
   if (new Set(folded).size !== folded.length) return "每個巢穴標籤名稱必須不同。";

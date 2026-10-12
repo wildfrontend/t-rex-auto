@@ -1497,6 +1497,42 @@ def test_cave_drawn_smaller_than_its_template_is_still_found() -> None:
     assert found[0].confidence >= 0.9
 
 
+@pytest.mark.parametrize(
+    ("timing", "timer", "expected"),
+    [
+        ("earliest", 1325, 1325),  # first egg ready in 22 min: come back then
+        ("earliest", 120, 600),  # but never sooner than the 10-minute floor
+        ("batch", 2559, 2559),  # batch waits for the slowest visible egg
+    ],
+)
+def test_hatch_timing_sets_when_the_bot_comes_back(
+    monkeypatch: pytest.MonkeyPatch, timing: str, timer: int, expected: int
+) -> None:
+    now = [10_000.0]
+    asked: list[bool] = []
+
+    def read(*args, earliest: bool = False, **kwargs):  # noqa: ANN002, ANN003
+        asked.append(earliest)
+        return timer
+
+    monkeypatch.setattr(hatch, "read_hatch_cooldown_seconds", read)
+    planner = FullHatchPlanner(
+        DigitReader(GLYPHS), egg_pile_point=(450, 1330),
+        clock=lambda: now[0], hatch_timing=timing,
+    )
+    panel = {hatch.INCUBATOR_TITLE: [detection(hatch.INCUBATOR_TITLE, 450, 40)]}
+
+    planner._observe_hatch_cooldown(frame(), panel)
+
+    assert asked == [timing == "earliest"]
+    assert planner._observed_cooldown_until == now[0] + expected
+
+
+def test_unknown_hatch_timing_is_rejected() -> None:
+    with pytest.raises(ValueError):
+        FullHatchPlanner(DigitReader(GLYPHS), egg_pile_point=(450, 1330), hatch_timing="soon")
+
+
 def test_incubator_close_accepts_centered_home_structure_without_anchor() -> None:
     close = detection(hatch.CLOSE_BUTTON, 798, 1384)
     target = Target(close.type, close.x, close.y, close.confidence, close)
@@ -3961,6 +3997,8 @@ def test_incubator_hatches_ready_eggs_and_reads_timer_before_inline_boost(
     planner = FullHatchPlanner(
         DigitReader(GLYPHS), egg_pile_point=(450, 1330),
         boost_inventory=inventory, clock=lambda: now[0],
+        # These timers are read straight back; the wait floor has its own test.
+        hatch_min_interval_seconds=0,
     )
     planner._capacity_checked = True
     planner._screening_completed = {"attack", "hp", "top"}
@@ -4059,6 +4097,8 @@ def test_custom_return_collects_then_hatches_boosts_and_waits_once(tmp_path, mon
         DigitReader(GLYPHS), egg_pile_point=(450, 1330),
         enabled_stages=("collect", "hatch"), boost_inventory=inventory,
         clock=lambda: now[0],
+        # These timers are read straight back; the wait floor has its own test.
+        hatch_min_interval_seconds=0,
     )
     planner._capacity_checked = True
     planner._cave_population = 300

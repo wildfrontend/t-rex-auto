@@ -907,6 +907,8 @@ def test_dashboard_reports_the_effective_hatch_tuning(tmp_path: Path) -> None:
         "screening_growth_interval": 20,
         "allow_extreme_specialization_parent": False,
         "auto_place_specializations": False,
+        "hatch_timing": "earliest",
+        "collect_max_interval_seconds": 900,
     }
 
 
@@ -932,6 +934,8 @@ def test_dashboard_saves_hatch_tuning_to_the_instance_config(tmp_path: Path) -> 
         "screening_growth_interval": 15,
         "allow_extreme_specialization_parent": True,
         "auto_place_specializations": True,
+        "hatch_timing": "earliest",
+        "collect_max_interval_seconds": 900,
     }
     saved = json.loads(instance.config_path.read_text(encoding="utf-8"))
     assert saved["hatch"]["capacity_limit"] == 250
@@ -945,6 +949,8 @@ def test_dashboard_saves_hatch_tuning_to_the_instance_config(tmp_path: Path) -> 
         "screening_growth_interval": 15,
         "allow_extreme_specialization_parent": True,
         "auto_place_specializations": True,
+        "hatch_timing": "earliest",
+        "collect_max_interval_seconds": 900,
     }
 
 
@@ -1077,6 +1083,8 @@ def test_dashboard_serves_and_accepts_hatch_tuning_over_http(tmp_path: Path) -> 
                     "screening_growth_interval": 15,
                     "allow_extreme_specialization_parent": True,
                     "auto_place_specializations": True,
+                    "hatch_timing": "batch",
+                    "collect_max_interval_seconds": 600,
                 }
             ).encode(),
             method="POST",
@@ -1113,6 +1121,8 @@ def test_dashboard_serves_and_accepts_hatch_tuning_over_http(tmp_path: Path) -> 
         "screening_growth_interval": 15,
         "allow_extreme_specialization_parent": True,
         "auto_place_specializations": True,
+        "hatch_timing": "batch",
+        "collect_max_interval_seconds": 600,
     }
     assert before["hatch_tuning"]["capacity_limit"] == 350
     assert result["hatch_tuning"] == expected
@@ -1267,5 +1277,24 @@ def test_dashboard_rejects_ambiguous_tag_names(tmp_path: Path, names: dict) -> N
 
     with pytest.raises(ValueError):
         controller.set_tag_names(instance.instance_id, names)
+
+    assert instance.config_path.read_text(encoding="utf-8") == before
+
+
+@pytest.mark.parametrize(
+    ("timing", "interval"),
+    [("soon", 900), ("earliest", -1), ("earliest", 90_000), ("earliest", True)],
+)
+def test_dashboard_rejects_bad_hatch_timing_values(
+    tmp_path: Path, timing: str, interval: object
+) -> None:
+    controller = tuning_controller(tmp_path)
+    instance = controller.instances[0]
+    before = instance.config_path.read_text(encoding="utf-8")
+
+    with pytest.raises(ValueError):
+        controller.set_hatch_tuning(
+            instance.instance_id, 350, 330, 20, None, None, timing, interval
+        )
 
     assert instance.config_path.read_text(encoding="utf-8") == before

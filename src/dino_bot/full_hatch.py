@@ -453,6 +453,7 @@ MAX_SCREENING_RECOVERY_FAILURES = 3
 # behind it, where nothing could measure it again.
 HOME_PILE_BASE: tuple[float, float] = (450.0, 1306.0)
 HOME_PILE_TOLERANCE = 100.0
+HATCH_TIMINGS = frozenset({"earliest", "batch"})
 # Where a pile hidden behind the bottom HUD row has its base: the pre-v3 rest
 # position, 149px below the current one.
 HUD_ROW_PILE_BASE_Y = 1455.0
@@ -3155,6 +3156,8 @@ class FullHatchPlanner:
         expel_below_attack: int = 0,
         expel_dry_run: bool = True,
         auto_place_specializations: bool = False,
+        hatch_timing: str = "earliest",
+        hatch_min_interval_seconds: float = 600.0,
         minimum_consistent_stat_reads: int = 1,
         stat_read_retries: int = 1,
         boost_inventory: HatchBoostInventoryStore | None = None,
@@ -3195,6 +3198,17 @@ class FullHatchPlanner:
             allow_extreme_specialization_parent
         )
         self.auto_place_specializations = bool(auto_place_specializations)
+        # "earliest" comes back as soon as the first egg is ready and hatches
+        # whatever is done; "batch" waits for the slowest visible egg. Batch
+        # left ready eggs holding incubator slots for hours on accounts
+        # without boost tickets (S13 waits of 1-6h, 5.3 eggs a round), and
+        # screening is triggered by growth count, not by batch, anyway.
+        if hatch_timing not in HATCH_TIMINGS:
+            raise ValueError(f"hatch_timing must be one of {sorted(HATCH_TIMINGS)}")
+        self.hatch_timing = hatch_timing
+        # Floor on an "earliest" wait, so staggered timers cannot pull the
+        # bot off the hunt map every few minutes.
+        self.hatch_min_interval_seconds = max(0.0, float(hatch_min_interval_seconds))
         self.minimum_consistent_stat_reads = minimum_consistent_stat_reads
         self.stat_read_retries = stat_read_retries
         # Nest management is driven only by estimated total dinosaur growth.
@@ -5423,12 +5437,16 @@ class FullHatchPlanner:
             hatch_feature.RESULT_TITLE, hatch_feature.CLAIM_ALL_BUTTON,
         )):
             return
+        earliest = self.hatch_timing == "earliest"
         seconds = hatch_feature.read_hatch_cooldown_seconds(
             frame.image,
             self.reader,
             reference_width=self.reference_width,
+            earliest=earliest,
         )
         if seconds is not None:
+            if earliest:
+                seconds = max(seconds, self.hatch_min_interval_seconds)
             self._observed_cooldown_until = self.clock() + seconds
 
     def _start_replacement(self, kind: str) -> None:

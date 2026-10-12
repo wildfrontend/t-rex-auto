@@ -257,6 +257,14 @@ class HatchConfig:
     # Roles left out, or still on the game's default name, are recognised by
     # their screenshots; renamed ones are read with OCR (tag_labels.py).
     tag_names: dict[str, str] = field(default_factory=dict)
+    # When to come back and hatch: "earliest" as soon as the first egg is
+    # ready (never sooner than hatch_min_interval_seconds), "batch" when the
+    # slowest visible egg is.
+    hatch_timing: str = "earliest"
+    hatch_min_interval_seconds: float = 600.0
+    # Longest the hunt may go without a trip home to collect nest eggs, even
+    # when it never idles. 0 keeps collection to idle windows only.
+    collect_max_interval_seconds: float = 900.0
     # OCR values must repeat across complete frames before any parent or
     # candidate tap is allowed. Retries include the initial observations.
     stat_consistent_reads: int = 2
@@ -456,6 +464,12 @@ def _number_tuple(
         return tuple(float(value) for value in raw)
     except (TypeError, ValueError) as exc:
         raise ConfigError(f"{label} must contain numbers") from exc
+
+
+def _hatch_timing(raw: Any) -> str:
+    if raw not in ("earliest", "batch"):
+        raise ConfigError("hatch.hatch_timing must be 'earliest' or 'batch'")
+    return str(raw)
 
 
 def _tag_names(raw: Any) -> dict[str, str]:
@@ -807,6 +821,13 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
                 hatch_data.get("auto_place_specializations", False)
             ),
             tag_names=_tag_names(hatch_data.get("tag_names", {})),
+            hatch_timing=_hatch_timing(hatch_data.get("hatch_timing", "earliest")),
+            hatch_min_interval_seconds=float(
+                hatch_data.get("hatch_min_interval_seconds", 600)
+            ),
+            collect_max_interval_seconds=float(
+                hatch_data.get("collect_max_interval_seconds", 900)
+            ),
             expel_below_hp=int(hatch_data.get("expel_below_hp", 0)),
             expel_below_attack=int(hatch_data.get("expel_below_attack", 0)),
             expel_dry_run=bool(hatch_data.get("expel_dry_run", True)),

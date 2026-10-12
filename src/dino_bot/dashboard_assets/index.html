@@ -218,6 +218,26 @@
               <input id="screeningIntervalInput" type="number" min="1" max="9999" step="1">
             </label>
           </div>
+          <div class="inventory-control timing-control">
+            <div>
+              <span>孵蛋與收蛋時機</span>
+              <strong id="hatchTimingSummary">—</strong>
+              <small>最快那顆：有蛋好了就回來按「全部孵化」，兩次至少間隔 10 分鐘</small>
+              <small>整批：等孵化器裡最慢的蛋好了才一起孵</small>
+              <small>收巢蛋：狩獵有空檔就順手收；超過最長間隔沒收過，就算狩獵正忙也回家收一次（0 = 只在空檔收）</small>
+            </div>
+            <label>
+              <span>孵蛋時機</span>
+              <select id="hatchTimingInput">
+                <option value="earliest">最快那顆（預設）</option>
+                <option value="batch">整批（等最慢那顆）</option>
+              </select>
+            </label>
+            <label>
+              <span>收巢蛋最長間隔（分）</span>
+              <input id="collectIntervalInput" type="number" min="0" max="1440" step="1">
+            </label>
+          </div>
           <div class="inventory-control tag-names-control">
             <div>
               <span>巢穴標籤名稱</span>

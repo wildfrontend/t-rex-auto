@@ -542,6 +542,8 @@ def _create_hatch_engine(
             stat_upgrade_guards=hatch.stat_upgrade_guards,
             allow_extreme_specialization_parent=hatch.allow_extreme_specialization_parent,
             auto_place_specializations=hatch.auto_place_specializations,
+            hatch_timing=hatch.hatch_timing,
+            hatch_min_interval_seconds=hatch.hatch_min_interval_seconds,
             expel_below_hp=hatch.expel_below_hp,
             expel_below_attack=hatch.expel_below_attack,
             expel_dry_run=hatch.expel_dry_run,
@@ -573,6 +575,7 @@ def _create_hatch_engine(
                 full_planner,
                 _build_hunt_planner(config),
                 handoff_seconds=30,
+                collect_max_interval_seconds=hatch.collect_max_interval_seconds,
                 logger=logger,
             )
             if hunt_during_cooldown

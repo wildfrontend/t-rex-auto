@@ -49,6 +49,8 @@ HATCH_TUNING_FIELDS = (
     "screening_growth_interval",
     "allow_extreme_specialization_parent",
     "auto_place_specializations",
+    "hatch_timing",
+    "collect_max_interval_seconds",
 )
 DEFAULT_INSTANCE_ID = "main"
 DEFAULT_INSTANCE_NAME = "主力模擬器"
@@ -815,6 +817,8 @@ class DashboardController:
                 hatch.allow_extreme_specialization_parent
             ),
             "auto_place_specializations": hatch.auto_place_specializations,
+            "hatch_timing": hatch.hatch_timing,
+            "collect_max_interval_seconds": round(hatch.collect_max_interval_seconds),
         }
 
     def set_hatch_tuning(
@@ -825,6 +829,8 @@ class DashboardController:
         screening_growth_interval: int,
         allow_extreme_specialization_parent: bool | None = None,
         auto_place_specializations: bool | None = None,
+        hatch_timing: str | None = None,
+        collect_max_interval_seconds: int | None = None,
     ) -> dict[str, Any]:
         """Persist the hatch numbers a run is tuned by, as one edit.
 
@@ -859,8 +865,23 @@ class DashboardController:
             and not isinstance(auto_place_specializations, bool)
         ):
             raise ValueError("auto_place_specializations must be a boolean")
+        if hatch_timing is not None and hatch_timing not in ("earliest", "batch"):
+            raise ValueError("hatch_timing must be 'earliest' or 'batch'")
+        if collect_max_interval_seconds is not None and (
+            isinstance(collect_max_interval_seconds, bool)
+            or not isinstance(collect_max_interval_seconds, int)
+            or not 0 <= collect_max_interval_seconds <= 24 * 3600
+        ):
+            raise ValueError("collect_max_interval_seconds must be 0-86400 seconds")
 
         instance = self._instance(instance_id)
+        current = self.hatch_tuning(instance)
+        if hatch_timing is None:
+            hatch_timing = current.get("hatch_timing") or "earliest"
+        if collect_max_interval_seconds is None:
+            collect_max_interval_seconds = int(
+                current.get("collect_max_interval_seconds") or 900
+            )
         if allow_extreme_specialization_parent is None:
             allow_extreme_specialization_parent = bool(
                 self.hatch_tuning(instance).get(
@@ -881,6 +902,8 @@ class DashboardController:
                 allow_extreme_specialization_parent
             ),
             "auto_place_specializations": auto_place_specializations,
+            "hatch_timing": hatch_timing,
+            "collect_max_interval_seconds": collect_max_interval_seconds,
         }
         try:
             config = json.loads(instance.config_path.read_text(encoding="utf-8"))
@@ -905,7 +928,15 @@ class DashboardController:
             f"篩選間隔 {screening_growth_interval}、極端親代保護"
             f"{'開啟' if allow_extreme_specialization_parent else '關閉'}、"
             "攻擊／HP 特化"
-            f"{'自動放置＋純化' if auto_place_specializations else '逐隻升級'} 已儲存"
+            f"{'自動放置＋純化' if auto_place_specializations else '逐隻升級'}、"
+            f"孵蛋時機{'最快那顆' if hatch_timing == 'earliest' else '整批'}、"
+            "收巢蛋最長間隔"
+            + (
+                f" {collect_max_interval_seconds // 60} 分鐘"
+                if collect_max_interval_seconds
+                else "不限（只在狩獵空檔收）"
+            )
+            + " 已儲存"
         )
         if running:
             message += "；重新啟動 Bot 後生效"
@@ -2195,6 +2226,8 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                     payload.get("screening_growth_interval"),
                     payload.get("allow_extreme_specialization_parent"),
                     payload.get("auto_place_specializations"),
+                    payload.get("hatch_timing"),
+                    payload.get("collect_max_interval_seconds"),
                 )
             elif action == "set-custom-workflow":
                 payload = self._read_json()

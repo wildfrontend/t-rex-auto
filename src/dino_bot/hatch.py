@@ -579,12 +579,18 @@ def read_hatch_cooldown_seconds(
     reader: DigitReader,
     *,
     reference_width: float = 900.0,
+    earliest: bool = False,
 ) -> int | None:
     """Return the longest visible incubator countdown, or ``None``.
 
-    A ready egg has the ``孵化`` label and no timer. Full hatch uses the
-    longest readable timer so a group of eggs can mature together before the
-    next batch is collected and compared. A zero is returned when the timers
+    ``earliest`` returns the shortest one instead: the time until the first
+    egg is ready, for hatching whatever is done rather than a whole batch. The
+    incubator lists eggs soonest-first, so the visible rows always hold it,
+    while the longest timer may be on a row scrolled out of view.
+
+    A ready egg has the ``孵化`` label and no timer. Full hatch's batch mode
+    uses the longest readable timer so a group of eggs can mature together
+    before the next batch is collected and compared. A zero is returned when the timers
     are visible but already due; unreadable regions are ignored and fail safe
     to ``None`` when none can be parsed.
     """
@@ -609,7 +615,9 @@ def read_hatch_cooldown_seconds(
         value = parse_hatch_timer_text(reader.read(crop))
         if value is not None:
             values.append(value)
-    return max(values) if values else None
+    if not values:
+        return None
+    return min(values) if earliest else max(values)
 
 
 class HatchPlanner:

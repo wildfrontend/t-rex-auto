@@ -387,6 +387,18 @@ def test_v3_incubator_reads_timers_without_permanent_boost_bar() -> None:
     assert read_hatch_cooldown_seconds(empty, reader) == 4 * 3600 + 30 * 60
 
 
+def test_earliest_timer_is_the_first_egg_not_the_slowest() -> None:
+    # The incubator lists eggs soonest-first. Waiting for the slowest visible
+    # one kept these ready eggs idle in their slots for hours longer.
+    reader = DigitReader(GLYPHS)
+    ready = _fixture("incubator-v3-ready.jpg")
+    full = _fixture("incubator-v3-permanent-bar-boost-ready.jpg")
+
+    assert read_hatch_cooldown_seconds(ready, reader, earliest=True) == 34 * 60 + 46
+    assert read_hatch_cooldown_seconds(full, reader) == 42 * 60 + 39
+    assert read_hatch_cooldown_seconds(full, reader, earliest=True) == 22 * 60 + 5
+
+
 def test_v3_hatch_all_button_is_lit_only_with_ready_eggs() -> None:
     assert hatch.hatch_all_ready(_fixture("incubator-v3-ready.jpg"))
     assert not hatch.hatch_all_ready(_fixture("incubator-v3-empty.jpg"))
