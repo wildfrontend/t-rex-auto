@@ -419,6 +419,32 @@ def test_v3_header_egg_count_and_result_count_are_read() -> None:
     ) == 4
 
 
+@pytest.mark.parametrize(("panel_read", "credited"), [(4, 4), (316, 9)])
+def test_result_count_cannot_exceed_the_eggs_that_went_in(
+    monkeypatch: pytest.MonkeyPatch, panel_read: int, credited: int
+) -> None:
+    """S9 2026-10-12 credited 316 dinosaurs for a 309 -> 319 batch.
+
+    The incubator header said how many eggs went in; a 孵化結果 read above it is
+    a misread and falls back to that egg count.
+    """
+
+    planner, _ = make_planner(reader=DigitReader(GLYPHS))
+    incubator = _fixture("incubator-v3-ready.jpg")  # header 9/24
+    target = planner.choose(Frame(incubator), _manifest_detections(incubator))
+    assert target is not None and target.type == hatch.HATCH_ALL_BUTTON
+
+    monkeypatch.setattr(hatch, "read_hatch_result_count", lambda *a, **kw: panel_read)
+    result = _fixture("hatch-all-result.jpg")
+    target = planner.choose(
+        Frame(result), [Detection(hatch.CLAIM_ALL_BUTTON, 645, 1246, 0.99)]
+    )
+    assert target is not None and target.type == hatch.CLAIM_ALL_BUTTON
+    planner.on_action_success(hatch.CLAIM_ALL_BUTTON)
+
+    assert planner.hatched == credited
+
+
 def test_v3_ready_incubator_taps_hatch_all_instead_of_single_egg() -> None:
     planner, _ = make_planner(reader=DigitReader(GLYPHS))
     image = _fixture("incubator-v3-ready.jpg")

@@ -161,7 +161,11 @@ class PlannerConfig:
     dinosaur_failure_radius: float = 80.0
     mail_after_hunts: int = 30
     mail_failure_limit: int = 3
-    capacity_wait_seconds: float = 300.0
+    # Re-check interval while every hunting team is out. The full N/N counter
+    # is read straight off the map HUD, so a re-check costs one scan and no
+    # taps; a fixed 300s slept straight through teams that come back in ~30s
+    # on high-level accounts (S9 2026-10-12: 5 minutes, one log line).
+    capacity_wait_seconds: float = 15.0
     ring_width: float = 150.0
     own_path_angle_degrees: float = 7.0
     stalled_recenter_seconds: float = 10.0
@@ -721,7 +725,7 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
             mail_after_hunts=int(planner_data.get("mail_after_hunts", 30)),
             mail_failure_limit=int(planner_data.get("mail_failure_limit", 3)),
             capacity_wait_seconds=float(
-                planner_data.get("capacity_wait_seconds", 300)
+                planner_data.get("capacity_wait_seconds", 15)
             ),
             ring_width=float(planner_data.get("ring_width", 150)),
             own_path_angle_degrees=float(

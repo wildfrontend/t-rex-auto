@@ -116,7 +116,7 @@
     "dinosaur_failure_radius": 80,
     "mail_after_hunts": 30,
     "mail_failure_limit": 3,
-    "capacity_wait_seconds": 300,
+    "capacity_wait_seconds": 15,
     "ring_width": 150,
     "own_path_angle_degrees": 7,
     "stalled_recenter_seconds": 10,

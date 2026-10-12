@@ -1550,6 +1550,27 @@ def test_hunt_planner_waits_when_concurrent_hunt_capacity_is_full() -> None:
     assert resumed is not None and resumed.type == "dinosaur"
 
 
+def test_full_hunt_teams_are_rechecked_every_few_seconds_by_default() -> None:
+    """S9 2026-10-12 slept 5 minutes on a full N/N counter.
+
+    The counter is read off the map HUD for free, and a high-level account's
+    teams can be back in ~30s, so the default re-checks every 15s and hunts
+    as soon as the counter is no longer full.
+    """
+
+    frame = Frame(np.zeros((1600, 900, 3), dtype=np.uint8))
+    planner = HuntPlanner(("hunt_capacity_full", "dinosaur"), safe_margin=80)
+    anchor = Detection("map_center_egg", 450, 800, 1.0)
+    full = Detection("hunt_capacity_full", 815, 240, 0.99)
+    dinosaur = Detection("dinosaur", 500, 820, 0.9)
+    with patch("dino_bot.planning.time.monotonic", side_effect=[0, 15, 30]):
+        assert planner.choose(frame, [anchor, full, dinosaur]) is None
+        # Still full at the first re-check: wait another round.
+        assert planner.choose(frame, [anchor, full, dinosaur]) is None
+        resumed = planner.choose(frame, [anchor, dinosaur])
+    assert resumed is not None and resumed.type == "dinosaur"
+
+
 def test_template_detector_finds_asset(tmp_path: Path) -> None:
     rng = np.random.default_rng(42)
     template = rng.integers(0, 256, (12, 12, 3), dtype=np.uint8)

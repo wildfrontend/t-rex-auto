@@ -130,6 +130,9 @@ HATCH_V3_MIN_SATURATION = 60.0
 HATCH_V3_MIN_VALUE = 150.0
 # The 孵化結果 panel prints the batch size as 孵化的恐龍 N.
 HATCH_RESULT_COUNT_REGION = (400.0, 322.0, 520.0, 360.0)
+# Ceiling on a result-panel read when the batch's own egg count is unknown;
+# no incubator holds anywhere near this many.
+MAX_HATCH_BATCH = 99
 # The v3 header prints eggs-in-incubator / slots (e.g. 9/24); the egg count
 # bounds how many dinosaurs one 全部孵化 can add.
 HATCH_V3_EGG_COUNT_REGION = (375.0, 225.0, 525.0, 285.0)
@@ -680,6 +683,10 @@ class HatchPlanner:
         # when the panel's count cannot be read.
         self._pending_batch: int | None = None
         self._ready_labels_seen = 0
+        # Most dinosaurs the 全部孵化 just pressed can produce: the incubator's
+        # egg count, or the home button's ready count. A panel read above it
+        # is a misread (S9 2026-10-12 read 316 for a batch of ~10).
+        self._batch_bound: int | None = None
         # Dinosaurs the caller still allows before its population stop line;
         # ``None`` means unlimited. A batch that might exceed it falls back to
         # the single-egg path, which re-checks the line after every claim.
@@ -771,7 +778,7 @@ class HatchPlanner:
             self.hatched += 1
             self._scrolls_done = 0
         elif target_type == CLAIM_ALL_BUTTON:
-            batch = self._pending_batch or max(1, self._ready_labels_seen)
+            batch = self._pending_batch or self._batch_bound or max(1, self._ready_labels_seen)
             self.hatched += batch
             self.logger.info(
                 "Hatch | claimed batch of %d%s | hatched=%d",
@@ -780,6 +787,7 @@ class HatchPlanner:
                 self.hatched,
             )
             self._pending_batch = None
+            self._batch_bound = None
             self._ready_labels_seen = 0
             self._scrolls_done = 0
         elif target_type == CLOSE_BUTTON:
@@ -819,6 +827,16 @@ class HatchPlanner:
                     self.reader,
                     reference_width=self.reference_width,
                 )
+                bound = self._batch_bound if self._batch_bound else MAX_HATCH_BATCH
+                if count is not None and count > bound:
+                    if self._pending_batch is None:
+                        self.logger.warning(
+                            "Hatch | result count %d exceeds the %d eggs this batch"
+                            " could hold; treating it as a misread",
+                            count,
+                            bound,
+                        )
+                    count = None
                 if count is not None:
                     self._pending_batch = count
             self._stage = "claim_all"
@@ -869,6 +887,15 @@ class HatchPlanner:
             ) and self._batch_fits(frame):
                 self._stage = "hatch_all"
                 self._ready_labels_seen = len(labels or ())
+                self._batch_bound = (
+                    None
+                    if self.reader is None
+                    else read_incubator_egg_count(
+                        frame.image,
+                        self.reader,
+                        reference_width=self.reference_width,
+                    )
+                ) or None
                 return synthetic_target(
                     HATCH_ALL_BUTTON,
                     *hatch_all_point(frame, reference_width=self.reference_width),
@@ -916,6 +943,7 @@ class HatchPlanner:
                 if self._ready_fits(ready):
                     self._stage = "home_hatch_all"
                     self._ready_labels_seen = ready or 0
+                    self._batch_bound = ready or None
                     return detection_target(home_hatch_all)
             return self._egg_pile_target(frame)
         self._stage = "unknown_screen"

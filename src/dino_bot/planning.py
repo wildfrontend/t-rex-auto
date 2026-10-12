@@ -272,7 +272,7 @@ class HuntPlanner(TargetPlanner):
         capacity_full_type: str = "hunt_capacity_full",
         autoplace_cancel_type: str = "hunt_autoplace_cancel_button",
         autoplace_refused_wait_seconds: float = 180.0,
-        capacity_wait_seconds: float = 300.0,
+        capacity_wait_seconds: float = 15.0,
         ring_width: float = 150.0,
         own_path_angle_degrees: float = 7.0,
         stalled_recenter_seconds: float = 10.0,
