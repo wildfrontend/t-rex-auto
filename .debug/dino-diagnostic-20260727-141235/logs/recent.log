@@ -1,0 +1,501 @@
+=== 20260727.log ===
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.779 | contour_area=45.500
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.779 | contour_area=45.500
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.779 | contour_area=45.500
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.779 | contour_area=45.500
+14:12:08 | DEBUG | Detect | dinosaur | template | confidence=0.778 | anchor_bbox={'x': 827, 'y': 689, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.776 | contour_area=35.500
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.776 | contour_area=40.500
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.776 | contour_area=40.500
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.776 | contour_area=40.500
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.776 | contour_area=36.000
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.776 | contour_area=31.500
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.773 | contour_area=44.500
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.773 | contour_area=44.500
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.773 | contour_area=44.500
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.772 | contour_area=50.000
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.772 | contour_area=50.000
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.772 | contour_area=40.000
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.772 | contour_area=40.000
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.772 | contour_area=35.500
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.770 | contour_area=11.000
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.770 | contour_area=11.000
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.770 | contour_area=11.000
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.770 | contour_area=11.000
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.770 | contour_area=11.000
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.770 | contour_area=11.000
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.770 | contour_area=11.000
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.769 | contour_area=39.500
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.769 | contour_area=39.500
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.769 | contour_area=39.500
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.769 | contour_area=39.500
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.769 | contour_area=39.500
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.768 | contour_area=35.000
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.767 | contour_area=30.500
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.766 | contour_area=43.500
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.766 | contour_area=43.500
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.766 | contour_area=19.000
+14:12:08 | DEBUG | Detect | dinosaur | template | confidence=0.766 | anchor_bbox={'x': 313, 'y': 300, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.765 | contour_area=26.000
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.765 | contour_area=13.000
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.764 | contour_area=34.500
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.763 | contour_area=21.500
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.762 | contour_area=38.500
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.761 | contour_area=16.000
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.761 | contour_area=8.000
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.761 | contour_area=8.000
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.761 | contour_area=8.000
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.761 | contour_area=33.500
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.760 | contour_area=17.000
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.760 | contour_area=8.500
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.759 | contour_area=18.500
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.759 | contour_area=38.000
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.757 | contour_area=10.500
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.757 | contour_area=33.000
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.756 | contour_area=47.000
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.756 | contour_area=47.000
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.756 | contour_area=47.000
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.753 | contour_area=91.000
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.751 | contour_area=41.000
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.750 | contour_area=46.000
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.750 | contour_area=46.000
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.750 | contour_area=50.500
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.748 | contour_area=36.500
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.747 | contour_area=50.000
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.745 | contour_area=42.000
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.745 | contour_area=12.000
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.745 | contour_area=8.000
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.740 | contour_area=44.000
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.736 | contour_area=27.000
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.726 | contour_area=99.500
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.725 | contour_area=11.000
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.710 | contour_area=21.000
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.696 | contour_area=96.000
+14:12:08 | DEBUG | Detect | dinosaur | template | confidence=0.667 | anchor_bbox={'x': 144, 'y': 274, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:08 | DEBUG | Detect | dinosaur | template | confidence=0.661 | anchor_bbox={'x': 553, 'y': 929, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:08 | DEBUG | Detect | dinosaur | template | confidence=0.658 | anchor_bbox={'x': 165, 'y': 910, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:08 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.657 | contour_area=461.500
+14:12:08 | DEBUG | Detect | dinosaur | template | confidence=0.628 | anchor_bbox={'x': 485, 'y': 942, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:08 | DEBUG | Detect | dinosaur | template | confidence=0.604 | anchor_bbox={'x': 734, 'y': 188, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:08 | DEBUG | Planning | no actionable target | anchor_window=6 exclusion_zone=1 own_path_angle=8 own_path_marker=3 screen_margin=1
+14:12:08 | DEBUG | Capture | 900x1600 | #17632 | 367ms
+14:12:11 | INFO | Detect | 16 dinosaur, 147 own_hunt_path | 2650ms
+14:12:11 | DEBUG | Detect | dinosaur | template | confidence=0.952 | anchor_bbox={'x': 232, 'y': 574, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:11 | DEBUG | Detect | dinosaur | template | confidence=0.950 | anchor_bbox={'x': 761, 'y': 567, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:11 | DEBUG | Detect | dinosaur | template | confidence=0.940 | anchor_bbox={'x': 703, 'y': 500, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:11 | DEBUG | Detect | dinosaur | template | confidence=0.933 | anchor_bbox={'x': 353, 'y': 667, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:11 | DEBUG | Detect | dinosaur | template | confidence=0.909 | anchor_bbox={'x': 656, 'y': 487, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:11 | DEBUG | Detect | dinosaur | template | confidence=0.889 | anchor_bbox={'x': 581, 'y': 646, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:11 | DEBUG | Detect | dinosaur | template | confidence=0.868 | anchor_bbox={'x': 511, 'y': 328, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.837 | contour_area=288.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.816 | contour_area=46.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.815 | contour_area=40.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.812 | contour_area=25.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.806 | contour_area=45.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.806 | contour_area=30.000
+14:12:11 | DEBUG | Detect | dinosaur | template | confidence=0.803 | anchor_bbox={'x': 742, 'y': 471, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.802 | contour_area=18.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.801 | contour_area=21.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.801 | contour_area=21.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.800 | contour_area=24.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.797 | contour_area=17.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.797 | contour_area=17.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.797 | contour_area=17.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.797 | contour_area=48.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.796 | contour_area=43.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.796 | contour_area=14.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.794 | contour_area=24.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.794 | contour_area=24.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.794 | contour_area=24.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.794 | contour_area=24.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.794 | contour_area=24.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.794 | contour_area=21.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.794 | contour_area=24.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.794 | contour_area=24.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.793 | contour_area=33.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.793 | contour_area=33.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.793 | contour_area=33.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.793 | contour_area=43.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.793 | contour_area=43.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.790 | contour_area=29.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.789 | contour_area=42.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.789 | contour_area=42.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.789 | contour_area=42.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.789 | contour_area=33.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.788 | contour_area=47.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.788 | contour_area=47.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.788 | contour_area=47.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.787 | contour_area=37.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.786 | contour_area=42.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.786 | contour_area=31.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.786 | contour_area=28.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.786 | contour_area=42.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.786 | contour_area=14.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.786 | contour_area=14.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.786 | contour_area=14.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.786 | contour_area=14.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.786 | contour_area=14.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.786 | contour_area=14.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.786 | contour_area=14.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.786 | contour_area=14.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.786 | contour_area=14.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.786 | contour_area=14.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.786 | contour_area=14.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.786 | contour_area=14.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.786 | contour_area=14.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.785 | contour_area=46.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.785 | contour_area=46.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.784 | contour_area=29.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.784 | contour_area=36.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.782 | contour_area=41.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.781 | contour_area=31.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.781 | contour_area=27.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.780 | contour_area=32.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.780 | contour_area=20.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.780 | contour_area=32.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.780 | contour_area=20.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.780 | contour_area=20.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.780 | contour_area=20.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.780 | contour_area=16.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.779 | contour_area=36.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.779 | contour_area=41.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.779 | contour_area=45.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.779 | contour_area=45.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.779 | contour_area=45.500
+14:12:11 | DEBUG | Detect | dinosaur | template | confidence=0.778 | anchor_bbox={'x': 827, 'y': 689, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.776 | contour_area=35.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.776 | contour_area=40.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.776 | contour_area=40.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.776 | contour_area=40.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.776 | contour_area=36.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.776 | contour_area=31.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.774 | contour_area=14.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.773 | contour_area=44.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.773 | contour_area=44.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.773 | contour_area=44.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.772 | contour_area=50.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.772 | contour_area=40.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.772 | contour_area=40.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.772 | contour_area=35.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.770 | contour_area=11.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.770 | contour_area=44.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.770 | contour_area=11.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.770 | contour_area=11.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.770 | contour_area=11.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.770 | contour_area=11.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.770 | contour_area=11.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.770 | contour_area=11.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.770 | contour_area=11.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.770 | contour_area=22.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.769 | contour_area=39.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.769 | contour_area=39.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.769 | contour_area=39.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.768 | contour_area=46.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.768 | contour_area=35.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.766 | contour_area=43.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.766 | contour_area=43.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.766 | contour_area=43.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.766 | contour_area=19.000
+14:12:11 | DEBUG | Detect | dinosaur | template | confidence=0.766 | anchor_bbox={'x': 313, 'y': 300, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.765 | contour_area=26.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.765 | contour_area=13.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.764 | contour_area=34.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.763 | contour_area=21.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.763 | contour_area=43.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.763 | contour_area=21.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.762 | contour_area=38.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.761 | contour_area=48.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.761 | contour_area=48.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.761 | contour_area=8.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.761 | contour_area=8.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.761 | contour_area=8.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.760 | contour_area=17.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.760 | contour_area=42.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.760 | contour_area=42.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.760 | contour_area=42.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.760 | contour_area=8.500
+14:12:11 | DEBUG | Detect | dinosaur | template | confidence=0.759 | anchor_bbox={'x': 287, 'y': 429, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.759 | contour_area=18.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.759 | contour_area=38.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.757 | contour_area=10.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.757 | contour_area=33.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.756 | contour_area=47.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.756 | contour_area=47.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.752 | contour_area=51.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.750 | contour_area=46.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.750 | contour_area=46.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.748 | contour_area=36.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.748 | contour_area=45.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.746 | contour_area=88.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.746 | contour_area=94.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.745 | contour_area=12.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.745 | contour_area=45.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.745 | contour_area=45.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.745 | contour_area=12.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.745 | contour_area=8.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.725 | contour_area=27.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.725 | contour_area=11.000
+14:12:11 | DEBUG | Detect | dinosaur | template | confidence=0.708 | anchor_bbox={'x': 103, 'y': 823, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.707 | contour_area=96.500
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.698 | contour_area=17.000
+14:12:11 | DEBUG | Detect | dinosaur | template | confidence=0.667 | anchor_bbox={'x': 144, 'y': 274, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:11 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.663 | contour_area=454.000
+14:12:11 | DEBUG | Detect | dinosaur | template | confidence=0.658 | anchor_bbox={'x': 165, 'y': 910, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:11 | DEBUG | Detect | dinosaur | template | confidence=0.628 | anchor_bbox={'x': 485, 'y': 942, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:11 | DEBUG | Detect | dinosaur | template | confidence=0.621 | anchor_bbox={'x': 553, 'y': 906, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:11 | INFO | Planning | map_exit_nest_button at (841,1295) confidence=0.700
+14:12:11 | INFO | Action | tap (841,1295) | attempt=1
+14:12:11 | DEBUG | Action | poll in 100ms; transition timeout=4000ms | target=map_exit_nest_button
+14:12:12 | DEBUG | Verify | performance | capture=332ms | detect=313ms | types=5
+14:12:12 | DEBUG | Verify | Pending | expected next UI not detected: forest_recenter_button | poll=100ms | remaining=4000ms
+14:12:13 | DEBUG | Verify | performance | capture=346ms | detect=314ms | types=5
+14:12:13 | DEBUG | Verify | Pending | expected next UI not detected: forest_recenter_button | poll=100ms | remaining=3234ms
+14:12:13 | DEBUG | Verify | performance | capture=335ms | detect=319ms | types=5
+14:12:13 | DEBUG | Verify | Pending | expected next UI not detected: forest_recenter_button | poll=100ms | remaining=2469ms
+14:12:14 | DEBUG | Verify | performance | capture=519ms | detect=320ms | types=5
+14:12:14 | INFO | Verify | Success | next UI detected: forest_recenter_button
+14:12:15 | DEBUG | Capture | 900x1600 | #17637 | 501ms
+14:12:17 | INFO | Detect | 1 forest_recenter_button, 14 own_hunt_path | 2466ms
+14:12:17 | DEBUG | Detect | forest_recenter_button | template | confidence=1.000 | anchor_bbox={'x': 814, 'y': 1275, 'width': 48, 'height': 45}, asset=forest-recenter-button.png, template_scale=1.000
+14:12:17 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.803 | contour_area=26.000
+14:12:17 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.787 | contour_area=20.500
+14:12:17 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.780 | contour_area=20.000
+14:12:17 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.776 | contour_area=9.000
+14:12:17 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.765 | contour_area=39.000
+14:12:17 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.761 | contour_area=8.000
+14:12:17 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.761 | contour_area=8.000
+14:12:17 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.757 | contour_area=10.500
+14:12:17 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.718 | contour_area=64.000
+14:12:17 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.707 | contour_area=96.500
+14:12:17 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.692 | contour_area=23.500
+14:12:17 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.665 | contour_area=27.000
+14:12:17 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.651 | contour_area=30.500
+14:12:17 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.618 | contour_area=497.500
+14:12:17 | INFO | Planning | forest_recenter_button at (841,1295) confidence=1.000
+14:12:17 | INFO | Action | tap (841,1295) | attempt=1
+14:12:17 | DEBUG | Action | poll in 100ms; transition timeout=3000ms | target=forest_recenter_button
+14:12:19 | DEBUG | Verify | performance | capture=568ms | detect=618ms | types=7
+14:12:19 | DEBUG | Verify | Pending | expected next UI not detected: mailbox_button, map_center_egg, map_exit_nest_button | poll=100ms | remaining=3000ms
+14:12:20 | DEBUG | Verify | performance | capture=335ms | detect=604ms | types=7
+14:12:20 | DEBUG | Verify | Pending | expected next UI not detected: mailbox_button, map_center_egg, map_exit_nest_button | poll=100ms | remaining=1968ms
+14:12:21 | DEBUG | Verify | performance | capture=333ms | detect=587ms | types=7
+14:12:21 | DEBUG | Verify | Pending | expected next UI not detected: mailbox_button, map_center_egg, map_exit_nest_button | poll=100ms | remaining=937ms
+14:12:22 | DEBUG | Verify | performance | capture=318ms | detect=577ms | types=7
+14:12:22 | WARNING | Verify | Failed | expected next UI not detected: mailbox_button, map_center_egg, map_exit_nest_button
+14:12:22 | INFO | Recover | refresh and re-plan
+14:12:22 | DEBUG | Capture | 900x1600 | #17642 | 332ms
+14:12:24 | INFO | Detect | 20 dinosaur, 64 own_hunt_path | 2189ms
+14:12:24 | DEBUG | Detect | dinosaur | template | confidence=0.968 | anchor_bbox={'x': 638, 'y': 567, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:24 | DEBUG | Detect | dinosaur | template | confidence=0.938 | anchor_bbox={'x': 754, 'y': 557, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:24 | DEBUG | Detect | dinosaur | template | confidence=0.933 | anchor_bbox={'x': 353, 'y': 667, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:24 | DEBUG | Detect | dinosaur | template | confidence=0.904 | anchor_bbox={'x': 646, 'y': 486, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:24 | DEBUG | Detect | dinosaur | template | confidence=0.903 | anchor_bbox={'x': 754, 'y': 468, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:24 | DEBUG | Detect | dinosaur | template | confidence=0.886 | anchor_bbox={'x': 817, 'y': 694, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:24 | DEBUG | Detect | dinosaur | template | confidence=0.883 | anchor_bbox={'x': 199, 'y': 571, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:24 | DEBUG | Detect | dinosaur | template | confidence=0.876 | anchor_bbox={'x': 581, 'y': 644, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:24 | DEBUG | Detect | dinosaur | template | confidence=0.875 | anchor_bbox={'x': 290, 'y': 434, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:24 | DEBUG | Detect | dinosaur | template | confidence=0.868 | anchor_bbox={'x': 511, 'y': 328, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.837 | contour_area=288.500
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.816 | contour_area=46.500
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.815 | contour_area=40.500
+14:12:24 | DEBUG | Detect | dinosaur | template | confidence=0.808 | anchor_bbox={'x': 10, 'y': 765, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.806 | contour_area=45.000
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.806 | contour_area=45.000
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.806 | contour_area=45.000
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.797 | contour_area=48.500
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.797 | contour_area=48.500
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.796 | contour_area=43.500
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.796 | contour_area=43.500
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.796 | contour_area=14.500
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.793 | contour_area=43.000
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.793 | contour_area=43.000
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.793 | contour_area=43.000
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.793 | contour_area=21.500
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.791 | contour_area=47.500
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.788 | contour_area=47.000
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.788 | contour_area=47.000
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.788 | contour_area=47.000
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.788 | contour_area=37.000
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.786 | contour_area=42.000
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.785 | contour_area=46.500
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.785 | contour_area=46.500
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.785 | contour_area=46.500
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.785 | contour_area=46.500
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.782 | contour_area=41.500
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.782 | contour_area=41.500
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.781 | contour_area=27.500
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.779 | contour_area=45.500
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.779 | contour_area=45.500
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.779 | contour_area=45.500
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.779 | contour_area=45.500
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.779 | contour_area=45.500
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.779 | contour_area=45.500
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.776 | contour_area=40.500
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.776 | contour_area=40.500
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.776 | contour_area=40.500
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.773 | contour_area=44.500
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.773 | contour_area=44.500
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.773 | contour_area=44.500
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.773 | contour_area=44.500
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.773 | contour_area=44.500
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.773 | contour_area=44.500
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.772 | contour_area=50.000
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.772 | contour_area=45.000
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.769 | contour_area=39.500
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.769 | contour_area=39.500
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.767 | contour_area=49.000
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.766 | contour_area=43.500
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.766 | contour_area=43.500
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.766 | contour_area=43.500
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.766 | contour_area=43.500
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.766 | contour_area=43.500
+14:12:24 | DEBUG | Detect | dinosaur | template | confidence=0.766 | anchor_bbox={'x': 313, 'y': 300, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.762 | contour_area=47.000
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.761 | contour_area=48.000
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.760 | contour_area=17.000
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.760 | contour_area=42.500
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.760 | contour_area=42.500
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.756 | contour_area=47.000
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.754 | contour_area=41.500
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.752 | contour_area=51.000
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.748 | contour_area=40.500
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.739 | contour_area=19.500
+14:12:24 | DEBUG | Detect | dinosaur | template | confidence=0.736 | anchor_bbox={'x': 681, 'y': 487, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:24 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.715 | contour_area=242.000
+14:12:24 | DEBUG | Detect | dinosaur | template | confidence=0.687 | anchor_bbox={'x': 175, 'y': 896, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:24 | DEBUG | Detect | dinosaur | template | confidence=0.684 | anchor_bbox={'x': 540, 'y': 903, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:24 | DEBUG | Detect | dinosaur | template | confidence=0.666 | anchor_bbox={'x': 652, 'y': 523, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:24 | DEBUG | Detect | dinosaur | template | confidence=0.659 | anchor_bbox={'x': 232, 'y': 574, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:24 | DEBUG | Detect | dinosaur | template | confidence=0.632 | anchor_bbox={'x': 223, 'y': 217, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:24 | DEBUG | Detect | dinosaur | template | confidence=0.625 | anchor_bbox={'x': 469, 'y': 937, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:24 | DEBUG | Detect | dinosaur | template | confidence=0.621 | anchor_bbox={'x': 150, 'y': 265, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:24 | INFO | Planning | dinosaur at (603,676) confidence=0.876
+14:12:24 | INFO | Action | tap (603,676) | attempt=1
+14:12:24 | DEBUG | Action | poll in 100ms; transition timeout=300ms | target=dinosaur
+14:12:25 | DEBUG | Verify | performance | capture=319ms | detect=327ms | types=5
+14:12:25 | INFO | Verify | Success | next UI detected: hunt_button
+14:12:25 | DEBUG | Idle | reuse verified detections
+14:12:25 | INFO | Planning | hunt_button at (603,546) confidence=0.988
+14:12:25 | INFO | Action | tap (603,546) | attempt=1
+14:12:25 | DEBUG | Action | poll in 100ms; transition timeout=900ms | target=hunt_button
+14:12:26 | DEBUG | Verify | performance | capture=337ms | detect=307ms | types=5
+14:12:26 | DEBUG | Verify | Pending | expected next UI not detected: hunt_confirm_button | poll=100ms | remaining=900ms
+14:12:27 | DEBUG | Verify | performance | capture=298ms | detect=330ms | types=5
+14:12:27 | INFO | Verify | Success | next UI detected: hunt_confirm_button
+14:12:27 | DEBUG | Idle | reuse verified detections
+14:12:27 | INFO | Planning | hunt_confirm_button at (451,1412) confidence=1.000
+14:12:27 | INFO | Action | tap (451,1412) | attempt=1
+14:12:27 | DEBUG | Action | poll in 100ms; transition timeout=1200ms | target=hunt_confirm_button
+14:12:28 | DEBUG | Verify | performance | capture=320ms | detect=971ms | types=11
+14:12:28 | INFO | Verify | Success | next UI detected: mailbox_button, map_exit_nest_button
+14:12:28 | DEBUG | Idle | reuse verified detections
+14:12:28 | DEBUG | Planning | no actionable target
+14:12:29 | DEBUG | Capture | 900x1600 | #17647 | 307ms
+14:12:31 | INFO | Detect | 21 dinosaur, 1 mailbox_button, 1 map_exit_nest_button, 62 own_hunt_path | 2386ms
+14:12:31 | DEBUG | Detect | mailbox_button | template | confidence=0.968 | anchor_bbox={'x': 800, 'y': 1172, 'width': 84, 'height': 72}, asset=mailbox-button.png, template_scale=1.000
+14:12:31 | DEBUG | Detect | dinosaur | template | confidence=0.964 | anchor_bbox={'x': 515, 'y': 568, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:31 | DEBUG | Detect | map_exit_nest_button | template | confidence=0.951 | anchor_bbox={'x': 800, 'y': 1248, 'width': 82, 'height': 94}, asset=map-exit-nest-button.png, template_scale=1.000
+14:12:31 | DEBUG | Detect | dinosaur | template | confidence=0.941 | anchor_bbox={'x': 516, 'y': 633, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:31 | DEBUG | Detect | dinosaur | template | confidence=0.940 | anchor_bbox={'x': 143, 'y': 510, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:31 | DEBUG | Detect | dinosaur | template | confidence=0.937 | anchor_bbox={'x': 65, 'y': 668, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:31 | DEBUG | Detect | dinosaur | template | confidence=0.903 | anchor_bbox={'x': 498, 'y': 660, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:31 | DEBUG | Detect | dinosaur | template | confidence=0.899 | anchor_bbox={'x': 617, 'y': 657, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:31 | DEBUG | Detect | dinosaur | template | confidence=0.878 | anchor_bbox={'x': 605, 'y': 560, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:31 | DEBUG | Detect | dinosaur | template | confidence=0.852 | anchor_bbox={'x': 426, 'y': 750, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:31 | DEBUG | Detect | dinosaur | template | confidence=0.817 | anchor_bbox={'x': 20, 'y': 315, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.817 | contour_area=66.000
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.812 | contour_area=51.000
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.810 | contour_area=19.000
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.809 | contour_area=50.500
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.808 | contour_area=56.500
+14:12:31 | DEBUG | Detect | dinosaur | template | confidence=0.806 | anchor_bbox={'x': 386, 'y': 393, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.799 | contour_area=44.000
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.799 | contour_area=49.500
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.799 | contour_area=44.000
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.799 | contour_area=44.000
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.799 | contour_area=44.000
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.797 | contour_area=48.500
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.796 | contour_area=43.500
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.795 | contour_area=53.000
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.794 | contour_area=54.000
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.793 | contour_area=33.500
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.790 | contour_area=41.500
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.789 | contour_area=53.000
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.789 | contour_area=53.000
+14:12:31 | DEBUG | Detect | dinosaur | template | confidence=0.788 | anchor_bbox={'x': 659, 'y': 808, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:31 | DEBUG | Detect | dinosaur | template | confidence=0.788 | anchor_bbox={'x': 180, 'y': 362, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.787 | contour_area=47.500
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.787 | contour_area=47.500
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.787 | contour_area=47.500
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.785 | contour_area=46.500
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.785 | contour_area=46.500
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.785 | contour_area=57.500
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.784 | contour_area=47.000
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.782 | contour_area=57.000
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.782 | contour_area=57.000
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.780 | contour_area=51.500
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.779 | contour_area=45.500
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.779 | contour_area=45.500
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.778 | contour_area=51.000
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.778 | contour_area=51.000
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.777 | contour_area=56.000
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.776 | contour_area=40.500
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.775 | contour_area=45.500
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.775 | contour_area=45.500
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.775 | contour_area=50.500
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.774 | contour_area=56.000
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.773 | contour_area=44.500
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.772 | contour_area=55.000
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.772 | contour_area=50.000
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.772 | contour_area=50.000
+14:12:31 | DEBUG | Detect | dinosaur | template | confidence=0.770 | anchor_bbox={'x': 135, 'y': 790, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.770 | contour_area=49.500
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.770 | contour_area=11.000
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.769 | contour_area=44.500
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.767 | contour_area=49.000
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.766 | contour_area=19.000
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.762 | contour_area=53.000
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.762 | contour_area=53.000
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.761 | contour_area=48.000
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.761 | contour_area=57.500
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.760 | contour_area=17.000
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.755 | contour_area=52.000
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.754 | contour_area=28.000
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.751 | contour_area=21.500
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.749 | contour_area=56.000
+14:12:31 | DEBUG | Detect | dinosaur | template | confidence=0.749 | anchor_bbox={'x': 296, 'y': 317, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.745 | contour_area=28.000
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.745 | contour_area=10.000
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.745 | contour_area=15.000
+14:12:31 | DEBUG | Detect | dinosaur | template | confidence=0.732 | anchor_bbox={'x': 778, 'y': 270, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.712 | contour_area=259.500
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.693 | contour_area=38.500
+14:12:31 | DEBUG | Detect | dinosaur | template | confidence=0.692 | anchor_bbox={'x': 97, 'y': 271, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:31 | DEBUG | Detect | own_hunt_path | hsv | confidence=0.679 | contour_area=439.500
+14:12:31 | DEBUG | Detect | dinosaur | template | confidence=0.660 | anchor_bbox={'x': 200, 'y': 317, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:31 | DEBUG | Detect | dinosaur | template | confidence=0.638 | anchor_bbox={'x': 597, 'y': 226, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:31 | DEBUG | Detect | dinosaur | template | confidence=0.614 | anchor_bbox={'x': 860, 'y': 3, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:31 | DEBUG | Detect | dinosaur | template | confidence=0.609 | anchor_bbox={'x': 536, 'y': 559, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:31 | DEBUG | Detect | dinosaur | template | confidence=0.606 | anchor_bbox={'x': 877, 'y': 188, 'width': 18, 'height': 18}, asset=dinosaur-level-label.png, template_scale=1.000
+14:12:31 | INFO | Planning | dinosaur at (681,840) confidence=0.788
+14:12:31 | INFO | Action | tap (681,840) | attempt=1
+14:12:31 | DEBUG | Action | poll in 100ms; transition timeout=300ms | target=dinosaur
+14:12:32 | DEBUG | Verify | performance | capture=317ms | detect=337ms | types=5
+14:12:32 | INFO | Verify | Success | next UI detected: hunt_button
+14:12:32 | DEBUG | Idle | reuse verified detections
+14:12:32 | INFO | Planning | hunt_button at (672,716) confidence=0.962
+14:12:32 | INFO | Action | tap (672,716) | attempt=1
+14:12:32 | DEBUG | Action | poll in 100ms; transition timeout=900ms | target=hunt_button
+14:12:33 | DEBUG | Verify | performance | capture=339ms | detect=311ms | types=5
+14:12:33 | DEBUG | Verify | Pending | expected next UI not detected: hunt_confirm_button | poll=100ms | remaining=900ms
+14:12:33 | DEBUG | Verify | performance | capture=312ms | detect=303ms | types=5
+14:12:33 | INFO | Verify | Success | next UI detected: hunt_confirm_button
+14:12:33 | DEBUG | Idle | reuse verified detections
+14:12:33 | INFO | Planning | hunt_confirm_button at (451,1412) confidence=1.000
+14:12:33 | INFO | Action | tap (451,1412) | attempt=1
+14:12:33 | DEBUG | Action | poll in 100ms; transition timeout=1200ms | target=hunt_confirm_button
+14:12:35 | DEBUG | Verify | performance | capture=308ms | detect=851ms | types=11
+14:12:35 | INFO | Verify | Success | next UI detected: mailbox_button, map_exit_nest_button
+14:12:35 | DEBUG | Idle | reuse verified detections
+14:12:35 | DEBUG | Planning | no actionable target
+14:12:35 | DEBUG | Capture | 900x1600 | #17652 | 340ms

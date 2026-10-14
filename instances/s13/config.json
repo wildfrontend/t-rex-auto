@@ -1,0 +1,14 @@
+{
+  "emulator": "custom",
+  "adb": {
+    "serial": "127.0.0.1:16416"
+  },
+  "capture": {
+    "backend": "adb"
+  },
+  "hatch": {
+    "capacity_limit": 300,
+    "cull_threshold": 260,
+    "allow_extreme_specialization_parent": true
+  }
+}

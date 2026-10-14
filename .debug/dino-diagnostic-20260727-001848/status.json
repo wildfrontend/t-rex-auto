@@ -1,0 +1,428 @@
+{
+  "running": false,
+  "current_stage": "stopped",
+  "session_started": "2026-07-26T23:24:27",
+  "last_log_time": "2026-07-27T00:10:20",
+  "last_successful_hunt": "2026-07-26T23:31:46",
+  "successful_hunts": 20,
+  "mailbox_cycles": 0,
+  "total_actions": 93,
+  "verification_failures": 12,
+  "retry_exhausted": 1,
+  "black_screen_detections": 0,
+  "black_screen_persisted": 0,
+  "game_restarts": 10,
+  "game_restart_failures": 0,
+  "timing": {
+    "click_delay_ms": 300,
+    "dinosaur_delay_ms": 300,
+    "hunt_button_delay_ms": 900,
+    "hunt_confirm_delay_ms": 1200,
+    "idle_delay_ms": 250,
+    "poll_interval_ms": 100
+  },
+  "recent_actions": [
+    {
+      "timestamp": "2026-07-26T23:29:19",
+      "target": "hunt_button",
+      "action": "tap (577,536)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-26T23:29:20"
+    },
+    {
+      "timestamp": "2026-07-26T23:29:20",
+      "target": "hunt_confirm_button",
+      "action": "tap (361,1130)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-26T23:29:21"
+    },
+    {
+      "timestamp": "2026-07-26T23:29:46",
+      "target": "dinosaur",
+      "action": "tap (174,664)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-26T23:29:47"
+    },
+    {
+      "timestamp": "2026-07-26T23:29:47",
+      "target": "hunt_button",
+      "action": "tap (178,562)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-26T23:29:48"
+    },
+    {
+      "timestamp": "2026-07-26T23:29:48",
+      "target": "hunt_confirm_button",
+      "action": "tap (361,1130)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-26T23:29:50"
+    },
+    {
+      "timestamp": "2026-07-26T23:30:07",
+      "target": "dinosaur",
+      "action": "tap (418,291)",
+      "attempt": 1,
+      "result": "failed",
+      "result_time": "2026-07-26T23:30:08"
+    },
+    {
+      "timestamp": "2026-07-26T23:30:14",
+      "target": "dinosaur",
+      "action": "tap (320,576)",
+      "attempt": 2,
+      "result": "success",
+      "result_time": "2026-07-26T23:30:15"
+    },
+    {
+      "timestamp": "2026-07-26T23:30:15",
+      "target": "hunt_button",
+      "action": "tap (324,474)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-26T23:30:16"
+    },
+    {
+      "timestamp": "2026-07-26T23:30:16",
+      "target": "hunt_confirm_button",
+      "action": "tap (361,1130)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-26T23:30:17"
+    },
+    {
+      "timestamp": "2026-07-26T23:30:35",
+      "target": "dinosaur",
+      "action": "tap (218,818)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-26T23:30:36"
+    },
+    {
+      "timestamp": "2026-07-26T23:30:36",
+      "target": "hunt_button",
+      "action": "tap (230,715)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-26T23:30:37"
+    },
+    {
+      "timestamp": "2026-07-26T23:30:37",
+      "target": "hunt_confirm_button",
+      "action": "tap (361,1130)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-26T23:30:38"
+    },
+    {
+      "timestamp": "2026-07-26T23:30:41",
+      "target": "dinosaur",
+      "action": "tap (187,781)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-26T23:30:42"
+    },
+    {
+      "timestamp": "2026-07-26T23:30:42",
+      "target": "hunt_button",
+      "action": "tap (199,683)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-26T23:30:43"
+    },
+    {
+      "timestamp": "2026-07-26T23:30:43",
+      "target": "hunt_confirm_button",
+      "action": "tap (361,1130)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-26T23:30:45"
+    },
+    {
+      "timestamp": "2026-07-26T23:31:05",
+      "target": "dinosaur",
+      "action": "tap (366,737)",
+      "attempt": 1,
+      "result": "failed",
+      "result_time": "2026-07-26T23:31:06"
+    },
+    {
+      "timestamp": "2026-07-26T23:31:27",
+      "target": "dinosaur",
+      "action": "tap (330,752)",
+      "attempt": 2,
+      "result": "success",
+      "result_time": "2026-07-26T23:31:28"
+    },
+    {
+      "timestamp": "2026-07-26T23:31:28",
+      "target": "hunt_button",
+      "action": "tap (325,650)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-26T23:31:29"
+    },
+    {
+      "timestamp": "2026-07-26T23:31:29",
+      "target": "hunt_confirm_button",
+      "action": "tap (361,1130)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-26T23:31:30"
+    },
+    {
+      "timestamp": "2026-07-26T23:31:34",
+      "target": "dinosaur",
+      "action": "tap (567,727)",
+      "attempt": 1,
+      "result": "failed",
+      "result_time": "2026-07-26T23:31:36"
+    },
+    {
+      "timestamp": "2026-07-26T23:31:39",
+      "target": "dinosaur",
+      "action": "tap (391,319)",
+      "attempt": 2,
+      "result": "failed",
+      "result_time": "2026-07-26T23:31:40"
+    },
+    {
+      "timestamp": "2026-07-26T23:31:43",
+      "target": "dinosaur",
+      "action": "tap (563,754)",
+      "attempt": 3,
+      "result": "success",
+      "result_time": "2026-07-26T23:31:44"
+    },
+    {
+      "timestamp": "2026-07-26T23:31:44",
+      "target": "hunt_button",
+      "action": "tap (576,650)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-26T23:31:45"
+    },
+    {
+      "timestamp": "2026-07-26T23:31:45",
+      "target": "hunt_confirm_button",
+      "action": "tap (361,1130)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-26T23:31:46"
+    },
+    {
+      "timestamp": "2026-07-26T23:31:49",
+      "target": "map_exit_nest_button",
+      "action": "tap (673,1036)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-26T23:31:52"
+    },
+    {
+      "timestamp": "2026-07-26T23:31:55",
+      "target": "forest_recenter_button",
+      "action": "tap (673,1036)",
+      "attempt": 1,
+      "result": "failed",
+      "result_time": "2026-07-26T23:32:00"
+    },
+    {
+      "timestamp": "2026-07-26T23:35:19",
+      "target": "startup_growth_result_back",
+      "action": "tap (246,1012)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-26T23:35:21"
+    },
+    {
+      "timestamp": "2026-07-26T23:35:27",
+      "target": "startup_auto_battle_close",
+      "action": "tap (40,640)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-26T23:35:28"
+    },
+    {
+      "timestamp": "2026-07-26T23:36:40",
+      "target": "map_exit_nest_button",
+      "action": "tap (673,1036)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-26T23:36:43"
+    },
+    {
+      "timestamp": "2026-07-26T23:36:46",
+      "target": "forest_recenter_button",
+      "action": "tap (673,1036)",
+      "attempt": 1,
+      "result": "failed",
+      "result_time": "2026-07-26T23:36:51"
+    },
+    {
+      "timestamp": "2026-07-26T23:39:04",
+      "target": "startup_growth_result_back",
+      "action": "tap (246,1012)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-26T23:39:05"
+    },
+    {
+      "timestamp": "2026-07-26T23:39:11",
+      "target": "startup_auto_battle_close",
+      "action": "tap (40,640)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-26T23:39:12"
+    },
+    {
+      "timestamp": "2026-07-26T23:42:47",
+      "target": "startup_growth_result_back",
+      "action": "tap (246,1012)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-26T23:42:48"
+    },
+    {
+      "timestamp": "2026-07-26T23:42:55",
+      "target": "startup_auto_battle_close",
+      "action": "tap (40,640)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-26T23:42:56"
+    },
+    {
+      "timestamp": "2026-07-26T23:46:30",
+      "target": "startup_growth_result_back",
+      "action": "tap (246,1012)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-26T23:46:31"
+    },
+    {
+      "timestamp": "2026-07-26T23:46:37",
+      "target": "startup_auto_battle_close",
+      "action": "tap (40,640)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-26T23:46:37"
+    },
+    {
+      "timestamp": "2026-07-26T23:50:12",
+      "target": "startup_growth_result_back",
+      "action": "tap (246,1012)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-26T23:50:13"
+    },
+    {
+      "timestamp": "2026-07-26T23:50:18",
+      "target": "startup_auto_battle_close",
+      "action": "tap (40,640)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-26T23:50:19"
+    },
+    {
+      "timestamp": "2026-07-26T23:53:53",
+      "target": "startup_growth_result_back",
+      "action": "tap (246,1012)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-26T23:53:55"
+    },
+    {
+      "timestamp": "2026-07-26T23:54:00",
+      "target": "startup_auto_battle_close",
+      "action": "tap (40,640)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-26T23:54:01"
+    },
+    {
+      "timestamp": "2026-07-26T23:57:34",
+      "target": "startup_growth_result_back",
+      "action": "tap (246,1012)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-26T23:57:35"
+    },
+    {
+      "timestamp": "2026-07-26T23:57:41",
+      "target": "startup_auto_battle_close",
+      "action": "tap (40,640)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-26T23:57:41"
+    },
+    {
+      "timestamp": "2026-07-27T00:01:12",
+      "target": "forest_recenter_button",
+      "action": "tap (673,1036)",
+      "attempt": 1,
+      "result": "failed",
+      "result_time": "2026-07-27T00:01:17"
+    },
+    {
+      "timestamp": "2026-07-27T00:01:19",
+      "target": "forest_recenter_button",
+      "action": "tap (673,1036)",
+      "attempt": 2,
+      "result": "failed",
+      "result_time": "2026-07-27T00:01:24"
+    },
+    {
+      "timestamp": "2026-07-27T00:01:26",
+      "target": "forest_recenter_button",
+      "action": "tap (673,1036)",
+      "attempt": 3,
+      "result": "failed",
+      "result_time": "2026-07-27T00:01:31"
+    },
+    {
+      "timestamp": "2026-07-27T00:01:33",
+      "target": "forest_recenter_button",
+      "action": "tap (673,1036)",
+      "attempt": 4,
+      "result": "failed",
+      "result_time": "2026-07-27T00:01:38"
+    },
+    {
+      "timestamp": "2026-07-27T00:04:34",
+      "target": "startup_growth_result_back",
+      "action": "tap (246,1012)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-27T00:04:36"
+    },
+    {
+      "timestamp": "2026-07-27T00:04:42",
+      "target": "startup_auto_battle_close",
+      "action": "tap (40,640)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-27T00:04:43"
+    },
+    {
+      "timestamp": "2026-07-27T00:08:19",
+      "target": "startup_growth_result_back",
+      "action": "tap (246,1012)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-27T00:08:21"
+    },
+    {
+      "timestamp": "2026-07-27T00:08:26",
+      "target": "startup_auto_battle_close",
+      "action": "tap (40,640)",
+      "attempt": 1,
+      "result": "success",
+      "result_time": "2026-07-27T00:08:27"
+    }
+  ],
+  "log_file": "<app-root>\\logs\\20260727.log",
+  "generated_at": "2026-07-27T00:18:50.093826+08:00"
+}

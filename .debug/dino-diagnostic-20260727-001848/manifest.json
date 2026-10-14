@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "bot_version": "0.2.9",
+  "generated_at": "2026-07-27T00:18:50.097959+08:00",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "python_version": "3.12.10",
+  "config_loaded": true,
+  "snapshot_requested": false,
+  "snapshot_included": false,
+  "recent_log_line_limit": 500
+}

@@ -1,0 +1,501 @@
+=== 20260727.log ===
+00:02:09 | DEBUG | Capture | 720x1280 | #841 | 243ms
+00:02:12 | INFO | Detect | 21 dinosaur, 3 own_hunt_path | 2312ms
+00:02:12 | DEBUG | Planning | no actionable target
+00:02:12 | DEBUG | Capture | 720x1280 | #842 | 248ms
+00:02:15 | INFO | Detect | 21 dinosaur, 2 own_hunt_path | 2339ms
+00:02:15 | DEBUG | Planning | no actionable target
+00:02:15 | DEBUG | Capture | 720x1280 | #843 | 242ms
+00:02:17 | INFO | Detect | 21 dinosaur, 2 own_hunt_path | 2291ms
+00:02:17 | DEBUG | Planning | no actionable target
+00:02:18 | DEBUG | Capture | 720x1280 | #844 | 255ms
+00:02:20 | INFO | Detect | 18 dinosaur, 4 own_hunt_path | 2319ms
+00:02:20 | DEBUG | Planning | no actionable target
+00:02:21 | DEBUG | Capture | 720x1280 | #845 | 256ms
+00:02:23 | INFO | Detect | 19 dinosaur, 3 own_hunt_path | 2322ms
+00:02:23 | DEBUG | Planning | no actionable target
+00:02:24 | DEBUG | Capture | 720x1280 | #846 | 253ms
+00:02:26 | INFO | Detect | 16 dinosaur, 3 own_hunt_path | 2305ms
+00:02:26 | DEBUG | Planning | no actionable target
+00:02:26 | DEBUG | Capture | 720x1280 | #847 | 254ms
+00:02:29 | INFO | Detect | 15 dinosaur, 4 own_hunt_path | 2288ms
+00:02:29 | DEBUG | Planning | no actionable target
+00:02:29 | DEBUG | Capture | 720x1280 | #848 | 249ms
+00:02:31 | INFO | Detect | 17 dinosaur, 4 own_hunt_path | 2310ms
+00:02:31 | DEBUG | Planning | no actionable target
+00:02:32 | DEBUG | Capture | 720x1280 | #849 | 264ms
+00:02:34 | INFO | Detect | 16 dinosaur, 4 own_hunt_path | 2321ms
+00:02:34 | DEBUG | Planning | no actionable target
+00:02:35 | DEBUG | Capture | 720x1280 | #850 | 262ms
+00:02:37 | INFO | Detect | 15 dinosaur, 7 own_hunt_path | 2287ms
+00:02:37 | DEBUG | Planning | no actionable target
+00:02:38 | DEBUG | Capture | 720x1280 | #851 | 250ms
+00:02:40 | INFO | Detect | 19 dinosaur, 5 own_hunt_path | 2297ms
+00:02:40 | DEBUG | Planning | no actionable target
+00:02:40 | DEBUG | Capture | 720x1280 | #852 | 249ms
+00:02:43 | INFO | Detect | 18 dinosaur, 5 own_hunt_path | 2324ms
+00:02:43 | DEBUG | Planning | no actionable target
+00:02:43 | DEBUG | Capture | 720x1280 | #853 | 251ms
+00:02:46 | INFO | Detect | 18 dinosaur, 5 own_hunt_path | 2297ms
+00:02:46 | DEBUG | Planning | no actionable target
+00:02:46 | DEBUG | Capture | 720x1280 | #854 | 256ms
+00:02:48 | INFO | Detect | 18 dinosaur, 2 own_hunt_path | 2305ms
+00:02:48 | DEBUG | Planning | no actionable target
+00:02:49 | DEBUG | Capture | 720x1280 | #855 | 275ms
+00:02:51 | INFO | Detect | 18 dinosaur, 4 own_hunt_path | 2293ms
+00:02:51 | DEBUG | Planning | no actionable target
+00:02:52 | DEBUG | Capture | 720x1280 | #856 | 268ms
+00:02:54 | INFO | Detect | 19 dinosaur, 3 own_hunt_path | 2335ms
+00:02:54 | DEBUG | Planning | no actionable target
+00:02:55 | DEBUG | Capture | 720x1280 | #857 | 271ms
+00:02:57 | INFO | Detect | 21 dinosaur, 3 own_hunt_path | 2455ms
+00:02:57 | DEBUG | Planning | no actionable target
+00:02:58 | DEBUG | Capture | 720x1280 | #858 | 258ms
+00:03:00 | INFO | Detect | 17 dinosaur, 7 own_hunt_path | 2298ms
+00:03:00 | DEBUG | Planning | no actionable target
+00:03:00 | DEBUG | Capture | 720x1280 | #859 | 271ms
+00:03:03 | INFO | Detect | 18 dinosaur, 2 own_hunt_path | 2318ms
+00:03:03 | DEBUG | Planning | no actionable target
+00:03:03 | DEBUG | Capture | 720x1280 | #860 | 271ms
+00:03:05 | INFO | Detect | 17 dinosaur, 4 own_hunt_path | 2309ms
+00:03:05 | DEBUG | Planning | no actionable target
+00:03:06 | DEBUG | Capture | 720x1280 | #861 | 258ms
+00:03:08 | INFO | Detect | 17 dinosaur, 6 own_hunt_path | 2314ms
+00:03:08 | DEBUG | Planning | no actionable target
+00:03:09 | DEBUG | Capture | 720x1280 | #862 | 259ms
+00:03:11 | INFO | Detect | 19 dinosaur, 3 own_hunt_path | 2316ms
+00:03:11 | DEBUG | Planning | no actionable target
+00:03:12 | DEBUG | Capture | 720x1280 | #863 | 262ms
+00:03:14 | INFO | Detect | 20 dinosaur, 5 own_hunt_path | 2276ms
+00:03:14 | DEBUG | Planning | no actionable target
+00:03:14 | DEBUG | Capture | 720x1280 | #864 | 251ms
+00:03:17 | INFO | Detect | 20 dinosaur, 4 own_hunt_path | 2327ms
+00:03:17 | DEBUG | Planning | no actionable target
+00:03:17 | DEBUG | Capture | 720x1280 | #865 | 253ms
+00:03:20 | INFO | Detect | 21 dinosaur, 3 own_hunt_path | 2320ms
+00:03:20 | DEBUG | Planning | no actionable target
+00:03:20 | DEBUG | Capture | 720x1280 | #866 | 268ms
+00:03:22 | INFO | Detect | 21 dinosaur, 3 own_hunt_path | 2285ms
+00:03:22 | DEBUG | Planning | no actionable target
+00:03:23 | DEBUG | Capture | 720x1280 | #867 | 261ms
+00:03:25 | INFO | Detect | 19 dinosaur, 4 own_hunt_path | 2372ms
+00:03:25 | DEBUG | Planning | no actionable target
+00:03:26 | DEBUG | Capture | 720x1280 | #868 | 280ms
+00:03:28 | INFO | Detect | 20 dinosaur, 5 own_hunt_path | 2652ms
+00:03:28 | DEBUG | Planning | no actionable target
+00:03:29 | DEBUG | Capture | 720x1280 | #869 | 263ms
+00:03:32 | INFO | Detect | 19 dinosaur, 3 own_hunt_path | 2740ms
+00:03:32 | DEBUG | Planning | no actionable target
+00:03:32 | DEBUG | Capture | 720x1280 | #870 | 295ms
+00:03:35 | INFO | Detect | 20 dinosaur, 5 own_hunt_path | 2657ms
+00:03:35 | DEBUG | Planning | no actionable target
+00:03:35 | DEBUG | Capture | 720x1280 | #871 | 260ms
+00:03:38 | INFO | Detect | 21 dinosaur, 4 own_hunt_path | 2598ms
+00:03:38 | DEBUG | Planning | no actionable target
+00:03:39 | DEBUG | Capture | 720x1280 | #872 | 274ms
+00:03:41 | INFO | Detect | 22 dinosaur, 4 own_hunt_path | 2588ms
+00:03:41 | DEBUG | Planning | no actionable target
+00:03:42 | DEBUG | Capture | 720x1280 | #873 | 285ms
+00:03:44 | INFO | Detect | 23 dinosaur, 5 own_hunt_path | 2717ms
+00:03:44 | DEBUG | Planning | no actionable target
+00:03:45 | DEBUG | Capture | 720x1280 | #874 | 278ms
+00:03:48 | INFO | Detect | 21 dinosaur, 5 own_hunt_path | 2720ms
+00:03:48 | DEBUG | Planning | no actionable target
+00:03:48 | DEBUG | Capture | 720x1280 | #875 | 273ms
+00:03:51 | INFO | Detect | 22 dinosaur, 2 own_hunt_path | 2606ms
+00:03:51 | DEBUG | Planning | no actionable target
+00:03:51 | DEBUG | Capture | 720x1280 | #876 | 288ms
+00:03:54 | INFO | Detect | 23 dinosaur, 2 own_hunt_path | 2650ms
+00:03:54 | DEBUG | Planning | no actionable target
+00:03:54 | DEBUG | Capture | 720x1280 | #877 | 284ms
+00:03:57 | INFO | Detect | 21 dinosaur, 6 own_hunt_path | 2653ms
+00:03:57 | DEBUG | Planning | no actionable target
+00:03:58 | DEBUG | Capture | 720x1280 | #878 | 261ms
+00:04:00 | INFO | Detect | 21 dinosaur, 5 own_hunt_path | 2655ms
+00:04:00 | DEBUG | Planning | no actionable target
+00:04:01 | DEBUG | Capture | 720x1280 | #879 | 264ms
+00:04:03 | INFO | Detect | 21 dinosaur, 5 own_hunt_path | 2597ms
+00:04:03 | ERROR | Recovery | no hunt progress for 180s; restarting game app
+00:04:04 | INFO | Recovery | game restarted; waiting 15s for launch
+00:04:19 | INFO | Recovery | clearing transient workflow state
+00:04:20 | DEBUG | Capture | 720x1280 | #880 | 636ms
+00:04:22 | INFO | Detect | no targets | 2545ms
+00:04:22 | WARNING | Recovery | no hunt progress detected; watchdog=180s
+00:04:22 | DEBUG | Planning | no actionable target
+00:04:25 | DEBUG | Capture | 720x1280 | #881 | 2267ms
+00:04:27 | INFO | Detect | no targets | 2681ms
+00:04:27 | DEBUG | Planning | no actionable target
+00:04:28 | DEBUG | Capture | 720x1280 | #882 | 827ms
+00:04:31 | INFO | Detect | no targets | 2748ms
+00:04:31 | DEBUG | Planning | no actionable target
+00:04:32 | DEBUG | Capture | 720x1280 | #883 | 325ms
+00:04:34 | INFO | Detect | 1 forest_recenter_button, 1 own_hunt_path, 1 startup_growth_result_back | 2683ms
+00:04:34 | INFO | Planning | startup_growth_result_back at (246,1012) confidence=0.841
+00:04:34 | INFO | Action | tap (246,1012) | attempt=1
+00:04:34 | DEBUG | Action | poll in 100ms; transition timeout=3000ms | target=startup_growth_result_back
+00:04:35 | DEBUG | Verify | performance | capture=347ms | detect=263ms | types=5
+00:04:35 | DEBUG | Verify | Pending | target still detected at (246,1012); confidence=0.841; pixel_change=0.000 | poll=100ms | remaining=3000ms
+00:04:36 | DEBUG | Verify | performance | capture=286ms | detect=250ms | types=5
+00:04:36 | INFO | Verify | Success | target disappeared; pixel_change=0.179
+00:04:36 | DEBUG | Capture | 720x1280 | #886 | 287ms
+00:04:39 | INFO | Detect | no targets | 2650ms
+00:04:39 | WARNING | Recovery | no hunt progress detected; watchdog=180s
+00:04:39 | DEBUG | Planning | no actionable target
+00:04:39 | DEBUG | Capture | 720x1280 | #887 | 270ms
+00:04:42 | INFO | Detect | 11 dinosaur, 1 startup_auto_battle_close | 2686ms
+00:04:42 | INFO | Planning | startup_auto_battle_close at (40,640) confidence=0.820
+00:04:42 | INFO | Action | tap (40,640) | attempt=1
+00:04:42 | DEBUG | Action | poll in 100ms; transition timeout=3000ms | target=startup_auto_battle_close
+00:04:43 | DEBUG | Verify | performance | capture=253ms | detect=261ms | types=5
+00:04:43 | INFO | Verify | Success | target interaction changed UI; pixel_change=0.090 >= 0.080
+00:04:43 | DEBUG | Capture | 720x1280 | #889 | 276ms
+00:04:46 | INFO | Detect | 27 dinosaur, 4 own_hunt_path | 2702ms
+00:04:46 | WARNING | Recovery | no hunt progress detected; watchdog=180s
+00:04:46 | DEBUG | Planning | no actionable target
+00:04:46 | DEBUG | Capture | 720x1280 | #890 | 262ms
+00:04:49 | INFO | Detect | 25 dinosaur, 4 own_hunt_path | 2674ms
+00:04:49 | DEBUG | Planning | no actionable target
+00:04:49 | DEBUG | Capture | 720x1280 | #891 | 265ms
+00:04:52 | INFO | Detect | 26 dinosaur, 4 own_hunt_path | 2653ms
+00:04:52 | DEBUG | Planning | no actionable target
+00:04:52 | DEBUG | Capture | 720x1280 | #892 | 300ms
+00:04:55 | INFO | Detect | 28 dinosaur, 5 own_hunt_path | 2692ms
+00:04:55 | DEBUG | Planning | no actionable target
+00:04:56 | DEBUG | Capture | 720x1280 | #893 | 266ms
+00:04:58 | INFO | Detect | 30 dinosaur, 4 own_hunt_path | 2654ms
+00:04:58 | DEBUG | Planning | no actionable target
+00:04:59 | DEBUG | Capture | 720x1280 | #894 | 275ms
+00:05:02 | INFO | Detect | 28 dinosaur, 6 own_hunt_path | 2785ms
+00:05:02 | DEBUG | Planning | no actionable target
+00:05:02 | DEBUG | Capture | 720x1280 | #895 | 266ms
+00:05:05 | INFO | Detect | 27 dinosaur, 4 own_hunt_path | 2527ms
+00:05:05 | DEBUG | Planning | no actionable target
+00:05:05 | DEBUG | Capture | 720x1280 | #896 | 284ms
+00:05:08 | INFO | Detect | 26 dinosaur, 3 own_hunt_path | 2277ms
+00:05:08 | DEBUG | Planning | no actionable target
+00:05:08 | DEBUG | Capture | 720x1280 | #897 | 246ms
+00:05:10 | INFO | Detect | 27 dinosaur, 5 own_hunt_path | 2326ms
+00:05:10 | DEBUG | Planning | no actionable target
+00:05:11 | DEBUG | Capture | 720x1280 | #898 | 252ms
+00:05:13 | INFO | Detect | 27 dinosaur, 3 own_hunt_path | 2276ms
+00:05:13 | DEBUG | Planning | no actionable target
+00:05:14 | DEBUG | Capture | 720x1280 | #899 | 259ms
+00:05:16 | INFO | Detect | 28 dinosaur, 3 own_hunt_path | 2313ms
+00:05:16 | DEBUG | Planning | no actionable target
+00:05:16 | DEBUG | Capture | 720x1280 | #900 | 256ms
+00:05:19 | INFO | Detect | 28 dinosaur, 5 own_hunt_path | 2307ms
+00:05:19 | DEBUG | Planning | no actionable target
+00:05:19 | DEBUG | Capture | 720x1280 | #901 | 254ms
+00:05:22 | INFO | Detect | 26 dinosaur, 4 own_hunt_path | 2310ms
+00:05:22 | DEBUG | Planning | no actionable target
+00:05:22 | DEBUG | Capture | 720x1280 | #902 | 250ms
+00:05:24 | INFO | Detect | 27 dinosaur, 4 own_hunt_path | 2311ms
+00:05:24 | DEBUG | Planning | no actionable target
+00:05:25 | DEBUG | Capture | 720x1280 | #903 | 257ms
+00:05:27 | INFO | Detect | 27 dinosaur, 4 own_hunt_path | 2310ms
+00:05:27 | DEBUG | Planning | no actionable target
+00:05:28 | DEBUG | Capture | 720x1280 | #904 | 264ms
+00:05:30 | INFO | Detect | 25 dinosaur, 3 own_hunt_path | 2285ms
+00:05:30 | DEBUG | Planning | no actionable target
+00:05:31 | DEBUG | Capture | 720x1280 | #905 | 254ms
+00:05:33 | INFO | Detect | 30 dinosaur, 5 own_hunt_path | 2300ms
+00:05:33 | DEBUG | Planning | no actionable target
+00:05:33 | DEBUG | Capture | 720x1280 | #906 | 260ms
+00:05:36 | INFO | Detect | 30 dinosaur, 4 own_hunt_path | 2308ms
+00:05:36 | DEBUG | Planning | no actionable target
+00:05:36 | DEBUG | Capture | 720x1280 | #907 | 277ms
+00:05:38 | INFO | Detect | 28 dinosaur, 4 own_hunt_path | 2314ms
+00:05:38 | DEBUG | Planning | no actionable target
+00:05:39 | DEBUG | Capture | 720x1280 | #908 | 260ms
+00:05:41 | INFO | Detect | 32 dinosaur, 4 own_hunt_path | 2288ms
+00:05:41 | DEBUG | Planning | no actionable target
+00:05:42 | DEBUG | Capture | 720x1280 | #909 | 248ms
+00:05:44 | INFO | Detect | 31 dinosaur, 4 own_hunt_path | 2342ms
+00:05:44 | DEBUG | Planning | no actionable target
+00:05:45 | DEBUG | Capture | 720x1280 | #910 | 248ms
+00:05:47 | INFO | Detect | 28 dinosaur, 4 own_hunt_path | 2358ms
+00:05:47 | DEBUG | Planning | no actionable target
+00:05:48 | DEBUG | Capture | 720x1280 | #911 | 282ms
+00:05:50 | INFO | Detect | 29 dinosaur, 5 own_hunt_path | 2314ms
+00:05:50 | DEBUG | Planning | no actionable target
+00:05:50 | DEBUG | Capture | 720x1280 | #912 | 253ms
+00:05:53 | INFO | Detect | 26 dinosaur, 3 own_hunt_path | 2313ms
+00:05:53 | DEBUG | Planning | no actionable target
+00:05:53 | DEBUG | Capture | 720x1280 | #913 | 284ms
+00:05:55 | INFO | Detect | 27 dinosaur, 4 own_hunt_path | 2308ms
+00:05:55 | DEBUG | Planning | no actionable target
+00:05:56 | DEBUG | Capture | 720x1280 | #914 | 286ms
+00:05:58 | INFO | Detect | 25 dinosaur, 5 own_hunt_path | 2319ms
+00:05:58 | DEBUG | Planning | no actionable target
+00:05:59 | DEBUG | Capture | 720x1280 | #915 | 259ms
+00:06:01 | INFO | Detect | 26 dinosaur, 3 own_hunt_path | 2314ms
+00:06:01 | DEBUG | Planning | no actionable target
+00:06:02 | DEBUG | Capture | 720x1280 | #916 | 251ms
+00:06:04 | INFO | Detect | 26 dinosaur, 6 own_hunt_path | 2310ms
+00:06:04 | DEBUG | Planning | no actionable target
+00:06:04 | DEBUG | Capture | 720x1280 | #917 | 264ms
+00:06:07 | INFO | Detect | 26 dinosaur, 6 own_hunt_path | 2320ms
+00:06:07 | DEBUG | Planning | no actionable target
+00:06:07 | DEBUG | Capture | 720x1280 | #918 | 256ms
+00:06:10 | INFO | Detect | 24 dinosaur, 3 own_hunt_path | 2285ms
+00:06:10 | DEBUG | Planning | no actionable target
+00:06:10 | DEBUG | Capture | 720x1280 | #919 | 257ms
+00:06:12 | INFO | Detect | 25 dinosaur, 3 own_hunt_path | 2302ms
+00:06:12 | DEBUG | Planning | no actionable target
+00:06:13 | DEBUG | Capture | 720x1280 | #920 | 265ms
+00:06:15 | INFO | Detect | 25 dinosaur, 4 own_hunt_path | 2311ms
+00:06:15 | DEBUG | Planning | no actionable target
+00:06:16 | DEBUG | Capture | 720x1280 | #921 | 255ms
+00:06:18 | INFO | Detect | 25 dinosaur, 5 own_hunt_path | 2341ms
+00:06:18 | DEBUG | Planning | no actionable target
+00:06:19 | DEBUG | Capture | 720x1280 | #922 | 250ms
+00:06:21 | INFO | Detect | 27 dinosaur, 5 own_hunt_path | 2312ms
+00:06:21 | DEBUG | Planning | no actionable target
+00:06:21 | DEBUG | Capture | 720x1280 | #923 | 272ms
+00:06:24 | INFO | Detect | 28 dinosaur, 5 own_hunt_path | 2303ms
+00:06:24 | DEBUG | Planning | no actionable target
+00:06:24 | DEBUG | Capture | 720x1280 | #924 | 253ms
+00:06:27 | INFO | Detect | 29 dinosaur, 5 own_hunt_path | 2312ms
+00:06:27 | DEBUG | Planning | no actionable target
+00:06:27 | DEBUG | Capture | 720x1280 | #925 | 282ms
+00:06:29 | INFO | Detect | 29 dinosaur, 5 own_hunt_path | 2315ms
+00:06:29 | DEBUG | Planning | no actionable target
+00:06:30 | DEBUG | Capture | 720x1280 | #926 | 251ms
+00:06:32 | INFO | Detect | 30 dinosaur, 4 own_hunt_path | 2367ms
+00:06:32 | DEBUG | Planning | no actionable target
+00:06:33 | DEBUG | Capture | 720x1280 | #927 | 263ms
+00:06:35 | INFO | Detect | 28 dinosaur, 5 own_hunt_path | 2284ms
+00:06:35 | DEBUG | Planning | no actionable target
+00:06:36 | DEBUG | Capture | 720x1280 | #928 | 259ms
+00:06:38 | INFO | Detect | 28 dinosaur, 4 own_hunt_path | 2332ms
+00:06:38 | DEBUG | Planning | no actionable target
+00:06:38 | DEBUG | Capture | 720x1280 | #929 | 259ms
+00:06:41 | INFO | Detect | 29 dinosaur, 6 own_hunt_path | 2307ms
+00:06:41 | DEBUG | Planning | no actionable target
+00:06:41 | DEBUG | Capture | 720x1280 | #930 | 262ms
+00:06:44 | INFO | Detect | 29 dinosaur, 3 own_hunt_path | 2315ms
+00:06:44 | DEBUG | Planning | no actionable target
+00:06:44 | DEBUG | Capture | 720x1280 | #931 | 263ms
+00:06:46 | INFO | Detect | 30 dinosaur, 4 own_hunt_path | 2301ms
+00:06:46 | DEBUG | Planning | no actionable target
+00:06:47 | DEBUG | Capture | 720x1280 | #932 | 257ms
+00:06:49 | INFO | Detect | 27 dinosaur, 3 own_hunt_path | 2304ms
+00:06:49 | DEBUG | Planning | no actionable target
+00:06:50 | DEBUG | Capture | 720x1280 | #933 | 252ms
+00:06:52 | INFO | Detect | 28 dinosaur, 6 own_hunt_path | 2269ms
+00:06:52 | DEBUG | Planning | no actionable target
+00:06:52 | DEBUG | Capture | 720x1280 | #934 | 252ms
+00:06:55 | INFO | Detect | 27 dinosaur, 5 own_hunt_path | 2320ms
+00:06:55 | DEBUG | Planning | no actionable target
+00:06:55 | DEBUG | Capture | 720x1280 | #935 | 249ms
+00:06:58 | INFO | Detect | 28 dinosaur, 4 own_hunt_path | 2334ms
+00:06:58 | DEBUG | Planning | no actionable target
+00:06:58 | DEBUG | Capture | 720x1280 | #936 | 254ms
+00:07:00 | INFO | Detect | 28 dinosaur, 4 own_hunt_path | 2324ms
+00:07:00 | DEBUG | Planning | no actionable target
+00:07:01 | DEBUG | Capture | 720x1280 | #937 | 259ms
+00:07:03 | INFO | Detect | 27 dinosaur, 4 own_hunt_path | 2303ms
+00:07:03 | DEBUG | Planning | no actionable target
+00:07:04 | DEBUG | Capture | 720x1280 | #938 | 265ms
+00:07:06 | INFO | Detect | 30 dinosaur, 5 own_hunt_path | 2288ms
+00:07:06 | DEBUG | Planning | no actionable target
+00:07:07 | DEBUG | Capture | 720x1280 | #939 | 252ms
+00:07:09 | INFO | Detect | 27 dinosaur, 4 own_hunt_path | 2291ms
+00:07:09 | DEBUG | Planning | no actionable target
+00:07:09 | DEBUG | Capture | 720x1280 | #940 | 260ms
+00:07:12 | INFO | Detect | 27 dinosaur, 5 own_hunt_path | 2297ms
+00:07:12 | DEBUG | Planning | no actionable target
+00:07:12 | DEBUG | Capture | 720x1280 | #941 | 263ms
+00:07:14 | INFO | Detect | 28 dinosaur, 3 own_hunt_path | 2322ms
+00:07:14 | DEBUG | Planning | no actionable target
+00:07:15 | DEBUG | Capture | 720x1280 | #942 | 253ms
+00:07:17 | INFO | Detect | 28 dinosaur, 4 own_hunt_path | 2294ms
+00:07:17 | DEBUG | Planning | no actionable target
+00:07:18 | DEBUG | Capture | 720x1280 | #943 | 262ms
+00:07:20 | INFO | Detect | 27 dinosaur, 4 own_hunt_path | 2306ms
+00:07:20 | DEBUG | Planning | no actionable target
+00:07:21 | DEBUG | Capture | 720x1280 | #944 | 257ms
+00:07:23 | INFO | Detect | 30 dinosaur, 3 own_hunt_path | 2305ms
+00:07:23 | DEBUG | Planning | no actionable target
+00:07:23 | DEBUG | Capture | 720x1280 | #945 | 251ms
+00:07:26 | INFO | Detect | 26 dinosaur, 6 own_hunt_path | 2279ms
+00:07:26 | DEBUG | Planning | no actionable target
+00:07:26 | DEBUG | Capture | 720x1280 | #946 | 268ms
+00:07:29 | INFO | Detect | 26 dinosaur, 3 own_hunt_path | 2297ms
+00:07:29 | DEBUG | Planning | no actionable target
+00:07:29 | DEBUG | Capture | 720x1280 | #947 | 263ms
+00:07:31 | INFO | Detect | 25 dinosaur, 3 own_hunt_path | 2307ms
+00:07:31 | DEBUG | Planning | no actionable target
+00:07:32 | DEBUG | Capture | 720x1280 | #948 | 259ms
+00:07:34 | INFO | Detect | 26 dinosaur, 4 own_hunt_path | 2279ms
+00:07:34 | DEBUG | Planning | no actionable target
+00:07:35 | DEBUG | Capture | 720x1280 | #949 | 251ms
+00:07:37 | INFO | Detect | 27 dinosaur, 6 own_hunt_path | 2326ms
+00:07:37 | DEBUG | Planning | no actionable target
+00:07:37 | DEBUG | Capture | 720x1280 | #950 | 263ms
+00:07:40 | INFO | Detect | 27 dinosaur, 6 own_hunt_path | 2291ms
+00:07:40 | DEBUG | Planning | no actionable target
+00:07:40 | DEBUG | Capture | 720x1280 | #951 | 278ms
+00:07:43 | INFO | Detect | 29 dinosaur, 4 own_hunt_path | 2322ms
+00:07:43 | DEBUG | Planning | no actionable target
+00:07:43 | DEBUG | Capture | 720x1280 | #952 | 276ms
+00:07:45 | INFO | Detect | 30 dinosaur, 3 own_hunt_path | 2278ms
+00:07:45 | DEBUG | Planning | no actionable target
+00:07:46 | DEBUG | Capture | 720x1280 | #953 | 257ms
+00:07:48 | INFO | Detect | 29 dinosaur, 4 own_hunt_path | 2326ms
+00:07:48 | ERROR | Recovery | no hunt progress for 183s; restarting game app
+00:07:49 | INFO | Recovery | game restarted; waiting 15s for launch
+00:08:04 | INFO | Recovery | clearing transient workflow state
+00:08:04 | DEBUG | Capture | 720x1280 | #954 | 763ms
+00:08:07 | INFO | Detect | no targets | 2280ms
+00:08:07 | WARNING | Recovery | no hunt progress detected; watchdog=180s
+00:08:07 | DEBUG | Planning | no actionable target
+00:08:10 | DEBUG | Capture | 720x1280 | #955 | 2771ms
+00:08:12 | INFO | Detect | no targets | 2552ms
+00:08:12 | DEBUG | Planning | no actionable target
+00:08:13 | DEBUG | Capture | 720x1280 | #956 | 907ms
+00:08:16 | INFO | Detect | no targets | 2794ms
+00:08:16 | DEBUG | Planning | no actionable target
+00:08:17 | DEBUG | Capture | 720x1280 | #957 | 316ms
+00:08:19 | INFO | Detect | 1 forest_recenter_button, 1 own_hunt_path, 1 startup_growth_result_back | 2627ms
+00:08:19 | INFO | Planning | startup_growth_result_back at (246,1012) confidence=0.841
+00:08:19 | INFO | Action | tap (246,1012) | attempt=1
+00:08:19 | DEBUG | Action | poll in 100ms; transition timeout=3000ms | target=startup_growth_result_back
+00:08:20 | DEBUG | Verify | performance | capture=302ms | detect=223ms | types=5
+00:08:20 | DEBUG | Verify | Pending | target still detected at (246,1012); confidence=0.841; pixel_change=0.000 | poll=100ms | remaining=3000ms
+00:08:21 | DEBUG | Verify | performance | capture=294ms | detect=210ms | types=5
+00:08:21 | INFO | Verify | Success | target disappeared; pixel_change=0.182
+00:08:21 | DEBUG | Capture | 720x1280 | #960 | 254ms
+00:08:23 | INFO | Detect | no targets | 2299ms
+00:08:23 | WARNING | Recovery | no hunt progress detected; watchdog=180s
+00:08:23 | DEBUG | Planning | no actionable target
+00:08:24 | DEBUG | Capture | 720x1280 | #961 | 243ms
+00:08:26 | INFO | Detect | 11 dinosaur, 1 startup_auto_battle_close | 2277ms
+00:08:26 | INFO | Planning | startup_auto_battle_close at (40,640) confidence=0.820
+00:08:26 | INFO | Action | tap (40,640) | attempt=1
+00:08:26 | DEBUG | Action | poll in 100ms; transition timeout=3000ms | target=startup_auto_battle_close
+00:08:27 | DEBUG | Verify | performance | capture=252ms | detect=223ms | types=5
+00:08:27 | INFO | Verify | Success | target interaction changed UI; pixel_change=0.090 >= 0.080
+00:08:27 | DEBUG | Capture | 720x1280 | #963 | 255ms
+00:08:29 | INFO | Detect | 22 dinosaur, 3 own_hunt_path | 2303ms
+00:08:29 | WARNING | Recovery | no hunt progress detected; watchdog=180s
+00:08:29 | DEBUG | Planning | no actionable target
+00:08:30 | DEBUG | Capture | 720x1280 | #964 | 255ms
+00:08:32 | INFO | Detect | 25 dinosaur, 3 own_hunt_path | 2287ms
+00:08:32 | DEBUG | Planning | no actionable target
+00:08:32 | DEBUG | Capture | 720x1280 | #965 | 250ms
+00:08:35 | INFO | Detect | 24 dinosaur, 5 own_hunt_path | 2312ms
+00:08:35 | DEBUG | Planning | no actionable target
+00:08:35 | DEBUG | Capture | 720x1280 | #966 | 258ms
+00:08:38 | INFO | Detect | 25 dinosaur, 4 own_hunt_path | 2282ms
+00:08:38 | DEBUG | Planning | no actionable target
+00:08:38 | DEBUG | Capture | 720x1280 | #967 | 249ms
+00:08:40 | INFO | Detect | 24 dinosaur, 4 own_hunt_path | 2317ms
+00:08:40 | DEBUG | Planning | no actionable target
+00:08:41 | DEBUG | Capture | 720x1280 | #968 | 248ms
+00:08:43 | INFO | Detect | 26 dinosaur, 4 own_hunt_path | 2298ms
+00:08:43 | DEBUG | Planning | no actionable target
+00:08:44 | DEBUG | Capture | 720x1280 | #969 | 247ms
+00:08:46 | INFO | Detect | 25 dinosaur, 3 own_hunt_path | 2341ms
+00:08:46 | DEBUG | Planning | no actionable target
+00:08:47 | DEBUG | Capture | 720x1280 | #970 | 261ms
+00:08:49 | INFO | Detect | 28 dinosaur, 5 own_hunt_path | 2279ms
+00:08:49 | DEBUG | Planning | no actionable target
+00:08:49 | DEBUG | Capture | 720x1280 | #971 | 247ms
+00:08:52 | INFO | Detect | 26 dinosaur, 5 own_hunt_path | 2280ms
+00:08:52 | DEBUG | Planning | no actionable target
+00:08:52 | DEBUG | Capture | 720x1280 | #972 | 253ms
+00:08:54 | INFO | Detect | 27 dinosaur, 2 own_hunt_path | 2288ms
+00:08:54 | DEBUG | Planning | no actionable target
+00:08:55 | DEBUG | Capture | 720x1280 | #973 | 283ms
+00:08:57 | INFO | Detect | 27 dinosaur, 6 own_hunt_path | 2285ms
+00:08:57 | DEBUG | Planning | no actionable target
+00:08:58 | DEBUG | Capture | 720x1280 | #974 | 255ms
+00:09:00 | INFO | Detect | 26 dinosaur, 4 own_hunt_path | 2321ms
+00:09:00 | DEBUG | Planning | no actionable target
+00:09:01 | DEBUG | Capture | 720x1280 | #975 | 260ms
+00:09:03 | INFO | Detect | 24 dinosaur, 3 own_hunt_path | 2471ms
+00:09:03 | DEBUG | Planning | no actionable target
+00:09:03 | DEBUG | Capture | 720x1280 | #976 | 262ms
+00:09:06 | INFO | Detect | 25 dinosaur, 4 own_hunt_path | 2311ms
+00:09:06 | DEBUG | Planning | no actionable target
+00:09:06 | DEBUG | Capture | 720x1280 | #977 | 260ms
+00:09:09 | INFO | Detect | 28 dinosaur, 5 own_hunt_path | 2302ms
+00:09:09 | DEBUG | Planning | no actionable target
+00:09:09 | DEBUG | Capture | 720x1280 | #978 | 262ms
+00:09:11 | INFO | Detect | 25 dinosaur, 3 own_hunt_path | 2319ms
+00:09:11 | DEBUG | Planning | no actionable target
+00:09:12 | DEBUG | Capture | 720x1280 | #979 | 270ms
+00:09:14 | INFO | Detect | 27 dinosaur, 3 own_hunt_path | 2308ms
+00:09:14 | DEBUG | Planning | no actionable target
+00:09:15 | DEBUG | Capture | 720x1280 | #980 | 249ms
+00:09:17 | INFO | Detect | 27 dinosaur, 2 own_hunt_path | 2283ms
+00:09:17 | DEBUG | Planning | no actionable target
+00:09:18 | DEBUG | Capture | 720x1280 | #981 | 255ms
+00:09:20 | INFO | Detect | 27 dinosaur, 3 own_hunt_path | 2323ms
+00:09:20 | DEBUG | Planning | no actionable target
+00:09:20 | DEBUG | Capture | 720x1280 | #982 | 255ms
+00:09:23 | INFO | Detect | 27 dinosaur, 8 own_hunt_path | 2318ms
+00:09:23 | DEBUG | Planning | no actionable target
+00:09:23 | DEBUG | Capture | 720x1280 | #983 | 261ms
+00:09:26 | INFO | Detect | 30 dinosaur, 4 own_hunt_path | 2334ms
+00:09:26 | DEBUG | Planning | no actionable target
+00:09:26 | DEBUG | Capture | 720x1280 | #984 | 263ms
+00:09:28 | INFO | Detect | 30 dinosaur, 4 own_hunt_path | 2360ms
+00:09:28 | DEBUG | Planning | no actionable target
+00:09:29 | DEBUG | Capture | 720x1280 | #985 | 257ms
+00:09:31 | INFO | Detect | 29 dinosaur, 5 own_hunt_path | 2347ms
+00:09:31 | DEBUG | Planning | no actionable target
+00:09:32 | DEBUG | Capture | 720x1280 | #986 | 264ms
+00:09:34 | INFO | Detect | 30 dinosaur, 4 own_hunt_path | 2287ms
+00:09:34 | DEBUG | Planning | no actionable target
+00:09:35 | DEBUG | Capture | 720x1280 | #987 | 263ms
+00:09:37 | INFO | Detect | 29 dinosaur, 4 own_hunt_path | 2271ms
+00:09:37 | DEBUG | Planning | no actionable target
+00:09:37 | DEBUG | Capture | 720x1280 | #988 | 254ms
+00:09:40 | INFO | Detect | 29 dinosaur, 5 own_hunt_path | 2270ms
+00:09:40 | DEBUG | Planning | no actionable target
+00:09:40 | DEBUG | Capture | 720x1280 | #989 | 251ms
+00:09:42 | INFO | Detect | 30 dinosaur, 4 own_hunt_path | 2303ms
+00:09:42 | DEBUG | Planning | no actionable target
+00:09:43 | DEBUG | Capture | 720x1280 | #990 | 265ms
+00:09:45 | INFO | Detect | 28 dinosaur, 5 own_hunt_path | 2256ms
+00:09:45 | DEBUG | Planning | no actionable target
+00:09:46 | DEBUG | Capture | 720x1280 | #991 | 256ms
+00:09:48 | INFO | Detect | 28 dinosaur, 5 own_hunt_path | 2296ms
+00:09:48 | DEBUG | Planning | no actionable target
+00:09:49 | DEBUG | Capture | 720x1280 | #992 | 253ms
+00:09:51 | INFO | Detect | 26 dinosaur, 5 own_hunt_path | 2371ms
+00:09:51 | DEBUG | Planning | no actionable target
+00:09:51 | DEBUG | Capture | 720x1280 | #993 | 278ms
+00:09:54 | INFO | Detect | 27 dinosaur, 4 own_hunt_path | 2374ms
+00:09:54 | DEBUG | Planning | no actionable target
+00:09:54 | DEBUG | Capture | 720x1280 | #994 | 280ms
+00:09:57 | INFO | Detect | 25 dinosaur, 5 own_hunt_path | 2370ms
+00:09:57 | DEBUG | Planning | no actionable target
+00:09:57 | DEBUG | Capture | 720x1280 | #995 | 260ms
+00:10:00 | INFO | Detect | 28 dinosaur, 5 own_hunt_path | 2332ms
+00:10:00 | DEBUG | Planning | no actionable target
+00:10:00 | DEBUG | Capture | 720x1280 | #996 | 262ms
+00:10:02 | INFO | Detect | 26 dinosaur, 5 own_hunt_path | 2308ms
+00:10:02 | DEBUG | Planning | no actionable target
+00:10:03 | DEBUG | Capture | 720x1280 | #997 | 250ms
+00:10:05 | INFO | Detect | 25 dinosaur, 5 own_hunt_path | 2298ms
+00:10:05 | DEBUG | Planning | no actionable target
+00:10:06 | DEBUG | Capture | 720x1280 | #998 | 256ms
+00:10:08 | INFO | Detect | 23 dinosaur, 5 own_hunt_path | 2275ms
+00:10:08 | DEBUG | Planning | no actionable target
+00:10:08 | DEBUG | Capture | 720x1280 | #999 | 266ms
+00:10:11 | INFO | Detect | 22 dinosaur, 4 own_hunt_path | 2353ms
+00:10:11 | DEBUG | Planning | no actionable target
+00:10:11 | DEBUG | Capture | 720x1280 | #1000 | 255ms
+00:10:14 | INFO | Detect | 18 dinosaur, 6 own_hunt_path | 2286ms
+00:10:14 | DEBUG | Planning | no actionable target
+00:10:14 | DEBUG | Capture | 720x1280 | #1001 | 265ms
+00:10:16 | INFO | Detect | 20 dinosaur, 5 own_hunt_path | 2283ms
+00:10:16 | DEBUG | Planning | no actionable target
+00:10:17 | DEBUG | Capture | 720x1280 | #1002 | 246ms
+00:10:19 | INFO | Detect | 21 dinosaur, 6 own_hunt_path | 2287ms
+00:10:19 | DEBUG | Planning | no actionable target
+00:10:20 | INFO | Stop requested by user
+00:10:20 | INFO | Bot stopped | actions=93 | cycles=0
